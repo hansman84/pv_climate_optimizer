@@ -53,6 +53,12 @@ Das Dashboard **PV Klimaregler** hat zwei bewusst unterschiedliche Ansichten:
    Zeit bis zur Komfort- und harten Grenze, gelernten Kühleffekt und direkte
    Regler für Komforttemperatur, harte Grenze und Priorität.
 
+Beide Ansichten verwenden die eigene Karte **PV Climate Command Center**. Sie
+stellt Raumwerte, Energiefluss und die sicheren Planungsregler als Oberfläche
+dar, statt die zugrunde liegenden Entities aufzuzählen. Die Karte speichert
+nur Änderungen an den `number`, `select` und `switch`-Entities dieser
+Integration. Sie ruft keine `climate`-Services auf.
+
 `Arbeitszimmer / Spielzimmer` bezeichnet dabei den Raum Arbeitszimmer mit dem
 Klimagerät Spielzimmer.
 
