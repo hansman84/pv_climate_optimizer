@@ -12,7 +12,7 @@ from .entity import ControllerEntity
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
-    async_add_entities([ShadowModeBinarySensor(hass.data[DOMAIN][entry.entry_id], entry.entry_id)])
+    async_add_entities([ShadowModeBinarySensor(hass.data[DOMAIN][entry.entry_id], entry.entry_id, "shadow_mode_active")])
 
 
 class ShadowModeBinarySensor(ControllerEntity, BinarySensorEntity):

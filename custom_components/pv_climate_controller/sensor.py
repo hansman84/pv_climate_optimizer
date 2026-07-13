@@ -14,10 +14,10 @@ from .entity import ControllerEntity
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     controller = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([
-        ControllerStateSensor(controller, entry.entry_id),
-        DecisionReasonSensor(controller, entry.entry_id),
-        RequestedStagesSensor(controller, entry.entry_id),
-        GrantedStagesSensor(controller, entry.entry_id),
+        ControllerStateSensor(controller, entry.entry_id, "controller_state"),
+        DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
+        RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
+        GrantedStagesSensor(controller, entry.entry_id, "granted_stages"),
     ])
 
 
