@@ -7,15 +7,16 @@ from dataclasses import dataclass, field, replace
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
-from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
+from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalProfile, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
 from .thermal_budget import build_thermal_budget
 from .thermal_response import learn_thermal_response
+from .thermal_analysis import learn_thermal_profile
 
 
 def _optional_entity(options: Mapping[str, object], data: Mapping[str, object], key: str) -> str | None:
@@ -35,6 +36,9 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
         name, climate, temperature = item.get("name"), item.get("climate_entity_id"), item.get("temperature_entity_id")
         if not all(isinstance(field, str) for field in (name, climate, temperature)):
             continue
+        shade_ids = tuple(entity for entity in item.get("shade_entity_ids", []) if isinstance(entity, str)) if isinstance(item.get("shade_entity_ids"), list) else ()
+        azimuths = tuple(float(entry) for entry in item.get("facade_azimuths", []) if isinstance(entry, (int, float))) if isinstance(item.get("facade_azimuths"), list) else ()
+        cutoff = item.get("overhang_cutoff_elevation")
         result.append(ZoneConfig(
             zone_id=str(item.get("zone_id", climate)), name=name, climate_entity_id=climate,
             temperature_entity_id=temperature, comfort_temperature=float(item.get("comfort_temperature", 23.5)),
@@ -42,6 +46,9 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
             priority=int(item.get("priority", 50)),
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
+            shade_entity_ids=shade_ids,
+            facade_azimuths=azimuths,
+            overhang_cutoff_elevation=float(cutoff) if isinstance(cutoff, (int, float)) else None,
         ))
     return tuple(result)
 
@@ -60,6 +67,8 @@ class PVClimateController:
     last_zone_forecasts: dict[str, ZoneForecast] = field(default_factory=dict)
     _temperature_samples: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
+    _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None]]] = field(default_factory=dict)
+    last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -98,10 +107,13 @@ class PVClimateController:
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
             min_pv_surplus_w=float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 1000.0))),
             house_zones=zones,
+            outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
+            solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
+            sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
         )
         return cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=False))
 
-    def evaluate_house(self, states: Mapping[str, tuple[ZoneInput, str, object]]) -> HousePlan:
+    def evaluate_house(self, states: Mapping[str, tuple[ZoneInput, str, object]], contexts: Mapping[str, Mapping[str, object]] | None = None) -> HousePlan:
         """Create a read-only common-outdoor-unit plan for every configured zone."""
         telemetry = []
         for zone in self.config.house_zones:
@@ -109,6 +121,9 @@ class PVClimateController:
             forecast = self._record_forecast(zone, sample.temperature_c)
             thermal_budget = build_thermal_budget(zone, sample.temperature_c, forecast)
             thermal_response = self._record_thermal_response(zone, sample.temperature_c, mode)
+            profile = self._record_thermal_profile(zone, sample.temperature_c, mode, (contexts or {}).get(zone.zone_id, {}))
+            if profile is not None:
+                self.last_thermal_profiles[zone.zone_id] = profile
             try:
                 delivered = float(str(cooling))
             except (TypeError, ValueError):
@@ -135,6 +150,19 @@ class PVClimateController:
             min_pv_surplus_w=self.config.min_pv_surplus_w,
         )
         return self.last_house_plan
+
+    def _record_thermal_profile(self, zone: ZoneConfig, temperature_c: float | None, mode: str, context: Mapping[str, object]) -> ThermalProfile | None:
+        if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:
+            return None
+        now = monotonic()
+        shade = context.get("shade_open_percent")
+        outside = context.get("outdoor_temperature_c")
+        samples = self._thermal_context_samples.setdefault(zone.zone_id, [])
+        record = (now, temperature_c, mode, bool(context.get("direct_sun", False)), float(shade) if isinstance(shade, (int, float)) else None, float(outside) if isinstance(outside, (int, float)) else None)
+        if not samples or now - samples[-1][0] >= 300 or samples[-1][2:] != record[2:]:
+            samples.append(record)
+        self._thermal_context_samples[zone.zone_id] = samples = [sample for sample in samples if sample[0] >= now - 7 * 86400]
+        return learn_thermal_profile(samples)
 
     def _record_thermal_response(self, zone: ZoneConfig, temperature_c: float | None, mode: str) -> ThermalResponse | None:
         """Learn only from observed mode states; no device command is involved."""

@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
 
 
 def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -70,7 +70,18 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
     _draft_zone: dict[str, Any] | None = None
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["house", "energy", "zones", "safety"])
+        return self.async_show_menu(step_id="init", menu_options=["house", "energy", "thermal", "zones", "safety"])
+
+    async def async_step_thermal(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Select only observed weather and solar sources for contextual learning."""
+        if user_input is not None:
+            return self.async_create_entry(data={**self._options(), **user_input})
+        values = self._options()
+        return self.async_show_form(step_id="thermal", data_schema=vol.Schema({
+            vol.Optional(CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, default=values.get(CONF_OUTDOOR_TEMPERATURE_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+            vol.Optional(CONF_SOLAR_IRRADIANCE_ENTITY_ID, default=values.get(CONF_SOLAR_IRRADIANCE_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+            vol.Optional(CONF_SUN_ENTITY_ID, default=values.get(CONF_SUN_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="sun", multiple=False)),
+        }))
 
     async def async_step_house(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Keep the small identity form separate from technical configuration."""
@@ -252,4 +263,7 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required("hard_max_temperature", default=values.get("hard_max_temperature", 25.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
+        vol.Optional("shade_entity_ids", default=values.get("shade_entity_ids", [])): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
+        vol.Optional("facade_azimuths", default=values.get("facade_azimuths", [])): [vol.All(vol.Coerce(float), vol.Range(min=0, max=359))],
+        vol.Optional("overhang_cutoff_elevation", default=values.get("overhang_cutoff_elevation")): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=90))),
     })

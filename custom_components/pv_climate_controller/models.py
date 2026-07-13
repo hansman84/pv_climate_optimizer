@@ -22,6 +22,9 @@ class ZoneConfig:
     minimum_plausible_temperature_c: float = 5.0
     maximum_plausible_temperature_c: float = 50.0
     use_climate_temperature_fallback: bool = False
+    shade_entity_ids: tuple[str, ...] = ()
+    facade_azimuths: tuple[float, ...] = ()
+    overhang_cutoff_elevation: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,19 @@ class ThermalResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class ThermalProfile:
+    """Contextual, observed room behaviour; never a simulated result."""
+
+    passive_sun_trend_c_per_h: float | None
+    passive_shaded_trend_c_per_h: float | None
+    cooling_trend_c_per_h: float | None
+    passive_sun_samples: int
+    passive_shaded_samples: int
+    cooling_samples: int
+    data_quality: str
+
+
+@dataclass(frozen=True, slots=True)
 class ZoneDecision:
     """Recorder-friendly result of one zone evaluation."""
 
@@ -84,6 +100,9 @@ class ControllerConfig:
     pv_forecast_power_entity_id: str | None = None
     min_pv_surplus_w: float = 1000.0
     house_zones: tuple[ZoneConfig, ...] = ()
+    outdoor_temperature_entity_id: str | None = None
+    solar_irradiance_entity_id: str | None = None
+    sun_entity_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

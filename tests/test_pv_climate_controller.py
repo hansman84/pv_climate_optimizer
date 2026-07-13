@@ -35,6 +35,7 @@ outdoor_unit = _load("outdoor_unit")
 house = _load("house")
 thermal_budget = _load("thermal_budget")
 thermal_response = _load("thermal_response")
+thermal_analysis = _load("thermal_analysis")
 
 
 class Clock:
@@ -524,3 +525,16 @@ def test_thermal_response_learns_observed_cooling_effect() -> None:
     assert profile.passive_trend_c_per_h == 1.0
     assert profile.cooling_trend_c_per_h == -2.0
     assert profile.observed_cooling_effect_c_per_h == 3.0
+
+
+def test_contextual_thermal_learning_never_bridges_mode_changes() -> None:
+    profile = thermal_analysis.learn_thermal_profile([
+        (0.0, 24.0, "off", True, 100.0, 24.0),
+        (300.0, 24.1, "off", True, 100.0, 24.0),
+        (600.0, 24.2, "cool", True, 100.0, 24.0),
+        (900.0, 24.0, "cool", True, 100.0, 24.0),
+    ])
+    assert profile.passive_sun_samples == 1
+    assert profile.cooling_samples == 1
+    assert profile.passive_sun_trend_c_per_h == 1.2
+    assert profile.cooling_trend_c_per_h == -2.4

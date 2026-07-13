@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
@@ -33,6 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     source_entities = _configured_entities(controller)
     if source_entities:
         entry.async_on_unload(async_track_state_change_event(hass, source_entities, _handle_state_change(hass, controller, store)))
+    entry.async_on_unload(async_track_time_interval(hass, lambda _: hass.async_create_task(_async_refresh_controller(hass, controller, store)), timedelta(minutes=5)))
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await _async_refresh_controller(hass, controller, store)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -61,7 +64,10 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.pv_power_entity_id,
             config.export_power_entity_id,
             config.pv_forecast_power_entity_id,
-            *(entity for house_zone in config.house_zones for entity in (house_zone.climate_entity_id, house_zone.temperature_entity_id, house_zone.cooling_power_entity_id)),
+            config.outdoor_temperature_entity_id,
+            config.solar_irradiance_entity_id,
+            config.sun_entity_id,
+            *(entity for house_zone in config.house_zones for entity in (house_zone.climate_entity_id, house_zone.temperature_entity_id, house_zone.cooling_power_entity_id, *house_zone.shade_entity_ids)),
         )
         if entity_id is not None
     ]
@@ -98,7 +104,15 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         pv_forecast_power_state=None if forecast is None else forecast.state,
         pv_forecast_power_unit=None if forecast is None else forecast.attributes.get("unit_of_measurement"),
     )
+    outside_state = None if config.outdoor_temperature_entity_id is None else hass.states.get(config.outdoor_temperature_entity_id)
+    irradiance_state = None if config.solar_irradiance_entity_id is None else hass.states.get(config.solar_irradiance_entity_id)
+    sun_state = None if config.sun_entity_id is None else hass.states.get(config.sun_entity_id)
+    outside_temperature = _temperature_value(None if outside_state is None else outside_state.state)
+    irradiance = _temperature_value(None if irradiance_state is None else irradiance_state.state)
+    sun_azimuth = _temperature_value(None if sun_state is None else sun_state.attributes.get("azimuth"))
+    sun_elevation = _temperature_value(None if sun_state is None else sun_state.attributes.get("elevation"))
     house_states = {}
+    contexts = {}
     for house_zone in config.house_zones:
         temperature_state = hass.states.get(house_zone.temperature_entity_id)
         climate_state = hass.states.get(house_zone.climate_entity_id)
@@ -121,7 +135,12 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
             "off" if climate_state is None else climate_state.state,
             None if cooling_state is None else cooling_state.state,
         )
-    controller.evaluate_house(house_states)
+        positions = [_temperature_value(hass.states.get(entity).attributes.get("current_position")) for entity in house_zone.shade_entity_ids if hass.states.get(entity) is not None]
+        known_positions = [position for position in positions if position is not None]
+        shade_open = None if not known_positions else sum(known_positions) / len(known_positions)
+        direct_sun = _direct_sun(house_zone.facade_azimuths, house_zone.overhang_cutoff_elevation, sun_azimuth, sun_elevation)
+        contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
+    controller.evaluate_house(house_states, contexts)
     if store is not None:
         store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()
@@ -132,6 +151,15 @@ def _temperature_value(value: object) -> float | None:
         return float(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _direct_sun(facades: tuple[float, ...], cutoff: float | None, azimuth: float | None, elevation: float | None) -> bool:
+    """Use configured facade geometry only; an overhang blocks high sun."""
+    if azimuth is None or elevation is None or elevation <= 0:
+        return False
+    if cutoff is not None and elevation >= cutoff:
+        return False
+    return any(abs(((azimuth - facade + 540) % 360) - 180) <= 90 for facade in facades)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -50,6 +50,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ZoneCoolingEffectSensor(controller, entry.entry_id, f"zone_cooling_effect_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
+    entities.extend(
+        ZoneThermalProfileSensor(controller, entry.entry_id, f"zone_thermal_profile_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
     async_add_entities(entities)
 
 
@@ -376,6 +380,34 @@ class ZoneCoolingEffectSensor(_ZoneMetricSensor):
             "cooling_trend_c_per_h": None if response is None else response.cooling_trend_c_per_h,
             "passive_sample_count": None if response is None else response.passive_sample_count,
             "cooling_sample_count": None if response is None else response.cooling_sample_count,
+        }
+
+
+class ZoneThermalProfileSensor(_ZoneMetricSensor):
+    """Expose the contextual learning state without inventing a recommendation."""
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Thermisches Lernprofil"
+
+    @property
+    def native_value(self) -> str:
+        profile = self.controller.last_thermal_profiles.get(self._zone_id)
+        return "unconfigured" if profile is None else profile.data_quality
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        profile = self.controller.last_thermal_profiles.get(self._zone_id)
+        if profile is None:
+            return {"meaning": "Für dieses Raumprofil fehlen noch kontextuelle Datenquellen oder Beobachtungen."}
+        return {
+            "meaning": "Nur beobachtete Temperaturänderungen in vergleichbaren Zeitintervallen.",
+            "passive_sun_trend_c_per_h": profile.passive_sun_trend_c_per_h,
+            "passive_shaded_trend_c_per_h": profile.passive_shaded_trend_c_per_h,
+            "cooling_trend_c_per_h": profile.cooling_trend_c_per_h,
+            "passive_sun_samples": profile.passive_sun_samples,
+            "passive_shaded_samples": profile.passive_shaded_samples,
+            "cooling_samples": profile.cooling_samples,
         }
 
 
