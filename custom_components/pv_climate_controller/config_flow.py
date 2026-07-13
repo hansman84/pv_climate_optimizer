@@ -9,7 +9,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig, NumberSelector, NumberSelectorConfig, NumberSelectorMode
+from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
 from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
 
@@ -267,19 +267,32 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
         vol.Optional("shade_entity_ids", default=values.get("shade_entity_ids", [])): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
-        vol.Optional("facade_azimuth_primary", default=primary_azimuth): NumberSelector(NumberSelectorConfig(min=0, max=359, step=1, mode=NumberSelectorMode.BOX)),
-        vol.Optional("facade_azimuth_secondary", default=secondary_azimuth): NumberSelector(NumberSelectorConfig(min=0, max=359, step=1, mode=NumberSelectorMode.BOX)),
-        vol.Optional("overhang_cutoff_elevation", default=values.get("overhang_cutoff_elevation")): NumberSelector(NumberSelectorConfig(min=0, max=90, step=1, mode=NumberSelectorMode.BOX)),
+        # Plain optional text fields deliberately accept blank input.  HA's number
+        # selector submits empty optional values as null and otherwise raises
+        # "expected float" before a user can save the shade selection.
+        vol.Optional("facade_azimuth_primary", default="" if primary_azimuth is None else str(primary_azimuth)): str,
+        vol.Optional("facade_azimuth_secondary", default="" if secondary_azimuth is None else str(secondary_azimuth)): str,
+        vol.Optional("overhang_cutoff_elevation", default="" if values.get("overhang_cutoff_elevation") is None else str(values["overhang_cutoff_elevation"])): str,
     })
 
 
 def _normalize_zone_tuning(user_input: dict[str, Any]) -> dict[str, Any]:
     """Store a stable azimuth list while presenting only serializable fields."""
     tuning = dict(user_input)
-    azimuths = [
-        float(tuning.pop(key))
-        for key in ("facade_azimuth_primary", "facade_azimuth_secondary")
-        if isinstance(tuning.get(key), (int, float))
-    ]
+    azimuths = []
+    for key in ("facade_azimuth_primary", "facade_azimuth_secondary"):
+        raw = tuning.pop(key, "")
+        try:
+            value = float(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if 0 <= value <= 359:
+            azimuths.append(value)
     tuning["facade_azimuths"] = azimuths
+    raw_cutoff = tuning.get("overhang_cutoff_elevation", "")
+    try:
+        cutoff = float(str(raw_cutoff).strip())
+    except (TypeError, ValueError):
+        cutoff = None
+    tuning["overhang_cutoff_elevation"] = cutoff if cutoff is not None and 0 <= cutoff <= 90 else None
     return tuning
