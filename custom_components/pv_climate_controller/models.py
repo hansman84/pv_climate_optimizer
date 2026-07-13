@@ -50,6 +50,11 @@ class ControllerConfig:
     zone: ZoneConfig | None = None
     ems_granted_stages_entity_id: str | None = None
     ems_stale_after_s: float = 300.0
+    pv_power_entity_id: str | None = None
+    export_power_entity_id: str | None = None
+    export_power_positive: bool = True
+    pv_forecast_power_entity_id: str | None = None
+    min_pv_surplus_w: float = 1000.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,3 +65,12 @@ class EMSGrant:
     available: bool
     reason_code: str
     reason_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class EnergySnapshot:
+    """Normalized, read-only energy values used for diagnostics."""
+
+    pv_power_w: float | None = None
+    export_power_w: float | None = None
+    pv_forecast_power_w: float | None = None

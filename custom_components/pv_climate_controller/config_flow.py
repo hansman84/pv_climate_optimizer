@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_HARD_MAX_TEMPERATURE, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
 
 
 def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -35,6 +35,13 @@ def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             default=values[CONF_EMS_GRANTED_STAGES_ENTITY_ID],
         )
     schema[ems_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+    for key in (CONF_PV_POWER_ENTITY_ID, CONF_EXPORT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID):
+        selector_key = vol.Optional(key)
+        if values.get(key):
+            selector_key = vol.Optional(key, default=values[key])
+        schema[selector_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+    schema[vol.Required(CONF_EXPORT_POWER_POSITIVE, default=values.get(CONF_EXPORT_POWER_POSITIVE, True))] = bool
+    schema[vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 1000.0))] = vol.All(vol.Coerce(float), vol.Range(min=0, max=20000))
     return vol.Schema(schema)
 
 

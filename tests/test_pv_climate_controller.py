@@ -216,6 +216,52 @@ def test_runtime_controls_update_thresholds_and_notify_diagnostics() -> None:
     assert notifications == ["updated"]
 
 
+def test_energy_values_are_normalized_only_for_explicit_sources() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {
+            "shadow_mode": True,
+            "pv_power_entity_id": "sensor.confirmed_pv",
+            "export_power_entity_id": "sensor.confirmed_export",
+            "pv_forecast_power_entity_id": "sensor.confirmed_forecast",
+            "export_power_positive": False,
+        },
+        {},
+    )
+
+    snapshot = runtime.evaluate_energy(
+        pv_power_state="2.5",
+        pv_power_unit="kW",
+        export_power_state="-1800",
+        export_power_unit="W",
+        pv_forecast_power_state="3200",
+        pv_forecast_power_unit="W",
+    )
+
+    assert snapshot.pv_power_w == 2500
+    assert snapshot.export_power_w == 1800
+    assert snapshot.pv_forecast_power_w == 3200
+
+
+def test_energy_values_reject_unknown_units_and_unconfigured_sources() -> None:
+    runtime = controller.PVClimateController.from_config({"shadow_mode": True}, {})
+
+    snapshot = runtime.evaluate_energy(pv_power_state="2", pv_power_unit="MW")
+
+    assert snapshot.pv_power_w is None
+    assert snapshot.export_power_w is None
+
+
+def test_options_can_replace_confirmed_input_entities() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True, "climate_entity_id": "climate.old", "temperature_entity_id": "sensor.old"},
+        {"climate_entity_id": "climate.confirmed", "temperature_entity_id": "sensor.confirmed"},
+    )
+
+    assert runtime.config.zone is not None
+    assert runtime.config.zone.climate_entity_id == "climate.confirmed"
+    assert runtime.config.zone.temperature_entity_id == "sensor.confirmed"
+
+
 def test_forecast_uses_observed_trend() -> None:
     trend = forecasting.temperature_trend_c_per_h([(0, 23.0), (1800, 23.5), (3600, 24.0)])
 

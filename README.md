@@ -18,6 +18,20 @@ separate produktive Freigabe implementiert und getestet wurde.
 4. Den ersten Pilot im Shadow Mode konfigurieren und die Diagnose-Entities
    beobachten.
 
+## PV-Werte im Dashboard
+
+Unter **Konfigurieren** der Integration lassen sich drei vorhandene Sensoren
+auswaehlen: aktuelle PV-Leistung, Netzeinspeisung und PV-Prognose. Die
+Integration zeigt sie als eigene Diagnose-Entities in Watt an und aktualisiert
+sie bei jeder Aenderung der gewaehlten Quelle.
+
+- **Netzeinspeisung ist positiv** legt die Vorzeichenkonvention der gewaehlten
+  Quelle fest. Ist Einspeisung dort negativ, den Schalter deaktivieren.
+- **PV-Mindestueberschuss** ist die Grenze fuer `PV-Ueberschuss verfuegbar`.
+  Das ist derzeit eine reine Shadow-Mode-Diagnose und schaltet kein Geraet.
+- Nicht konfigurierte oder ungueltig dimensionierte Quellen bleiben leer,
+  statt einen Wert zu erfinden.
+
 ## Entwicklung
 
 ```bash

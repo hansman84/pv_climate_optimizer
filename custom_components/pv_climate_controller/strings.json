@@ -10,7 +10,12 @@
           "energy_policy": "Energiepolitik",
           "zone_name": "Zonenname",
           "climate_entity_id": "Klima-Entity",
-          "temperature_entity_id": "Externer Temperatursensor"
+          "temperature_entity_id": "Externer Temperatursensor",
+          "pv_power_entity_id": "PV-Leistungsquelle",
+          "export_power_entity_id": "Netzeinspeisungsquelle",
+          "export_power_positive": "Netzeinspeisung ist positiv",
+          "pv_forecast_power_entity_id": "PV-Prognosequelle",
+          "min_pv_surplus_w": "PV-Mindestüberschuss (W)"
         }
       }
     }
@@ -25,7 +30,12 @@
           "energy_policy": "Energiepolitik",
           "zone_name": "Zonenname",
           "climate_entity_id": "Klima-Entity",
-          "temperature_entity_id": "Externer Temperatursensor"
+          "temperature_entity_id": "Externer Temperatursensor",
+          "pv_power_entity_id": "PV-Leistungsquelle",
+          "export_power_entity_id": "Netzeinspeisungsquelle",
+          "export_power_positive": "Netzeinspeisung ist positiv",
+          "pv_forecast_power_entity_id": "PV-Prognosequelle",
+          "min_pv_surplus_w": "PV-Mindestüberschuss (W)"
         }
       }
     }
