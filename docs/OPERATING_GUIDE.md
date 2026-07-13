@@ -41,32 +41,37 @@ Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 
 ## Dashboard
 
-Das Dashboard **PV Klimaregler** ist bewusst in vier Ansichten geteilt:
+Das Dashboard **PV Klimaregler** hat zwei bewusst unterschiedliche Ansichten:
 
-1. **Übersicht** ist die Alltagsansicht. Sie zeigt die Empfehlung jetzt, die
-   hausweite Priorität, PV-Leistung, freien Überschuss und die geschätzte
-   Gesamtleistung der gemeinsamen Außenanlage.
-2. **Räume** ist die Komfortansicht. Für jeden Raum stehen nebeneinander die
-   Temperatur jetzt, die Prognose für 60 Minuten und die aktuelle Priorität.
-   `Arbeitszimmer / Spielzimmer` bezeichnet dabei den Raum Arbeitszimmer mit
-   dem Klimagerät Spielzimmer.
-3. **Steuerung** enthält nur Werte, die sinnvoll und sicher bedienbar sind:
-   Shadow Mode, Energiepolitik, Mindestüberschuss und den optionalen
-   Temperatur-Backup je Raum.
-4. **Technik** enthält Rohwerte, Leistungsquellen und vollständige
-   Diagnosen. Sie ist für Fehlersuche und Feintuning gedacht, nicht für den
-   täglichen Betrieb.
+1. **Klima-Flow** ist die Alltagsansicht. Sie beantwortet zuerst: *Was ist
+   jetzt der beste nächste Schritt?* Die thermische Landkarte darunter zeigt
+   alle Räume mit Temperatur jetzt, 60-Minuten-Prognose und
+   Temperaturgradient. PV-Leistung, Überschuss und PV-Prognose machen direkt
+   sichtbar, ob ein gutes Kühlfenster vorliegt.
+2. **Analyse & Feintuning** ist die erweiterte Leitwarte. Sie enthält den
+   gemeinsamen Temperaturverlauf, Hauskapazität sowie je Raum Gradienten,
+   Zeit bis zur Komfort- und harten Grenze, gelernten Kühleffekt und direkte
+   Regler für Komforttemperatur, harte Grenze und Priorität.
 
-Raumziele, harte Grenzen und Prioritäten gehören absichtlich nicht zwischen
-die täglichen Kacheln. Sie werden sauber pro Zone gesetzt unter
-**Einstellungen → Geräte & Dienste → PV Climate Controller → Konfigurieren →
-Zonen verwalten**. Die Standardwerte für neu angelegte Zonen sind 23,5 °C
-Komforttemperatur und 25,5 °C harte Grenze.
+`Arbeitszimmer / Spielzimmer` bezeichnet dabei den Raum Arbeitszimmer mit dem
+Klimagerät Spielzimmer.
+
+Die Raumregler in **Analyse & Feintuning** ändern ausschließlich die
+Planungsgrenzen des jeweiligen Raums. Die harte Grenze wird nie unter die
+Komforttemperatur gesetzt. Die Priorität (1–100) entscheidet nur bei sonst
+vergleichbarer thermischer Dringlichkeit. Die Standardwerte für neu angelegte
+Zonen sind 23,5 °C Komforttemperatur und 25,5 °C harte Grenze.
 
 Der **Shadow-Plan** einer Zone enthält Temperatur, Betriebsmodus, Priorität,
 BTU/h-Beobachtung und Reason-Code. Der Haus-Kühlplan fasst alle Raumpläne, die
 aktive Zonenzahl, thermischen Bedarf, gemeinsames Nennbudget und die aktuelle
 Prioritätsreihenfolge zusammen.
+
+Ein positiver **Temperaturgradient** bedeutet Erwärmung pro Stunde; ein
+negativer Gradient bedeutet, dass der Raum bereits abkühlt. Die Zeiten bis zu
+einer Grenze werden nur bei einem belastbaren, steigenden Temperaturtrend
+berechnet. Ein leerer Wert bedeutet daher nicht "unbekanntes Risiko", sondern
+"keine belegte Erwärmung in Richtung dieser Grenze".
 
 ### Temperatur-Backup
 
