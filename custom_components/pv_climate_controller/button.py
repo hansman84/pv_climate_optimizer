@@ -34,4 +34,4 @@ class EvaluateNowButton(ControllerEntity, ButtonEntity):
             ems_grant_state=None if grant is None else grant.state,
             ems_grant_age_s=None,
         )
-        self.async_write_ha_state()
+        self.controller.notify_state_listeners()

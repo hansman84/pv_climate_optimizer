@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
 from .const import CONF_CLIMATE_ENTITY_ID, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
@@ -21,6 +21,7 @@ class PVClimateController:
     last_decision: ZoneDecision | None = None
     last_ems_grant: EMSGrant | None = None
     last_requested_stages: int = 0
+    _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
     def from_config(cls, data: Mapping[str, object], options: Mapping[str, object]) -> "PVClimateController":
@@ -86,6 +87,20 @@ class PVClimateController:
         )
         self.evaluate_ems(ems_grant_state, ems_grant_age_s)
         return decision
+
+    def add_state_listener(self, listener: Callable[[], None]) -> None:
+        """Register an entity refresh callback without depending on HA types."""
+        self._state_listeners.append(listener)
+
+    def remove_state_listener(self, listener: Callable[[], None]) -> None:
+        """Remove a previously registered entity refresh callback."""
+        if listener in self._state_listeners:
+            self._state_listeners.remove(listener)
+
+    def notify_state_listeners(self) -> None:
+        """Refresh diagnostic entities after a Shadow Mode evaluation."""
+        for listener in tuple(self._state_listeners):
+            listener()
 
     async def async_apply_last_decision(self) -> CommandResult:
         """Demonstrate the sole write boundary; Gate C always blocks it."""

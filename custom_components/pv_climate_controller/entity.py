@@ -16,3 +16,13 @@ class ControllerEntity(Entity):
         self.controller = controller
         self._attr_unique_id = f"{entry_id}_{key}"
         self._attr_device_info = {"identifiers": {(DOMAIN, entry_id)}, "name": "PV Klimaregler"}
+
+    async def async_added_to_hass(self) -> None:
+        """Register for in-memory controller changes."""
+        await super().async_added_to_hass()
+        self.controller.add_state_listener(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister before HA discards this entity."""
+        self.controller.remove_state_listener(self.async_write_ha_state)
+        await super().async_will_remove_from_hass()
