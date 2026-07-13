@@ -1,0 +1,4 @@
+{
+  "config": {"step": {"user": {"title": "Set up PV Climate Controller", "data": {"name": "Name", "shadow_mode": "Shadow mode", "energy_policy": "Energy policy", "zone_name": "Zone name", "climate_entity_id": "Climate entity", "temperature_entity_id": "External temperature sensor"}}}},
+  "options": {"step": {"init": {"title": "PV Climate Controller options", "data": {"name": "Name", "shadow_mode": "Shadow mode", "energy_policy": "Energy policy", "zone_name": "Zone name", "climate_entity_id": "Climate entity", "temperature_entity_id": "External temperature sensor"}}}}
+}

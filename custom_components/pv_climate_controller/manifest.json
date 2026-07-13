@@ -1,0 +1,12 @@
+{
+  "domain": "pv_climate_controller",
+  "name": "PV Climate Controller",
+  "codeowners": ["@hansman84"],
+  "config_flow": true,
+  "documentation": "https://github.com/hansman84/pv_climate_optimizer#readme",
+  "issue_tracker": "https://github.com/hansman84/pv_climate_optimizer/issues",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.1.0"
+}

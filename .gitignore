@@ -1,0 +1,13 @@
+*
+!.gitignore
+!README.md
+!hacs.json
+!custom_components/
+custom_components/*
+!custom_components/pv_climate_controller/
+!custom_components/pv_climate_controller/**
+custom_components/pv_climate_controller/__pycache__/
+custom_components/pv_climate_controller/**/*.py[cod]
+!tests/
+tests/*
+!tests/test_pv_climate_controller.py
