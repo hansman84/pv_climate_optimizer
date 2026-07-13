@@ -409,6 +409,7 @@ class ZoneThermalProfileSensor(_ZoneMetricSensor):
             "sun_position": self.controller.config.sun_entity_id is not None,
             "shade_entities": 0 if configured_zone is None else len(configured_zone.shade_entity_ids),
             "facade_azimuths": 0 if configured_zone is None else len(configured_zone.facade_azimuths),
+            "facade_shade_groups": 0 if configured_zone is None else sum(bool(group) for group in configured_zone.facade_shade_entity_ids),
         }
         if profile is None:
             return {

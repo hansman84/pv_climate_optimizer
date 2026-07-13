@@ -24,6 +24,7 @@ class ZoneConfig:
     use_climate_temperature_fallback: bool = False
     shade_entity_ids: tuple[str, ...] = ()
     facade_azimuths: tuple[float, ...] = ()
+    facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()
     overhang_cutoff_elevation: float | None = None
 
 

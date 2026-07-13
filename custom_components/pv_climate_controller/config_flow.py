@@ -261,6 +261,9 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     primary_azimuth = azimuths[0] if isinstance(azimuths, list) and azimuths else None
     secondary_azimuth = azimuths[1] if isinstance(azimuths, list) and len(azimuths) > 1 else None
     tertiary_azimuth = azimuths[2] if isinstance(azimuths, list) and len(azimuths) > 2 else None
+    facade_shades = values.get("facade_shade_entity_ids", [])
+    def facade_default(index: int) -> list[str]:
+        return facade_shades[index] if isinstance(facade_shades, list) and index < len(facade_shades) and isinstance(facade_shades[index], list) else []
     return vol.Schema({
         vol.Optional("cooling_power_entity_id", default=values.get("cooling_power_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
         vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
@@ -274,6 +277,9 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Optional("facade_azimuth_primary", default="" if primary_azimuth is None else str(primary_azimuth)): str,
         vol.Optional("facade_azimuth_secondary", default="" if secondary_azimuth is None else str(secondary_azimuth)): str,
         vol.Optional("facade_azimuth_tertiary", default="" if tertiary_azimuth is None else str(tertiary_azimuth)): str,
+        vol.Optional("facade_shade_primary", default=facade_default(0)): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
+        vol.Optional("facade_shade_secondary", default=facade_default(1)): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
+        vol.Optional("facade_shade_tertiary", default=facade_default(2)): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
         vol.Optional("overhang_cutoff_elevation", default="" if values.get("overhang_cutoff_elevation") is None else str(values["overhang_cutoff_elevation"])): str,
     })
 
@@ -291,6 +297,10 @@ def _normalize_zone_tuning(user_input: dict[str, Any]) -> dict[str, Any]:
         if 0 <= value <= 359:
             azimuths.append(value)
     tuning["facade_azimuths"] = azimuths
+    tuning["facade_shade_entity_ids"] = [
+        [entity for entity in tuning.pop(key, []) if isinstance(entity, str)]
+        for key in ("facade_shade_primary", "facade_shade_secondary", "facade_shade_tertiary")
+    ]
     raw_cutoff = tuning.get("overhang_cutoff_elevation", "")
     try:
         cutoff = float(str(raw_cutoff).strip())

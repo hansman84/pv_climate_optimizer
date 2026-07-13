@@ -55,6 +55,20 @@ def test_shadow_mode_blocks_every_command_request() -> None:
     assert "blockiert" in result.reason
 
 
+def test_thermal_learning_counts_shade_only_when_the_facade_is_sunlit() -> None:
+    night = thermal_analysis.learn_thermal_profile([
+        (0.0, 24.0, "off", False, 0.0, 20.0, 0.0),
+        (300.0, 24.1, "off", False, 0.0, 20.0, 0.0),
+    ])
+    shaded = thermal_analysis.learn_thermal_profile([
+        (0.0, 24.0, "off", True, 0.0, 20.0, 500.0),
+        (300.0, 24.1, "off", True, 0.0, 20.0, 500.0),
+    ])
+
+    assert night.passive_shaded_samples == 0
+    assert shaded.passive_shaded_samples == 1
+
+
 def test_non_shadow_gate_c_is_still_not_a_write_path() -> None:
     command_adapter = adapter.ClimateCommandAdapter(shadow_mode=False)
 

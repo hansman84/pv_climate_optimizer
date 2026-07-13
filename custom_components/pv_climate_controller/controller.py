@@ -38,6 +38,8 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             continue
         shade_ids = tuple(entity for entity in item.get("shade_entity_ids", []) if isinstance(entity, str)) if isinstance(item.get("shade_entity_ids"), list) else ()
         azimuths = tuple(float(entry) for entry in item.get("facade_azimuths", []) if isinstance(entry, (int, float))) if isinstance(item.get("facade_azimuths"), list) else ()
+        raw_facade_shades = item.get("facade_shade_entity_ids", [])
+        facade_shades = tuple(tuple(entity for entity in group if isinstance(entity, str)) for group in raw_facade_shades if isinstance(group, list)) if isinstance(raw_facade_shades, list) else ()
         cutoff = item.get("overhang_cutoff_elevation")
         result.append(ZoneConfig(
             zone_id=str(item.get("zone_id", climate)), name=name, climate_entity_id=climate,
@@ -48,6 +50,7 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
+            facade_shade_entity_ids=facade_shades,
             overhang_cutoff_elevation=float(cutoff) if isinstance(cutoff, (int, float)) else None,
         ))
     return tuple(result)

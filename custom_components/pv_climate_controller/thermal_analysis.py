@@ -34,10 +34,10 @@ def learn_thermal_profile(samples: Sequence[Sample]) -> ThermalProfile:
         if mode in {"cool", "dry"}:
             cooling.append(rate)
         elif mode in {"off", "fan_only"}:
-            if current[3]:
-                sun.append(rate)
-            elif current[4] is not None and current[4] <= 10:
+            if current[3] and current[4] is not None and current[4] <= 10:
                 shaded.append(rate)
+            elif current[3]:
+                sun.append(rate)
     quality = "insufficient_history"
     if len(sun) >= 6 or len(shaded) >= 6 or len(cooling) >= 6:
         quality = "learning"

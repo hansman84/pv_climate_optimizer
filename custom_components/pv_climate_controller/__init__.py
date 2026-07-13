@@ -67,7 +67,13 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.outdoor_temperature_entity_id,
             config.solar_irradiance_entity_id,
             config.sun_entity_id,
-            *(entity for house_zone in config.house_zones for entity in (house_zone.climate_entity_id, house_zone.temperature_entity_id, house_zone.cooling_power_entity_id, *house_zone.shade_entity_ids)),
+            *(entity for house_zone in config.house_zones for entity in (
+                house_zone.climate_entity_id,
+                house_zone.temperature_entity_id,
+                house_zone.cooling_power_entity_id,
+                *house_zone.shade_entity_ids,
+                *(shade for group in house_zone.facade_shade_entity_ids for shade in group),
+            )),
         )
         if entity_id is not None
     ]
@@ -135,10 +141,11 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
             "off" if climate_state is None else climate_state.state,
             None if cooling_state is None else cooling_state.state,
         )
-        positions = [_temperature_value(hass.states.get(entity).attributes.get("current_position")) for entity in house_zone.shade_entity_ids if hass.states.get(entity) is not None]
-        known_positions = [position for position in positions if position is not None]
-        shade_open = None if not known_positions else sum(known_positions) / len(known_positions)
-        direct_sun = _direct_sun(house_zone.facade_azimuths, house_zone.overhang_cutoff_elevation, sun_azimuth, sun_elevation)
+        direct_sun, shade_open = _sun_and_relevant_shade(
+            hass, house_zone.facade_azimuths, house_zone.facade_shade_entity_ids,
+            house_zone.shade_entity_ids, house_zone.overhang_cutoff_elevation,
+            sun_azimuth, sun_elevation,
+        )
         contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
     controller.evaluate_house(house_states, contexts)
     if store is not None:
@@ -160,6 +167,38 @@ def _direct_sun(facades: tuple[float, ...], cutoff: float | None, azimuth: float
     if cutoff is not None and elevation >= cutoff:
         return False
     return any(abs(((azimuth - facade + 540) % 360) - 180) <= 90 for facade in facades)
+
+
+def _sun_and_relevant_shade(
+    hass: HomeAssistant,
+    facades: tuple[float, ...],
+    facade_shades: tuple[tuple[str, ...], ...],
+    fallback_shades: tuple[str, ...],
+    cutoff: float | None,
+    azimuth: float | None,
+    elevation: float | None,
+) -> tuple[bool, float | None]:
+    """Return geometric exposure and the cover state belonging to lit façades.
+
+    Existing zone profiles without façade groups deliberately fall back to their
+    previous all-room cover selection, so this change never drops observations.
+    """
+    if not _direct_sun(facades, cutoff, azimuth, elevation):
+        return False, None
+    assert azimuth is not None
+    active = [index for index, facade in enumerate(facades) if abs(((azimuth - facade + 540) % 360) - 180) <= 90]
+    entities = tuple(
+        entity
+        for index in active
+        for entity in (facade_shades[index] if index < len(facade_shades) and facade_shades[index] else fallback_shades)
+    )
+    positions = [
+        _temperature_value(hass.states.get(entity).attributes.get("current_position"))
+        for entity in dict.fromkeys(entities)
+        if hass.states.get(entity) is not None
+    ]
+    known = [position for position in positions if position is not None]
+    return True, None if not known else sum(known) / len(known)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
