@@ -351,6 +351,31 @@ class PVClimateController:
         )
         self.config = replace(self.config, house_zones=zones)
 
+    def set_zone_thermal_settings(
+        self,
+        zone_id: str,
+        *,
+        comfort_temperature: float | None = None,
+        hard_max_temperature: float | None = None,
+        priority: int | None = None,
+    ) -> None:
+        """Change only explicit planning thresholds for one room, never a climate device."""
+        updated: list[ZoneConfig] = []
+        for zone in self.config.house_zones:
+            if zone.zone_id != zone_id:
+                updated.append(zone)
+                continue
+            comfort = zone.comfort_temperature if comfort_temperature is None else float(comfort_temperature)
+            hard_max = zone.hard_max_temperature if hard_max_temperature is None else float(hard_max_temperature)
+            hard_max = max(comfort, hard_max)
+            updated.append(replace(
+                zone,
+                comfort_temperature=comfort,
+                hard_max_temperature=hard_max,
+                priority=zone.priority if priority is None else max(1, min(100, int(priority))),
+            ))
+        self.config = replace(self.config, house_zones=tuple(updated))
+
     async def async_apply_last_decision(self) -> CommandResult:
         """Demonstrate the sole write boundary; Gate C always blocks it."""
         zone_id = self.config.zone.zone_id if self.config.zone else "unconfigured_zone"

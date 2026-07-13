@@ -461,6 +461,23 @@ def test_zone_temperature_fallback_changes_only_the_explicit_zone_setting() -> N
     assert runtime.config.house_zones[1].use_climate_temperature_fallback
 
 
+def test_zone_thermal_settings_update_only_that_zone_and_keep_limits_safe() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"house_zones": [
+            {"zone_id": "living", "name": "Wohnzimmer", "climate_entity_id": "climate.living", "temperature_entity_id": "sensor.living"},
+            {"zone_id": "sleep", "name": "Schlafzimmer", "climate_entity_id": "climate.sleep", "temperature_entity_id": "sensor.sleep", "comfort_temperature": 22.0, "hard_max_temperature": 24.0},
+        ]},
+    )
+
+    runtime.set_zone_thermal_settings("sleep", comfort_temperature=25.0, hard_max_temperature=23.0, priority=120)
+
+    assert runtime.config.house_zones[0].comfort_temperature == 23.5
+    assert runtime.config.house_zones[1].comfort_temperature == 25.0
+    assert runtime.config.house_zones[1].hard_max_temperature == 25.0
+    assert runtime.config.house_zones[1].priority == 100
+
+
 def test_thermal_budget_calculates_reserve_and_time_to_hard_limit() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     forecast = models.ZoneForecast("living", 1.0, 25.0, 3, "valid")
