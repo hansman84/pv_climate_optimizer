@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .const import EnergyPolicy
-from .models import ZoneDecision, ZoneForecast
+from .models import ThermalResponse, ZoneDecision, ZoneForecast
 from .outdoor_unit import OutdoorUnitSpec
 
 
@@ -24,6 +24,7 @@ class ZoneTelemetry:
     forecast: ZoneForecast | None = None
     temperature_source: str = "external_sensor"
     thermal_budget: dict[str, float | None] | None = None
+    thermal_response: ThermalResponse | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class ZonePlan:
     forecast: ZoneForecast | None
     temperature_source: str
     thermal_budget: dict[str, float | None] | None
+    thermal_response: ThermalResponse | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,7 @@ def build_house_plan(
             forecast=zone.forecast,
             temperature_source=zone.temperature_source,
             thermal_budget=zone.thermal_budget,
+            thermal_response=zone.thermal_response,
         )
         for zone in zones
     )

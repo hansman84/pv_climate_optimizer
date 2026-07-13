@@ -12,9 +12,10 @@ from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
-from .models import ControllerConfig, EMSGrant, EnergySnapshot, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
+from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
 from .thermal_budget import build_thermal_budget
+from .thermal_response import learn_thermal_response
 
 
 def _optional_entity(options: Mapping[str, object], data: Mapping[str, object], key: str) -> str | None:
@@ -58,6 +59,7 @@ class PVClimateController:
     last_house_plan: HousePlan | None = None
     last_zone_forecasts: dict[str, ZoneForecast] = field(default_factory=dict)
     _temperature_samples: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -106,6 +108,7 @@ class PVClimateController:
             sample, mode, cooling = states.get(zone.zone_id, (ZoneInput(None, False), "off", None))
             forecast = self._record_forecast(zone, sample.temperature_c)
             thermal_budget = build_thermal_budget(zone, sample.temperature_c, forecast)
+            thermal_response = self._record_thermal_response(zone, sample.temperature_c, mode)
             try:
                 delivered = float(str(cooling))
             except (TypeError, ValueError):
@@ -122,6 +125,7 @@ class PVClimateController:
                 forecast=forecast,
                 temperature_source=sample.temperature_source,
                 thermal_budget=thermal_budget,
+                thermal_response=thermal_response,
             ))
         self.last_house_plan = build_house_plan(
             HISENSE_5AMW125U4RTA,
@@ -131,6 +135,18 @@ class PVClimateController:
             min_pv_surplus_w=self.config.min_pv_surplus_w,
         )
         return self.last_house_plan
+
+    def _record_thermal_response(self, zone: ZoneConfig, temperature_c: float | None, mode: str) -> ThermalResponse | None:
+        """Learn only from observed mode states; no device command is involved."""
+        if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:
+            return None
+        now = monotonic()
+        samples = self._mode_samples.setdefault(zone.zone_id, [])
+        if not samples or samples[-1][1:] != (temperature_c, mode) or now - samples[-1][0] >= 60:
+            samples.append((now, temperature_c, mode))
+        cutoff = now - 2 * 3600
+        self._mode_samples[zone.zone_id] = samples = [sample for sample in samples if sample[0] >= cutoff]
+        return learn_thermal_response(samples)
 
     def _record_forecast(self, zone: ZoneConfig, temperature_c: float | None) -> ZoneForecast:
         """Keep a bounded in-memory trend; missing data never becomes a forecast."""

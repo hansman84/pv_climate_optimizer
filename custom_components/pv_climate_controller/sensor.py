@@ -275,4 +275,11 @@ def _zone_attributes(zone) -> dict[str, object]:
         "forecast_sample_count": None if zone.forecast is None else zone.forecast.sample_count,
         "data_quality": None if zone.forecast is None else zone.forecast.data_quality,
         "thermal_budget": zone.thermal_budget,
+        "thermal_response": None if zone.thermal_response is None else {
+            "passive_trend_c_per_h": zone.thermal_response.passive_trend_c_per_h,
+            "cooling_trend_c_per_h": zone.thermal_response.cooling_trend_c_per_h,
+            "observed_cooling_effect_c_per_h": zone.thermal_response.observed_cooling_effect_c_per_h,
+            "passive_sample_count": zone.thermal_response.passive_sample_count,
+            "cooling_sample_count": zone.thermal_response.cooling_sample_count,
+        },
     }

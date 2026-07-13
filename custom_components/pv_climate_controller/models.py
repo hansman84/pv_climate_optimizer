@@ -46,6 +46,17 @@ class ZoneForecast:
 
 
 @dataclass(frozen=True, slots=True)
+class ThermalResponse:
+    """Learned room response from observed, uncommanded operation."""
+
+    passive_trend_c_per_h: float | None
+    cooling_trend_c_per_h: float | None
+    observed_cooling_effect_c_per_h: float | None
+    passive_sample_count: int
+    cooling_sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ZoneDecision:
     """Recorder-friendly result of one zone evaluation."""
 

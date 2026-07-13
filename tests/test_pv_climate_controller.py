@@ -34,6 +34,7 @@ storage = _load("storage")
 outdoor_unit = _load("outdoor_unit")
 house = _load("house")
 thermal_budget = _load("thermal_budget")
+thermal_response = _load("thermal_response")
 
 
 class Clock:
@@ -495,3 +496,14 @@ def test_learning_snapshot_preserves_only_recent_temperature_samples() -> None:
     assert len(snapshot["temperature_samples"]["living"]) == 1
     assert len(restored._temperature_samples["living"]) == 1
     assert restored._temperature_samples["living"][0][1] == 24.0
+
+
+def test_thermal_response_learns_observed_cooling_effect() -> None:
+    profile = thermal_response.learn_thermal_response([
+        (0.0, 24.0, "off"), (3600.0, 25.0, "off"),
+        (3600.0, 25.0, "cool"), (7200.0, 23.0, "cool"),
+    ])
+
+    assert profile.passive_trend_c_per_h == 1.0
+    assert profile.cooling_trend_c_per_h == -2.0
+    assert profile.observed_cooling_effect_c_per_h == 3.0
