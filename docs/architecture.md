@@ -74,8 +74,10 @@ genutzte Temperaturquelle dabei aus.
 Das Temperaturbudget ergänzt die aktuelle Temperatur um Komfort- und
 Grenzreserve, Minuten bis zur erwarteten Überschreitung sowie einen daraus
 abgeleiteten Prioritätsbonus. Es lernt ausschließlich aus lokalen Messpunkten
-seit dem Start. Damit kann der Shadow-Plan eine frühzeitige Kühlung empfehlen,
-ohne aus einer unsicheren oder fehlenden Historie eine Prognose zu erfinden.
+der letzten zwei Stunden. Diese kurze, nur aus Alter und Temperatur bestehende
+Lernhistorie überlebt einen Neustart. Damit kann der Shadow-Plan eine
+frühzeitige Kühlung empfehlen, ohne aus einer unsicheren oder fehlenden
+Historie eine Prognose zu erfinden.
 
 ## Zonenverwaltung
 

@@ -24,4 +24,5 @@ class EvaluateNowButton(ControllerEntity, ButtonEntity):
         # configured zones, not merely the legacy first-zone fields.
         from . import _async_refresh_controller
 
-        await _async_refresh_controller(self.hass, self.controller)
+        store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
+        await _async_refresh_controller(self.hass, self.controller, store)

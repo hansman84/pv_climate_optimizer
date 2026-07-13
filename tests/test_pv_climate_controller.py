@@ -481,3 +481,17 @@ def test_house_plan_can_prioritize_predicted_breach_before_current_demand() -> N
 
     assert plan.thermal_demand_count == 1
     assert "Prognose priorisiert" in plan.reason
+
+
+def test_learning_snapshot_preserves_only_recent_temperature_samples() -> None:
+    runtime = controller.PVClimateController.from_config({"shadow_mode": True}, {})
+    now = controller.monotonic()
+    runtime._temperature_samples = {"living": [(now - 120, 24.0), (now - 8000, 23.0)]}
+
+    snapshot = runtime.export_learning_state()
+    restored = controller.PVClimateController.from_config({"shadow_mode": True}, {})
+    restored.restore_learning_state(snapshot)
+
+    assert len(snapshot["temperature_samples"]["living"]) == 1
+    assert len(restored._temperature_samples["living"]) == 1
+    assert restored._temperature_samples["living"][0][1] == 24.0

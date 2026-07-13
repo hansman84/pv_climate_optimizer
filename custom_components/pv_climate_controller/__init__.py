@@ -6,10 +6,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .controller import PVClimateController
 from .models import ZoneInput
+from .storage import pack, unpack
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.SENSOR,
@@ -25,11 +27,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a controller entry in Shadow Mode by default."""
     controller = PVClimateController.from_config(entry.data, entry.options)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = controller
+    store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.learning")
+    controller.restore_learning_state(unpack(await store.async_load()))
+    hass.data[DOMAIN].setdefault("_learning_stores", {})[entry.entry_id] = store
     source_entities = _configured_entities(controller)
     if source_entities:
-        entry.async_on_unload(async_track_state_change_event(hass, source_entities, _handle_state_change(hass, controller)))
+        entry.async_on_unload(async_track_state_change_event(hass, source_entities, _handle_state_change(hass, controller, store)))
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    await _async_refresh_controller(hass, controller)
+    await _async_refresh_controller(hass, controller, store)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -39,6 +44,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        hass.data[DOMAIN].get("_learning_stores", {}).pop(entry.entry_id, None)
     return unloaded
 
 
@@ -61,17 +67,17 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
     ]
 
 
-def _handle_state_change(hass: HomeAssistant, controller: PVClimateController):
+def _handle_state_change(hass: HomeAssistant, controller: PVClimateController, store: Store):
     """Build a read-only state listener for selected inputs."""
 
     @callback
     def _listener(_: Event) -> None:
-        hass.async_create_task(_async_refresh_controller(hass, controller))
+        hass.async_create_task(_async_refresh_controller(hass, controller, store))
 
     return _listener
 
 
-async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateController) -> None:
+async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateController, store: Store | None = None) -> None:
     """Refresh diagnostics from HA state; no service calls are made."""
     config = controller.config
     zone = config.zone
@@ -116,6 +122,8 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
             None if cooling_state is None else cooling_state.state,
         )
     controller.evaluate_house(house_states)
+    if store is not None:
+        store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()
 
 

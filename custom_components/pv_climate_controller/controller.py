@@ -159,6 +159,39 @@ class PVClimateController:
         self.last_zone_forecasts[zone.zone_id] = forecast
         return forecast
 
+    def export_learning_state(self) -> dict[str, object]:
+        """Return a secret-free, age-based snapshot safe across restarts."""
+        now = monotonic()
+        return {
+            "temperature_samples": {
+                zone_id: [[round(now - timestamp, 3), temperature] for timestamp, temperature in samples if now - timestamp <= 7200]
+                for zone_id, samples in self._temperature_samples.items()
+            }
+        }
+
+    def restore_learning_state(self, state: object) -> None:
+        """Restore only bounded numeric samples; malformed data is ignored."""
+        if not isinstance(state, dict) or not isinstance(state.get("temperature_samples"), dict):
+            return
+        now = monotonic()
+        restored: dict[str, list[tuple[float, float]]] = {}
+        for zone_id, samples in state["temperature_samples"].items():
+            if not isinstance(zone_id, str) or not isinstance(samples, list):
+                continue
+            valid = []
+            for sample in samples:
+                if not isinstance(sample, list) or len(sample) != 2:
+                    continue
+                try:
+                    age, temperature = float(sample[0]), float(sample[1])
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= age <= 7200:
+                    valid.append((now - age, temperature))
+            if valid:
+                restored[zone_id] = valid
+        self._temperature_samples = restored
+
     @property
     def state(self) -> ControllerState:
         """Return an explicit, fail-safe global state."""
