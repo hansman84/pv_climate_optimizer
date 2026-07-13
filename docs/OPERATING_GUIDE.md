@@ -22,25 +22,31 @@ Unter **Einstellungen → Geräte & Dienste → PV Klimaregler → Konfigurieren
 1. **Zone hinzufügen** öffnen.
 2. Raumname, Klima-Entity und Temperatursensor auswählen.
 3. Optional die Kühlleistung in BTU/h auswählen.
-4. Priorität 1–100 setzen; höher bedeutet bei gleicher Temperaturdringlichkeit
-   zuerst im Shadow-Plan.
+4. Komforttemperatur, harte Temperaturgrenze und Priorität 1–100 setzen;
+   höher bedeutet bei gleicher Temperaturdringlichkeit zuerst im Shadow-Plan.
 
 Der bestehende Wohnzimmer-Pilot wird beim ersten Hinzufügen als Hauszone
-übernommen. Komforttemperatur und harte Grenze bleiben pro bestehender
-Integration steuerbar; neue Zonen verwenden 23,5 °C und 25,5 °C als Standard.
+übernommen. Neue Zonen verwenden 23,5 °C und 25,5 °C als Standard. Über
+**Zonen bearbeiten oder entfernen** lassen sich alle Zuordnungen, Grenzwerte
+und Prioritäten später ändern. Das Entfernen löscht nur die Zuordnung des
+Reglers; Klima-Entity und Automationen bleiben unverändert.
 
 ## Betriebsarten
 
 `cool` und `heat` sind temperaturrelevante Betriebsarten. `fan_only`, `dry`,
 `auto`, Lüfterstufe und Swing werden sichtbar beobachtet, aber nicht verändert.
 So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
+Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
+`dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
 ## Dashboard
 
 Das Dashboard **PV Klimaregler** zeigt PV-Lage, Überschuss, die aktuelle
-Shadow-Entscheidung und verstellbare Sicherheitswerte. Der Haus-Kühlplan
-enthält die aktive Zonenzahl, die Zahl thermischer Anforderungen, das
-Nennbudget und die aktuelle Prioritätsreihenfolge.
+Shadow-Entscheidung und verstellbare Sicherheitswerte. Zusätzlich erzeugt jede
+Zone einen eigenen **Shadow-Plan** mit Temperatur, Betriebsmodus, Priorität,
+BTU/h-Beobachtung und Reason-Code. Der Haus-Kühlplan enthält alle Raumpläne,
+die aktive Zonenzahl, die Zahl thermischer Anforderungen, das Nennbudget und
+die aktuelle Prioritätsreihenfolge.
 
 ## Produktiver Pilot
 

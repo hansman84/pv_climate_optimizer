@@ -63,3 +63,8 @@ eindeutige Kühl- oder Heizanforderungen.
 Die bisherige Hisense-LAN-Untersuchung bleibt als
 [`docs/hisense_local_poc.md`](docs/hisense_local_poc.md) erhalten und ist
 nicht Teil des HACS-Releases.
+
+Die technische Datenverarbeitung, die Raum-Shadow-Pläne und die
+Sicherheitsinvarianten sind in [`docs/architecture.md`](docs/architecture.md)
+beschrieben. Die laufende Bedienung steht in
+[`docs/OPERATING_GUIDE.md`](docs/OPERATING_GUIDE.md).

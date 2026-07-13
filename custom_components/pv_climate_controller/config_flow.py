@@ -66,36 +66,110 @@ class PVClimateControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
     """Edit policy and Shadow Mode without mutating entry data."""
 
+    _selected_zone_id: str | None = None
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["general", "add_zone"])
+        return self.async_show_menu(step_id="init", menu_options=["general", "add_zone", "manage_zone"])
 
     async def async_step_general(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
-            options = {**self.config_entry.options, **user_input}
+            options = {**self._options(), **user_input}
             return self.async_create_entry(data=options)
-        defaults = {**self.config_entry.data, **self.config_entry.options}
-        return self.async_show_form(step_id="general", data_schema=_schema(defaults))
+        return self.async_show_form(step_id="general", data_schema=_schema(self._options()))
 
     async def async_step_add_zone(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        schema = vol.Schema({
-            vol.Required("name"): str,
-            vol.Required("climate_entity_id"): EntitySelector(EntitySelectorConfig(domain="climate", multiple=False)),
-            vol.Required("temperature_entity_id"): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
-            vol.Optional("cooling_power_entity_id"): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
-            vol.Required("priority", default=50): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
-        })
+        schema = _zone_schema()
         if user_input is None:
             return self.async_show_form(step_id="add_zone", data_schema=schema)
-        options = {**self.config_entry.data, **self.config_entry.options}
-        zones = list(options.get(CONF_HOUSE_ZONES, []))
-        if not zones and isinstance(options.get(CONF_CLIMATE_ENTITY_ID), str) and isinstance(options.get(CONF_TEMPERATURE_ENTITY_ID), str):
-            zones.append({
-                "zone_id": "configured_zone", "name": options.get(CONF_ZONE_NAME, "Wohnzone"),
-                "climate_entity_id": options[CONF_CLIMATE_ENTITY_ID], "temperature_entity_id": options[CONF_TEMPERATURE_ENTITY_ID],
-                "priority": 50,
-            })
+        options = self._options()
+        zones = self._zones(options)
         if any(zone.get("climate_entity_id") == user_input["climate_entity_id"] for zone in zones if isinstance(zone, dict)):
             return self.async_show_form(step_id="add_zone", data_schema=schema, errors={"base": "already_configured"})
+        if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
+            return self.async_show_form(step_id="add_zone", data_schema=schema, errors={"base": "invalid_temperature_limits"})
         zones.append({"zone_id": user_input["climate_entity_id"], **user_input})
         options[CONF_HOUSE_ZONES] = zones
         return self.async_create_entry(data=options)
+
+    async def async_step_manage_zone(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Select an existing explicit room mapping for maintenance."""
+        zones = self._zones(self._options())
+        if not zones:
+            return self.async_abort(reason="no_zones")
+        choices = {str(zone["zone_id"]): str(zone["name"]) for zone in zones}
+        schema = vol.Schema({vol.Required("zone_id"): vol.In(choices)})
+        if user_input is None:
+            return self.async_show_form(step_id="manage_zone", data_schema=schema)
+        self._selected_zone_id = user_input["zone_id"]
+        return await self.async_step_zone_action()
+
+    async def async_step_zone_action(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        return self.async_show_menu(step_id="zone_action", menu_options=["edit_zone", "remove_zone"])
+
+    async def async_step_edit_zone(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        zone = self._selected_zone()
+        if zone is None:
+            return self.async_abort(reason="zone_not_found")
+        schema = _zone_schema(zone)
+        if user_input is None:
+            return self.async_show_form(step_id="edit_zone", data_schema=schema)
+        if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
+            return self.async_show_form(step_id="edit_zone", data_schema=schema, errors={"base": "invalid_temperature_limits"})
+        options = self._options()
+        zones = self._zones(options)
+        if any(
+            item.get("climate_entity_id") == user_input["climate_entity_id"] and item.get("zone_id") != self._selected_zone_id
+            for item in zones
+        ):
+            return self.async_show_form(step_id="edit_zone", data_schema=schema, errors={"base": "already_configured"})
+        options[CONF_HOUSE_ZONES] = [
+            {"zone_id": item["zone_id"], **user_input} if item.get("zone_id") == self._selected_zone_id else item
+            for item in zones
+        ]
+        return self.async_create_entry(data=options)
+
+    async def async_step_remove_zone(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Remove only the user-selected mapping; climate entities are untouched."""
+        zone = self._selected_zone()
+        if zone is None:
+            return self.async_abort(reason="zone_not_found")
+        if user_input is None:
+            return self.async_show_form(step_id="remove_zone", data_schema=vol.Schema({vol.Required("confirm", default=False): bool}))
+        if not user_input["confirm"]:
+            return self.async_abort(reason="remove_cancelled")
+        options = self._options()
+        options[CONF_HOUSE_ZONES] = [zone for zone in self._zones(options) if zone.get("zone_id") != self._selected_zone_id]
+        return self.async_create_entry(data=options)
+
+    def _options(self) -> dict[str, Any]:
+        return {**self.config_entry.data, **self.config_entry.options}
+
+    def _zones(self, options: dict[str, Any]) -> list[dict[str, Any]]:
+        zones = [dict(zone) for zone in options.get(CONF_HOUSE_ZONES, []) if isinstance(zone, dict)]
+        if not zones and isinstance(options.get(CONF_CLIMATE_ENTITY_ID), str) and isinstance(options.get(CONF_TEMPERATURE_ENTITY_ID), str):
+            zones.append({
+                "zone_id": "configured_zone", "name": options.get(CONF_ZONE_NAME, "Wohnzone"),
+                "climate_entity_id": options[CONF_CLIMATE_ENTITY_ID],
+                "temperature_entity_id": options[CONF_TEMPERATURE_ENTITY_ID],
+                "comfort_temperature": options.get(CONF_COMFORT_TEMPERATURE, 23.5),
+                "hard_max_temperature": options.get(CONF_HARD_MAX_TEMPERATURE, 25.5),
+                "priority": 50,
+            })
+        return zones
+
+    def _selected_zone(self) -> dict[str, Any] | None:
+        return next((zone for zone in self._zones(self._options()) if zone.get("zone_id") == self._selected_zone_id), None)
+
+
+def _zone_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Schema shared by add and edit; all IDs must be explicitly chosen."""
+    values = defaults or {}
+    return vol.Schema({
+        vol.Required("name", default=values.get("name", "")): str,
+        vol.Required("climate_entity_id", default=values.get("climate_entity_id")): EntitySelector(EntitySelectorConfig(domain="climate", multiple=False)),
+        vol.Required("temperature_entity_id", default=values.get("temperature_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+        vol.Optional("cooling_power_entity_id", default=values.get("cooling_power_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+        vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
+        vol.Required("hard_max_temperature", default=values.get("hard_max_temperature", 25.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
+        vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+    })

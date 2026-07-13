@@ -17,6 +17,23 @@ class ZoneTelemetry:
     hvac_mode: str
     delivered_cooling_btu_h: float | None
     priority: int = 50
+    name: str = ""
+    temperature_c: float | None = None
+    climate_available: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ZonePlan:
+    """A complete read-only outcome for one explicitly configured room."""
+
+    zone_id: str
+    name: str
+    temperature_c: float | None
+    hvac_mode: str
+    climate_available: bool
+    priority: int
+    observed_cooling_btu_h: float | None
+    decision: ZoneDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,11 +46,14 @@ class HousePlan:
     nominal_budget_btu_h: float
     reason: str
     recommended_zone_ids: tuple[str, ...] = ()
+    zones: tuple[ZonePlan, ...] = ()
 
 
 def build_house_plan(spec: OutdoorUnitSpec, zones: list[ZoneTelemetry]) -> HousePlan:
     """Summarize all confirmed zones without making a control decision."""
-    active = [zone for zone in zones if zone.hvac_mode in {"cool", "dry", "auto"}]
+    # ``auto`` is deliberately not interpreted as cooling: it may select heat.
+    # The integration observes it, but never derives thermal output from it.
+    active = [zone for zone in zones if zone.hvac_mode in {"cool", "dry"}]
     demand = [zone for zone in zones if zone.decision.demand]
     delivered = sum(max(0.0, zone.delivered_cooling_btu_h or 0.0) for zone in active)
     ranked = tuple(zone.zone_id for zone in sorted(demand, key=lambda zone: (zone.decision.score, zone.priority), reverse=True))
@@ -47,4 +67,17 @@ def build_house_plan(spec: OutdoorUnitSpec, zones: list[ZoneTelemetry]) -> House
         reason = "Gemeinsames Nennbudget verfügbar; Priorisierung folgt der Temperaturdringlichkeit."
     else:
         reason = "Kein thermischer Kühlbedarf."
-    return HousePlan(len(active), len(demand), delivered, spec.nominal_cooling_btu_h, reason, ranked)
+    zone_plans = tuple(
+        ZonePlan(
+            zone_id=zone.zone_id,
+            name=zone.name or zone.zone_id,
+            temperature_c=zone.temperature_c,
+            hvac_mode=zone.hvac_mode,
+            climate_available=zone.climate_available,
+            priority=zone.priority,
+            observed_cooling_btu_h=zone.delivered_cooling_btu_h,
+            decision=zone.decision,
+        )
+        for zone in zones
+    )
+    return HousePlan(len(active), len(demand), delivered, spec.nominal_cooling_btu_h, reason, ranked, zone_plans)

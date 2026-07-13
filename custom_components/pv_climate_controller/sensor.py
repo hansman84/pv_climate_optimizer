@@ -14,7 +14,7 @@ from .entity import ControllerEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     controller = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
+    entities = [
         ControllerStateSensor(controller, entry.entry_id, "controller_state"),
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
@@ -25,7 +25,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
         HouseCoolingSensor(controller, entry.entry_id, "house_cooling"),
         HousePlanSensor(controller, entry.entry_id, "house_plan"),
-    ])
+    ]
+    entities.extend(
+        ZonePlanSensor(controller, entry.entry_id, f"zone_plan_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    async_add_entities(entities)
 
 
 class ControllerStateSensor(ControllerEntity, SensorEntity):
@@ -161,8 +166,63 @@ class HousePlanSensor(ControllerEntity, SensorEntity):
         return "Noch keine Hausauswertung." if plan is None else plan.reason
 
     @property
-    def extra_state_attributes(self) -> dict[str, int | float]:
+    def extra_state_attributes(self) -> dict[str, object]:
         plan = self.controller.last_house_plan
         if plan is None:
             return {}
-        return {"active_zones": plan.active_zone_count, "thermal_demand_zones": plan.thermal_demand_count, "nominal_budget_btu_h": plan.nominal_budget_btu_h, "priority_order": ", ".join(plan.recommended_zone_ids)}
+        return {
+            "active_zones": plan.active_zone_count,
+            "thermal_demand_zones": plan.thermal_demand_count,
+            "nominal_budget_btu_h": round(plan.nominal_budget_btu_h, 1),
+            "observed_cooling_btu_h": round(plan.observed_cooling_btu_h, 1),
+            "priority_order": list(plan.recommended_zone_ids),
+            "zones": [_zone_attributes(zone) for zone in plan.zones],
+        }
+
+
+class ZonePlanSensor(ControllerEntity, SensorEntity):
+    """One explainable Shadow-Mode result per configured zone."""
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        plan = self.controller.last_house_plan
+        if plan is None:
+            return None
+        return next((zone for zone in plan.zones if zone.zone_id == self._zone_id), None)
+
+    @property
+    def name(self) -> str:
+        zone = self._zone
+        return f"{zone.name if zone else self._zone_id} – Shadow-Plan"
+
+    @property
+    def native_value(self) -> str:
+        zone = self._zone
+        return "Noch keine Zonenauswertung." if zone is None else zone.decision.reason_text
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        return {} if zone is None else _zone_attributes(zone)
+
+
+def _zone_attributes(zone) -> dict[str, object]:
+    """Convert pure plan data to recorder-safe HA attributes."""
+    return {
+        "zone_id": zone.zone_id,
+        "name": zone.name,
+        "temperature_c": zone.temperature_c,
+        "hvac_mode": zone.hvac_mode,
+        "climate_available": zone.climate_available,
+        "priority": zone.priority,
+        "observed_cooling_btu_h": zone.observed_cooling_btu_h,
+        "demand": zone.decision.demand,
+        "score": zone.decision.score,
+        "state": zone.decision.state.value,
+        "reason_code": zone.decision.reason_code,
+        "reason": zone.decision.reason_text,
+    }

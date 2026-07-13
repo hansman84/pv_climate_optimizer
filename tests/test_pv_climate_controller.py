@@ -338,3 +338,35 @@ def test_house_plan_orders_equal_thermal_demand_by_priority() -> None:
     )
 
     assert plan.recommended_zone_ids == ("sleep", "living")
+
+
+def test_house_plan_exposes_each_room_and_does_not_count_auto_as_cooling() -> None:
+    demand = models.ZoneDecision("living", const.ZoneState.REQUESTED, True, 80, True, "demand", "Kühlbedarf")
+    plan = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry(
+            "living", demand, "auto", 5000, 70,
+            name="Wohnzimmer", temperature_c=26.2, climate_available=True,
+        )],
+    )
+
+    assert plan.active_zone_count == 0
+    assert plan.observed_cooling_btu_h == 0
+    assert plan.zones[0].name == "Wohnzimmer"
+    assert plan.zones[0].temperature_c == 26.2
+    assert plan.zones[0].decision.reason_code == "demand"
+
+
+def test_house_zone_uses_individual_temperature_limits() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"house_zones": [{
+            "zone_id": "sleep", "name": "Schlafzimmer", "climate_entity_id": "climate.sleep",
+            "temperature_entity_id": "sensor.sleep", "comfort_temperature": 22.0,
+            "hard_max_temperature": 24.0, "priority": 60,
+        }]},
+    )
+
+    plan = runtime.evaluate_house({"sleep": (models.ZoneInput(24.2, True), "off", None)})
+
+    assert plan.zones[0].decision.reason_code == "hard_temperature_limit"
