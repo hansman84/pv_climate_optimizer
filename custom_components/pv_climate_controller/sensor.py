@@ -8,7 +8,7 @@ from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, EnergyPolicy
 from .entity import ControllerEntity
 
 
@@ -22,6 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         PVPowerSensor(controller, entry.entry_id, "pv_power"),
         ExportPowerSensor(controller, entry.entry_id, "export_power"),
         PVForecastPowerSensor(controller, entry.entry_id, "pv_forecast_power"),
+        EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
     ])
 
 
@@ -108,3 +109,33 @@ class PVForecastPowerSensor(_PowerSensor):
     @property
     def extra_state_attributes(self) -> dict[str, str | None]:
         return {"source_entity_id": self.controller.config.pv_forecast_power_entity_id}
+
+
+class EnergyRecommendationSensor(ControllerEntity, SensorEntity):
+    """Explain how the selected energy policy would treat the current PV state."""
+
+    _attr_name = "PV-Entscheidung"
+
+    @property
+    def native_value(self) -> str:
+        decision = self.controller.last_decision
+        if decision is None:
+            return "Keine Zonenauswertung verfügbar."
+        if not decision.demand:
+            return "Kein Kühlbedarf."
+        export_power = self.controller.last_energy.export_power_w
+        surplus = export_power is not None and export_power >= self.controller.config.min_pv_surplus_w
+        policy = self.controller.config.energy_policy
+        if policy is EnergyPolicy.STRICT_PV:
+            return "PV-Freigabe vorhanden; Kühlung wäre zulässig." if surplus else "PV-Freigabe fehlt; würde mit Kühlung warten."
+        if policy is EnergyPolicy.COMFORT_FIRST:
+            return "Komfort priorisiert; PV-Lage wird mit angezeigt."
+        return "PV wird bevorzugt; PV-Freigabe vorhanden." if surplus else "PV wird bevorzugt; noch kein Mindestüberschuss."
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        return {
+            "energy_policy": self.controller.config.energy_policy.value,
+            "export_power_w": self.controller.last_energy.export_power_w,
+            "minimum_surplus_w": self.controller.config.min_pv_surplus_w,
+        }

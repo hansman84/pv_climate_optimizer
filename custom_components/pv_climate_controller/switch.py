@@ -7,12 +7,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_EXPORT_POWER_POSITIVE, CONF_SHADOW_MODE, DOMAIN
 from .entity import ControllerEntity
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
-    async_add_entities([ShadowModeSwitch(hass.data[DOMAIN][entry.entry_id], entry.entry_id, "shadow_mode")])
+    controller = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities([
+        ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
+        ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
+    ])
 
 
 class ShadowModeSwitch(ControllerEntity, SwitchEntity):
@@ -32,4 +36,24 @@ class ShadowModeSwitch(ControllerEntity, SwitchEntity):
         """Disable evaluations; this does not enable productive control."""
         self.controller.set_shadow_mode(False)
         await self.async_persist_option(CONF_SHADOW_MODE, False)
+        self.controller.notify_state_listeners()
+
+
+class ExportPowerPositiveSwitch(ControllerEntity, SwitchEntity):
+    """Expose the selected net-meter sign convention without changing its source."""
+
+    _attr_name = "Netzeinspeisung positiv"
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.export_power_positive
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_export_power_positive(True)
+        await self.async_persist_option(CONF_EXPORT_POWER_POSITIVE, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_export_power_positive(False)
+        await self.async_persist_option(CONF_EXPORT_POWER_POSITIVE, False)
         self.controller.notify_state_listeners()

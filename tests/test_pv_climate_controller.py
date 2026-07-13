@@ -262,6 +262,19 @@ def test_options_can_replace_confirmed_input_entities() -> None:
     assert runtime.config.zone.temperature_entity_id == "sensor.confirmed"
 
 
+def test_export_sign_setting_changes_only_the_normalized_energy_reading() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True, "export_power_entity_id": "sensor.confirmed_export", "export_power_positive": False},
+        {},
+    )
+
+    runtime.set_export_power_positive(True)
+    snapshot = runtime.evaluate_energy(export_power_state="1300", export_power_unit="W")
+
+    assert snapshot.export_power_w == 1300
+    assert runtime.config.export_power_positive
+
+
 def test_forecast_uses_observed_trend() -> None:
     trend = forecasting.temperature_trend_c_per_h([(0, 23.0), (1800, 23.5), (3600, 24.0)])
 

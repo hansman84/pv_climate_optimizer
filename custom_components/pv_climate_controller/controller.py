@@ -196,6 +196,10 @@ class PVClimateController:
         """Update the diagnostic PV threshold without enabling control."""
         self.config = replace(self.config, min_pv_surplus_w=max(0.0, watts))
 
+    def set_export_power_positive(self, positive_when_exporting: bool) -> None:
+        """Set only the display normalization convention for the selected source."""
+        self.config = replace(self.config, export_power_positive=positive_when_exporting)
+
     async def async_apply_last_decision(self) -> CommandResult:
         """Demonstrate the sole write boundary; Gate C always blocks it."""
         zone_id = self.config.zone.zone_id if self.config.zone else "unconfigured_zone"
