@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_HARD_MAX_TEMPERATURE, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .models import ControllerConfig, EMSGrant, ZoneConfig, ZoneDecision, ZoneInput
@@ -32,7 +32,16 @@ class PVClimateController:
         temperature_id = data.get(CONF_TEMPERATURE_ENTITY_ID)
         zone = None
         if isinstance(climate_id, str) and isinstance(temperature_id, str):
-            zone = ZoneConfig("configured_zone", str(data.get(CONF_ZONE_NAME, "Zone")), climate_id, temperature_id)
+            comfort = float(options.get(CONF_COMFORT_TEMPERATURE, data.get(CONF_COMFORT_TEMPERATURE, 24.0)))
+            hard_max = float(options.get(CONF_HARD_MAX_TEMPERATURE, data.get(CONF_HARD_MAX_TEMPERATURE, 25.0)))
+            zone = ZoneConfig(
+                "configured_zone",
+                str(options.get(CONF_ZONE_NAME, data.get(CONF_ZONE_NAME, "Zone"))),
+                climate_id,
+                temperature_id,
+                comfort_temperature=comfort,
+                hard_max_temperature=max(comfort, hard_max),
+            )
         grant_entity = data.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID)
         stale_after = options.get(CONF_EMS_STALE_AFTER_S, data.get(CONF_EMS_STALE_AFTER_S, 300.0))
         config = ControllerConfig(
@@ -101,6 +110,28 @@ class PVClimateController:
         """Refresh diagnostic entities after a Shadow Mode evaluation."""
         for listener in tuple(self._state_listeners):
             listener()
+
+    def set_shadow_mode(self, enabled: bool) -> None:
+        """Update the UI-visible mode; the command adapter remains hard locked."""
+        self.config = replace(self.config, shadow_mode=enabled)
+
+    def set_energy_policy(self, policy: EnergyPolicy) -> None:
+        """Update the selected evaluation policy."""
+        self.config = replace(self.config, energy_policy=policy)
+
+    def set_comfort_temperature(self, temperature: float) -> None:
+        """Update the zone comfort threshold."""
+        if self.config.zone is None:
+            return
+        hard_max = max(temperature, self.config.zone.hard_max_temperature)
+        self.config = replace(self.config, zone=replace(self.config.zone, comfort_temperature=temperature, hard_max_temperature=hard_max))
+
+    def set_hard_max_temperature(self, temperature: float) -> None:
+        """Update the zone hard limit without allowing it below comfort."""
+        if self.config.zone is None:
+            return
+        hard_max = max(temperature, self.config.zone.comfort_temperature)
+        self.config = replace(self.config, zone=replace(self.config.zone, hard_max_temperature=hard_max))
 
     async def async_apply_last_decision(self) -> CommandResult:
         """Demonstrate the sole write boundary; Gate C always blocks it."""

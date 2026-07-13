@@ -196,6 +196,26 @@ def test_raw_ha_states_are_evaluated_without_a_write() -> None:
     assert runtime.last_ems_grant.stages == 0
 
 
+def test_runtime_controls_update_thresholds_and_notify_diagnostics() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True, "climate_entity_id": "climate.confirmed", "temperature_entity_id": "sensor.confirmed"},
+        {},
+    )
+    notifications = []
+    runtime.add_state_listener(lambda: notifications.append("updated"))
+
+    runtime.set_energy_policy(const.EnergyPolicy.COMFORT_FIRST)
+    runtime.set_comfort_temperature(25.0)
+    runtime.set_hard_max_temperature(24.0)
+    runtime.notify_state_listeners()
+
+    assert runtime.config.energy_policy is const.EnergyPolicy.COMFORT_FIRST
+    assert runtime.config.zone is not None
+    assert runtime.config.zone.comfort_temperature == 25.0
+    assert runtime.config.zone.hard_max_temperature == 25.0
+    assert notifications == ["updated"]
+
+
 def test_forecast_uses_observed_trend() -> None:
     trend = forecasting.temperature_trend_c_per_h([(0, 23.0), (1800, 23.5), (3600, 24.0)])
 
