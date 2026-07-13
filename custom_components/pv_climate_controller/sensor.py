@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from time import monotonic
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfPower, UnitOfTime
@@ -398,8 +400,23 @@ class ZoneThermalProfileSensor(_ZoneMetricSensor):
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         profile = self.controller.last_thermal_profiles.get(self._zone_id)
+        samples = self.controller._thermal_context_samples.get(self._zone_id, [])
+        configured_zone = next((zone for zone in self.controller.config.house_zones if zone.zone_id == self._zone_id), None)
+        last_sample_age_minutes = None if not samples else round((monotonic() - samples[-1][0]) / 60, 1)
+        source_status = {
+            "outdoor_temperature": self.controller.config.outdoor_temperature_entity_id is not None,
+            "solar_irradiance": self.controller.config.solar_irradiance_entity_id is not None,
+            "sun_position": self.controller.config.sun_entity_id is not None,
+            "shade_entities": 0 if configured_zone is None else len(configured_zone.shade_entity_ids),
+            "facade_azimuths": 0 if configured_zone is None else len(configured_zone.facade_azimuths),
+        }
         if profile is None:
-            return {"meaning": "Für dieses Raumprofil fehlen noch kontextuelle Datenquellen oder Beobachtungen."}
+            return {
+                "meaning": "Für dieses Raumprofil fehlen noch kontextuelle Datenquellen oder Beobachtungen.",
+                "context_samples_total": len(samples),
+                "last_context_sample_age_minutes": last_sample_age_minutes,
+                "source_status": source_status,
+            }
         return {
             "meaning": "Nur beobachtete Temperaturänderungen in vergleichbaren Zeitintervallen.",
             "passive_sun_trend_c_per_h": profile.passive_sun_trend_c_per_h,
@@ -408,6 +425,9 @@ class ZoneThermalProfileSensor(_ZoneMetricSensor):
             "passive_sun_samples": profile.passive_sun_samples,
             "passive_shaded_samples": profile.passive_shaded_samples,
             "cooling_samples": profile.cooling_samples,
+            "context_samples_total": len(samples),
+            "last_context_sample_age_minutes": last_sample_age_minutes,
+            "source_status": source_status,
         }
 
 
