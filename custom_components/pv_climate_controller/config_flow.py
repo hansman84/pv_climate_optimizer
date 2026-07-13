@@ -9,7 +9,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
+from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig, NumberSelector, NumberSelectorConfig, NumberSelectorMode
 
 from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
 
@@ -130,7 +130,7 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
         if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
             return self.async_show_form(step_id="add_zone_tuning", data_schema=schema, errors={"base": "invalid_temperature_limits"})
         zones = self._zones(self._options())
-        zones.append({**self._draft_zone, **user_input})
+        zones.append({**self._draft_zone, **_normalize_zone_tuning(user_input)})
         options = self._options()
         options[CONF_HOUSE_ZONES] = zones
         return self.async_create_entry(data=options)
@@ -180,7 +180,7 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
         options = self._options()
         zones = self._zones(options)
         options[CONF_HOUSE_ZONES] = [
-            {**self._draft_zone, **user_input} if item.get("zone_id") == self._selected_zone_id else item
+            {**self._draft_zone, **_normalize_zone_tuning(user_input)} if item.get("zone_id") == self._selected_zone_id else item
             for item in zones
         ]
         return self.async_create_entry(data=options)
@@ -257,6 +257,9 @@ def _zone_connection_schema(defaults: dict[str, Any] | None = None) -> vol.Schem
 def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Comfort, capacity and explicit fallback choices for a connected room."""
     values = defaults or {}
+    azimuths = values.get("facade_azimuths", [])
+    primary_azimuth = azimuths[0] if isinstance(azimuths, list) and azimuths else None
+    secondary_azimuth = azimuths[1] if isinstance(azimuths, list) and len(azimuths) > 1 else None
     return vol.Schema({
         vol.Optional("cooling_power_entity_id", default=values.get("cooling_power_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
         vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
@@ -264,6 +267,19 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
         vol.Optional("shade_entity_ids", default=values.get("shade_entity_ids", [])): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
-        vol.Optional("facade_azimuths", default=values.get("facade_azimuths", [])): [vol.All(vol.Coerce(float), vol.Range(min=0, max=359))],
-        vol.Optional("overhang_cutoff_elevation", default=values.get("overhang_cutoff_elevation")): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=90))),
+        vol.Optional("facade_azimuth_primary", default=primary_azimuth): NumberSelector(NumberSelectorConfig(min=0, max=359, step=1, mode=NumberSelectorMode.BOX)),
+        vol.Optional("facade_azimuth_secondary", default=secondary_azimuth): NumberSelector(NumberSelectorConfig(min=0, max=359, step=1, mode=NumberSelectorMode.BOX)),
+        vol.Optional("overhang_cutoff_elevation", default=values.get("overhang_cutoff_elevation")): NumberSelector(NumberSelectorConfig(min=0, max=90, step=1, mode=NumberSelectorMode.BOX)),
     })
+
+
+def _normalize_zone_tuning(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Store a stable azimuth list while presenting only serializable fields."""
+    tuning = dict(user_input)
+    azimuths = [
+        float(tuning.pop(key))
+        for key in ("facade_azimuth_primary", "facade_azimuth_secondary")
+        if isinstance(tuning.get(key), (int, float))
+    ]
+    tuning["facade_azimuths"] = azimuths
+    return tuning
