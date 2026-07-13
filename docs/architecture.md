@@ -39,6 +39,9 @@ BTU/h-Leistungssensor. Die Raumentscheidung ist unabhängig von der PV-Lage:
 Sie beschreibt ausschließlich den thermischen Bedarf. Die PV-Entscheidung
 beschreibt getrennt, wie die gewählte Energiepolitik diesen Bedarf bewerten
 würde. Damit bleiben Komfort- und Energierisiko sichtbar statt vermischt.
+Der Hausplan führt diese Ergebnisse mit `energy_permits_cooling` und
+`energy_reason` zusammen. Das ist eine transparente Empfehlung, keine
+Freigabe und kein Gerätebefehl.
 
 Der Hausplan verwendet für die Hisense 5AMW125U4RTA ein konservatives,
 gemeinsames Nenn-Kühlbudget von 12,5 kW (ca. 42.652 BTU/h) und maximal fünf

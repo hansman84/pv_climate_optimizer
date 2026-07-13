@@ -401,3 +401,27 @@ def test_zone_forecast_requires_history_and_uses_valid_samples_only() -> None:
     assert second.zones[0].forecast is not None
     assert second.zones[0].forecast.trend_c_per_h == 1.0
     assert second.zones[0].forecast.predicted_temperature_60m_c == 25.0
+
+
+def test_house_plan_explains_pv_policy_without_controlling_devices() -> None:
+    demand = models.ZoneDecision("living", const.ZoneState.REQUESTED, True, 50, True, "demand", "Kühlbedarf")
+
+    strict = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry("living", demand, "off", None)],
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        export_power_w=200,
+        min_pv_surplus_w=1000,
+    )
+    comfort = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry("living", demand, "off", None)],
+        energy_policy=const.EnergyPolicy.COMFORT_FIRST,
+        export_power_w=200,
+        min_pv_surplus_w=1000,
+    )
+
+    assert not strict.energy_permits_cooling
+    assert "Strikte PV-Politik" in strict.energy_reason
+    assert comfort.energy_permits_cooling
+    assert "Komfort priorisiert" in comfort.energy_reason

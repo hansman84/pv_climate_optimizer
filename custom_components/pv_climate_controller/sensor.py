@@ -180,6 +180,8 @@ class HousePlanSensor(ControllerEntity, SensorEntity):
             "nominal_budget_btu_h": round(plan.nominal_budget_btu_h, 1),
             "observed_cooling_btu_h": round(plan.observed_cooling_btu_h, 1),
             "priority_order": list(plan.recommended_zone_ids),
+            "energy_permits_cooling": plan.energy_permits_cooling,
+            "energy_reason": plan.energy_reason,
             "zones": [_zone_attributes(zone) for zone in plan.zones],
         }
 

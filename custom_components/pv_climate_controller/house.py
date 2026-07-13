@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .const import EnergyPolicy
 from .models import ZoneDecision, ZoneForecast
 from .outdoor_unit import OutdoorUnitSpec
 
@@ -49,9 +50,18 @@ class HousePlan:
     reason: str
     recommended_zone_ids: tuple[str, ...] = ()
     zones: tuple[ZonePlan, ...] = ()
+    energy_permits_cooling: bool | None = None
+    energy_reason: str = "PV-Lage noch nicht ausgewertet."
 
 
-def build_house_plan(spec: OutdoorUnitSpec, zones: list[ZoneTelemetry]) -> HousePlan:
+def build_house_plan(
+    spec: OutdoorUnitSpec,
+    zones: list[ZoneTelemetry],
+    *,
+    energy_policy: EnergyPolicy = EnergyPolicy.PV_PREFERRED,
+    export_power_w: float | None = None,
+    min_pv_surplus_w: float = 1000.0,
+) -> HousePlan:
     """Summarize all confirmed zones without making a control decision."""
     # ``auto`` is deliberately not interpreted as cooling: it may select heat.
     # The integration observes it, but never derives thermal output from it.
@@ -83,4 +93,22 @@ def build_house_plan(spec: OutdoorUnitSpec, zones: list[ZoneTelemetry]) -> House
         )
         for zone in zones
     )
-    return HousePlan(len(active), len(demand), delivered, spec.nominal_cooling_btu_h, reason, ranked, zone_plans)
+    energy_permits, energy_reason = _energy_advice(energy_policy, bool(demand), export_power_w, min_pv_surplus_w)
+    return HousePlan(len(active), len(demand), delivered, spec.nominal_cooling_btu_h, reason, ranked, zone_plans, energy_permits, energy_reason)
+
+
+def _energy_advice(
+    policy: EnergyPolicy, demand: bool, export_power_w: float | None, min_surplus_w: float,
+) -> tuple[bool | None, str]:
+    """Explain the policy outcome without creating an actuator decision."""
+    if not demand:
+        return False, "Kein thermischer Kühlbedarf."
+    if export_power_w is None:
+        return None, "Keine gültige Netzeinspeisung; PV-Entscheidung bleibt offen."
+    if export_power_w >= min_surplus_w:
+        return True, "PV-Mindestüberschuss erreicht."
+    if policy is EnergyPolicy.COMFORT_FIRST:
+        return True, "Komfort priorisiert; PV-Mindestüberschuss wird nur angezeigt."
+    if policy is EnergyPolicy.STRICT_PV:
+        return False, "Strikte PV-Politik: Mindestüberschuss fehlt."
+    return False, "PV wird bevorzugt: Mindestüberschuss fehlt."

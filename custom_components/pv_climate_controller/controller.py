@@ -118,7 +118,13 @@ class PVClimateController:
                 climate_available=sample.climate_available,
                 forecast=forecast,
             ))
-        self.last_house_plan = build_house_plan(HISENSE_5AMW125U4RTA, telemetry)
+        self.last_house_plan = build_house_plan(
+            HISENSE_5AMW125U4RTA,
+            telemetry,
+            energy_policy=self.config.energy_policy,
+            export_power_w=self.last_energy.export_power_w,
+            min_pv_surplus_w=self.config.min_pv_surplus_w,
+        )
         return self.last_house_plan
 
     def _record_forecast(self, zone: ZoneConfig, temperature_c: float | None) -> ZoneForecast:
