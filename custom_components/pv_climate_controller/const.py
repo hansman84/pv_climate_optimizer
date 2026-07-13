@@ -51,3 +51,4 @@ class ZoneState(StrEnum):
     RUNNING = "running"
     MANUAL_OVERRIDE = "manual_override"
     UNAVAILABLE = "unavailable"
+    DATA_QUALITY = "data_quality"

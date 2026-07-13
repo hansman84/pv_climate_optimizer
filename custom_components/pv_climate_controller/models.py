@@ -19,6 +19,8 @@ class ZoneConfig:
     hard_max_temperature: float = 25.5
     cooling_power_entity_id: str | None = None
     priority: int = 50
+    minimum_plausible_temperature_c: float = 5.0
+    maximum_plausible_temperature_c: float = 50.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +30,17 @@ class ZoneInput:
     temperature_c: float | None
     climate_available: bool
     manual_override: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ZoneForecast:
+    """A conservative, read-only temperature outlook for a room."""
+
+    zone_id: str
+    trend_c_per_h: float | None
+    predicted_temperature_60m_c: float | None
+    sample_count: int
+    data_quality: str
 
 
 @dataclass(frozen=True, slots=True)

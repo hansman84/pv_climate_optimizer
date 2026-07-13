@@ -56,6 +56,13 @@ Temperatur, Modus, Verfügbarkeit, Priorität, beobachtete BTU/h, Bedarf, Score
 und Reason-Code. Diese Werte sind für Dashboard, Verlauf und Fehlersuche
 gedacht; sie sind keine Befehlswarteschlange.
 
+Zusätzlich erzeugt jede Zone eine **Temperaturprognose** für 60 Minuten. Sie
+nutzt ausschließlich den lokalen Verlauf seit dem letzten Neustart und bleibt
+leer, bis mindestens zwei valide Messpunkte vorliegen. Werte außerhalb von
+5–50 °C werden als Datenqualitätsproblem markiert und können keinen
+Kühlbedarf auslösen. Das schützt insbesondere vor ausgefallenen Sensoren, die
+statt `unavailable` einen Platzhalterwert liefern.
+
 ## Zonenverwaltung
 
 Unter **Konfigurieren** der Integration lassen sich Zonen hinzufügen,

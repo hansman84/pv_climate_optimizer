@@ -370,3 +370,34 @@ def test_house_zone_uses_individual_temperature_limits() -> None:
     plan = runtime.evaluate_house({"sleep": (models.ZoneInput(24.2, True), "off", None)})
 
     assert plan.zones[0].decision.reason_code == "hard_temperature_limit"
+
+
+def test_implausible_indoor_temperature_fails_safe_as_data_quality() -> None:
+    zone = models.ZoneConfig("dining", "Speis", "climate.dining", "sensor.dining")
+
+    decision = evaluator.evaluate_zone(zone, models.ZoneInput(temperature_c=0.0, climate_available=True))
+
+    assert decision.state is const.ZoneState.DATA_QUALITY
+    assert not decision.demand
+    assert decision.reason_code == "temperature_implausible"
+
+
+def test_zone_forecast_requires_history_and_uses_valid_samples_only() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"house_zones": [{
+            "zone_id": "living", "name": "Wohnzimmer", "climate_entity_id": "climate.living",
+            "temperature_entity_id": "sensor.living", "priority": 50,
+        }]},
+    )
+
+    first = runtime.evaluate_house({"living": (models.ZoneInput(24.0, True), "off", None)})
+    now = controller.monotonic()
+    runtime._temperature_samples["living"] = [(now - 3600.0, 23.0), (now, 24.0)]
+    second = runtime.evaluate_house({"living": (models.ZoneInput(24.0, True), "off", None)})
+
+    assert first.zones[0].forecast is not None
+    assert first.zones[0].forecast.data_quality == "insufficient_history"
+    assert second.zones[0].forecast is not None
+    assert second.zones[0].forecast.trend_c_per_h == 1.0
+    assert second.zones[0].forecast.predicted_temperature_60m_c == 25.0

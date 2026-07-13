@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
 from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
+from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
-from .models import ControllerConfig, EMSGrant, EnergySnapshot, ZoneConfig, ZoneDecision, ZoneInput
+from .models import ControllerConfig, EMSGrant, EnergySnapshot, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
 
 
@@ -52,6 +54,8 @@ class PVClimateController:
     last_requested_stages: int = 0
     last_energy: EnergySnapshot = field(default_factory=EnergySnapshot)
     last_house_plan: HousePlan | None = None
+    last_zone_forecasts: dict[str, ZoneForecast] = field(default_factory=dict)
+    _temperature_samples: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -98,6 +102,7 @@ class PVClimateController:
         telemetry = []
         for zone in self.config.house_zones:
             sample, mode, cooling = states.get(zone.zone_id, (ZoneInput(None, False), "off", None))
+            forecast = self._record_forecast(zone, sample.temperature_c)
             try:
                 delivered = float(str(cooling))
             except (TypeError, ValueError):
@@ -111,9 +116,37 @@ class PVClimateController:
                 name=zone.name,
                 temperature_c=sample.temperature_c,
                 climate_available=sample.climate_available,
+                forecast=forecast,
             ))
         self.last_house_plan = build_house_plan(HISENSE_5AMW125U4RTA, telemetry)
         return self.last_house_plan
+
+    def _record_forecast(self, zone: ZoneConfig, temperature_c: float | None) -> ZoneForecast:
+        """Keep a bounded in-memory trend; missing data never becomes a forecast."""
+        if temperature_c is None:
+            forecast = ZoneForecast(zone.zone_id, None, None, 0, "missing")
+            self.last_zone_forecasts[zone.zone_id] = forecast
+            return forecast
+        if not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:
+            forecast = ZoneForecast(zone.zone_id, None, None, 0, "implausible")
+            self.last_zone_forecasts[zone.zone_id] = forecast
+            return forecast
+        now = monotonic()
+        samples = self._temperature_samples.setdefault(zone.zone_id, [])
+        if not samples or samples[-1][1] != temperature_c or now - samples[-1][0] >= 60:
+            samples.append((now, temperature_c))
+        cutoff = now - 2 * 3600
+        self._temperature_samples[zone.zone_id] = samples = [sample for sample in samples if sample[0] >= cutoff]
+        trend = temperature_trend_c_per_h(samples)
+        forecast = ZoneForecast(
+            zone.zone_id,
+            None if trend is None else round(trend, 3),
+            None if trend is None else round(predicted_temperature_60m(temperature_c, trend), 2),
+            len(samples),
+            "valid" if trend is not None else "insufficient_history",
+        )
+        self.last_zone_forecasts[zone.zone_id] = forecast
+        return forecast
 
     @property
     def state(self) -> ControllerState:

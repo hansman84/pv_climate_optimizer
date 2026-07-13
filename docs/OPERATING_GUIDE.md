@@ -48,6 +48,11 @@ BTU/h-Beobachtung und Reason-Code. Der Haus-Kühlplan enthält alle Raumpläne,
 die aktive Zonenzahl, die Zahl thermischer Anforderungen, das Nennbudget und
 die aktuelle Prioritätsreihenfolge.
 
+Eine Zone mit einer Temperatur unter 5 °C oder über 50 °C wird als
+**Datenqualitätsproblem** behandelt, nicht als echter Komfortzustand. Die
+zugehörige Temperaturprognose bleibt leer, bis mindestens zwei plausible
+Messpunkte seit dem Start des Reglers vorhanden sind.
+
 ## Produktiver Pilot
 
 Ein produktiver Pilot ist ausdrücklich nicht enthalten. Vor einer späteren

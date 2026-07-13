@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import ZoneDecision
+from .models import ZoneDecision, ZoneForecast
 from .outdoor_unit import OutdoorUnitSpec
 
 
@@ -20,6 +20,7 @@ class ZoneTelemetry:
     name: str = ""
     temperature_c: float | None = None
     climate_available: bool = True
+    forecast: ZoneForecast | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class ZonePlan:
     priority: int
     observed_cooling_btu_h: float | None
     decision: ZoneDecision
+    forecast: ZoneForecast | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +79,7 @@ def build_house_plan(spec: OutdoorUnitSpec, zones: list[ZoneTelemetry]) -> House
             priority=zone.priority,
             observed_cooling_btu_h=zone.delivered_cooling_btu_h,
             decision=zone.decision,
+            forecast=zone.forecast,
         )
         for zone in zones
     )

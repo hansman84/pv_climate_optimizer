@@ -30,6 +30,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ZonePlanSensor(controller, entry.entry_id, f"zone_plan_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
+    entities.extend(
+        ZoneForecastSensor(controller, entry.entry_id, f"zone_forecast_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
     async_add_entities(entities)
 
 
@@ -210,6 +214,44 @@ class ZonePlanSensor(ControllerEntity, SensorEntity):
         return {} if zone is None else _zone_attributes(zone)
 
 
+class ZoneForecastSensor(ControllerEntity, SensorEntity):
+    """One-hour outlook based only on local, observed temperature history."""
+
+    _attr_native_unit_of_measurement = "°C"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        plan = self.controller.last_house_plan
+        return None if plan is None else next((zone for zone in plan.zones if zone.zone_id == self._zone_id), None)
+
+    @property
+    def name(self) -> str:
+        zone = self._zone
+        return f"{zone.name if zone else self._zone_id} – Temperaturprognose"
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._zone
+        return None if zone is None or zone.forecast is None else zone.forecast.predicted_temperature_60m_c
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        if zone is None or zone.forecast is None:
+            return {"data_quality": "missing"}
+        return {
+            "data_quality": zone.forecast.data_quality,
+            "trend_c_per_h": zone.forecast.trend_c_per_h,
+            "sample_count": zone.forecast.sample_count,
+            "horizon": "60m",
+        }
+
+
 def _zone_attributes(zone) -> dict[str, object]:
     """Convert pure plan data to recorder-safe HA attributes."""
     return {
@@ -225,4 +267,8 @@ def _zone_attributes(zone) -> dict[str, object]:
         "state": zone.decision.state.value,
         "reason_code": zone.decision.reason_code,
         "reason": zone.decision.reason_text,
+        "forecast_60m_c": None if zone.forecast is None else zone.forecast.predicted_temperature_60m_c,
+        "temperature_trend_c_per_h": None if zone.forecast is None else zone.forecast.trend_c_per_h,
+        "forecast_sample_count": None if zone.forecast is None else zone.forecast.sample_count,
+        "data_quality": None if zone.forecast is None else zone.forecast.data_quality,
     }
