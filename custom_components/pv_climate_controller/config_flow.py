@@ -64,30 +64,63 @@ class PVClimateControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
-    """Edit policy and Shadow Mode without mutating entry data."""
+    """Guided settings: house, energy, safety, then room profiles."""
 
     _selected_zone_id: str | None = None
+    _draft_zone: dict[str, Any] | None = None
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["general", "add_zone", "manage_zone"])
+        return self.async_show_menu(step_id="init", menu_options=["house", "energy", "zones", "safety"])
 
-    async def async_step_general(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_house(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Keep the small identity form separate from technical configuration."""
         if user_input is not None:
             options = {**self._options(), **user_input}
             return self.async_create_entry(data=options)
-        return self.async_show_form(step_id="general", data_schema=_schema(self._options()))
+        values = self._options()
+        return self.async_show_form(step_id="house", data_schema=vol.Schema({
+            vol.Required(CONF_NAME, default=values.get(CONF_NAME, DEFAULT_NAME)): str,
+        }))
+
+    async def async_step_energy(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Configure only PV sources and the decision policy."""
+        if user_input is not None:
+            return self.async_create_entry(data={**self._options(), **user_input})
+        return self.async_show_form(step_id="energy", data_schema=_energy_schema(self._options()))
+
+    async def async_step_safety(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Keep fail-safe and optional EMS inputs away from daily energy settings."""
+        if user_input is not None:
+            return self.async_create_entry(data={**self._options(), **user_input})
+        return self.async_show_form(step_id="safety", data_schema=_safety_schema(self._options()))
+
+    async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        return self.async_show_menu(step_id="zones", menu_options=["add_zone", "manage_zone"])
 
     async def async_step_add_zone(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        schema = _zone_schema()
+        """First choose only the explicit room-to-device mapping."""
+        schema = _zone_connection_schema()
         if user_input is None:
             return self.async_show_form(step_id="add_zone", data_schema=schema)
         options = self._options()
         zones = self._zones(options)
         if any(zone.get("climate_entity_id") == user_input["climate_entity_id"] for zone in zones if isinstance(zone, dict)):
             return self.async_show_form(step_id="add_zone", data_schema=schema, errors={"base": "already_configured"})
+        self._draft_zone = {"zone_id": user_input["climate_entity_id"], **user_input}
+        return await self.async_step_add_zone_tuning()
+
+    async def async_step_add_zone_tuning(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Then set comfort and optional power data with room context already fixed."""
+        if self._draft_zone is None:
+            return self.async_abort(reason="zone_not_found")
+        schema = _zone_tuning_schema(self._draft_zone)
+        if user_input is None:
+            return self.async_show_form(step_id="add_zone_tuning", data_schema=schema)
         if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
-            return self.async_show_form(step_id="add_zone", data_schema=schema, errors={"base": "invalid_temperature_limits"})
-        zones.append({"zone_id": user_input["climate_entity_id"], **user_input})
+            return self.async_show_form(step_id="add_zone_tuning", data_schema=schema, errors={"base": "invalid_temperature_limits"})
+        zones = self._zones(self._options())
+        zones.append({**self._draft_zone, **user_input})
+        options = self._options()
         options[CONF_HOUSE_ZONES] = zones
         return self.async_create_entry(data=options)
 
@@ -110,20 +143,33 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
         zone = self._selected_zone()
         if zone is None:
             return self.async_abort(reason="zone_not_found")
-        schema = _zone_schema(zone)
+        schema = _zone_connection_schema(zone)
         if user_input is None:
             return self.async_show_form(step_id="edit_zone", data_schema=schema)
-        if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
-            return self.async_show_form(step_id="edit_zone", data_schema=schema, errors={"base": "invalid_temperature_limits"})
-        options = self._options()
-        zones = self._zones(options)
+        zones = self._zones(self._options())
         if any(
             item.get("climate_entity_id") == user_input["climate_entity_id"] and item.get("zone_id") != self._selected_zone_id
             for item in zones
         ):
             return self.async_show_form(step_id="edit_zone", data_schema=schema, errors={"base": "already_configured"})
+        self._draft_zone = {"zone_id": self._selected_zone_id, **user_input}
+        return await self.async_step_edit_zone_tuning()
+
+    async def async_step_edit_zone_tuning(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        if self._draft_zone is None or self._selected_zone_id is None:
+            return self.async_abort(reason="zone_not_found")
+        existing = self._selected_zone()
+        if existing is None:
+            return self.async_abort(reason="zone_not_found")
+        schema = _zone_tuning_schema(existing)
+        if user_input is None:
+            return self.async_show_form(step_id="edit_zone_tuning", data_schema=schema)
+        if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
+            return self.async_show_form(step_id="edit_zone_tuning", data_schema=schema, errors={"base": "invalid_temperature_limits"})
+        options = self._options()
+        zones = self._zones(options)
         options[CONF_HOUSE_ZONES] = [
-            {"zone_id": item["zone_id"], **user_input} if item.get("zone_id") == self._selected_zone_id else item
+            {**self._draft_zone, **user_input} if item.get("zone_id") == self._selected_zone_id else item
             for item in zones
         ]
         return self.async_create_entry(data=options)
@@ -162,13 +208,45 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
         return next((zone for zone in self._zones(self._options()) if zone.get("zone_id") == self._selected_zone_id), None)
 
 
-def _zone_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Schema shared by add and edit; all IDs must be explicitly chosen."""
+def _energy_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Energy settings belong together and remain explicit selector choices."""
+    values = defaults or {}
+    schema: dict[Any, Any] = {
+        vol.Required(CONF_ENERGY_POLICY, default=values.get(CONF_ENERGY_POLICY, EnergyPolicy.PV_PREFERRED)): vol.In([item.value for item in EnergyPolicy]),
+        vol.Required(CONF_EXPORT_POWER_POSITIVE, default=values.get(CONF_EXPORT_POWER_POSITIVE, True)): bool,
+        vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 1000.0)): vol.All(vol.Coerce(float), vol.Range(min=0, max=20000)),
+    }
+    for key in (CONF_PV_POWER_ENTITY_ID, CONF_EXPORT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID):
+        selector_key = vol.Optional(key, default=values[key]) if values.get(key) else vol.Optional(key)
+        schema[selector_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+    return vol.Schema(schema)
+
+
+def _safety_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Controls that affect evaluation safety, but never enable device control."""
+    values = defaults or {}
+    ems_key = vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID, default=values[CONF_EMS_GRANTED_STAGES_ENTITY_ID]) if values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID) else vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID)
+    return vol.Schema({
+        vol.Required(CONF_SHADOW_MODE, default=values.get(CONF_SHADOW_MODE, True)): bool,
+        vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
+        ems_key: EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+    })
+
+
+def _zone_connection_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Room identity and confirmed source entities, intentionally separate from comfort values."""
     values = defaults or {}
     return vol.Schema({
         vol.Required("name", default=values.get("name", "")): str,
         vol.Required("climate_entity_id", default=values.get("climate_entity_id")): EntitySelector(EntitySelectorConfig(domain="climate", multiple=False)),
         vol.Required("temperature_entity_id", default=values.get("temperature_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+    })
+
+
+def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Comfort, capacity and explicit fallback choices for a connected room."""
+    values = defaults or {}
+    return vol.Schema({
         vol.Optional("cooling_power_entity_id", default=values.get("cooling_power_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
         vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
         vol.Required("hard_max_temperature", default=values.get("hard_max_temperature", 25.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
