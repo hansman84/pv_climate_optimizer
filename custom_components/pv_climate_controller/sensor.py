@@ -165,4 +165,4 @@ class HousePlanSensor(ControllerEntity, SensorEntity):
         plan = self.controller.last_house_plan
         if plan is None:
             return {}
-        return {"active_zones": plan.active_zone_count, "thermal_demand_zones": plan.thermal_demand_count, "nominal_budget_btu_h": plan.nominal_budget_btu_h}
+        return {"active_zones": plan.active_zone_count, "thermal_demand_zones": plan.thermal_demand_count, "nominal_budget_btu_h": plan.nominal_budget_btu_h, "priority_order": ", ".join(plan.recommended_zone_ids)}

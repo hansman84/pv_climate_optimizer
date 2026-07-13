@@ -328,3 +328,13 @@ def test_house_plan_blocks_recommendation_for_mixed_heat_and_cool() -> None:
     )
 
     assert "Heiz- und Kühlmodus" in plan.reason
+
+
+def test_house_plan_orders_equal_thermal_demand_by_priority() -> None:
+    demand = models.ZoneDecision("a", const.ZoneState.REQUESTED, True, 50, True, "demand", "Kühlbedarf")
+    plan = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry("living", demand, "off", 0, 50), house.ZoneTelemetry("sleep", demand, "off", 0, 80)],
+    )
+
+    assert plan.recommended_zone_ids == ("sleep", "living")

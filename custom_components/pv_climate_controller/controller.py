@@ -102,7 +102,7 @@ class PVClimateController:
                 delivered = float(str(cooling))
             except (TypeError, ValueError):
                 delivered = None
-            telemetry.append(ZoneTelemetry(zone.zone_id, evaluate_zone(zone, sample), mode, delivered))
+            telemetry.append(ZoneTelemetry(zone.zone_id, evaluate_zone(zone, sample), mode, delivered, zone.priority))
         self.last_house_plan = build_house_plan(HISENSE_5AMW125U4RTA, telemetry)
         return self.last_house_plan
 
