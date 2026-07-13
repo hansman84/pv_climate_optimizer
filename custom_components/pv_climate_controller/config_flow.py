@@ -24,8 +24,8 @@ def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Optional(CONF_ZONE_NAME, default=values.get(CONF_ZONE_NAME, "Wohnzone")): str,
         vol.Optional(CONF_CLIMATE_ENTITY_ID, default=values.get(CONF_CLIMATE_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="climate", multiple=False)),
         vol.Optional(CONF_TEMPERATURE_ENTITY_ID, default=values.get(CONF_TEMPERATURE_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
-        vol.Required(CONF_COMFORT_TEMPERATURE, default=values.get(CONF_COMFORT_TEMPERATURE, 24.0)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
-        vol.Required(CONF_HARD_MAX_TEMPERATURE, default=values.get(CONF_HARD_MAX_TEMPERATURE, 25.0)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
+        vol.Required(CONF_COMFORT_TEMPERATURE, default=values.get(CONF_COMFORT_TEMPERATURE, 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
+        vol.Required(CONF_HARD_MAX_TEMPERATURE, default=values.get(CONF_HARD_MAX_TEMPERATURE, 25.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
     }
     ems_key = vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID)

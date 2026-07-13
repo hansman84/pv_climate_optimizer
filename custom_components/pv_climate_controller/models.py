@@ -15,8 +15,8 @@ class ZoneConfig:
     name: str
     climate_entity_id: str
     temperature_entity_id: str
-    comfort_temperature: float = 24.0
-    hard_max_temperature: float = 25.0
+    comfort_temperature: float = 23.5
+    hard_max_temperature: float = 25.5
 
 
 @dataclass(frozen=True, slots=True)

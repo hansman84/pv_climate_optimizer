@@ -39,8 +39,8 @@ class PVClimateController:
         temperature_id = options.get(CONF_TEMPERATURE_ENTITY_ID, data.get(CONF_TEMPERATURE_ENTITY_ID))
         zone = None
         if isinstance(climate_id, str) and isinstance(temperature_id, str):
-            comfort = float(options.get(CONF_COMFORT_TEMPERATURE, data.get(CONF_COMFORT_TEMPERATURE, 24.0)))
-            hard_max = float(options.get(CONF_HARD_MAX_TEMPERATURE, data.get(CONF_HARD_MAX_TEMPERATURE, 25.0)))
+            comfort = float(options.get(CONF_COMFORT_TEMPERATURE, data.get(CONF_COMFORT_TEMPERATURE, 23.5)))
+            hard_max = float(options.get(CONF_HARD_MAX_TEMPERATURE, data.get(CONF_HARD_MAX_TEMPERATURE, 25.5)))
             zone = ZoneConfig(
                 "configured_zone",
                 str(options.get(CONF_ZONE_NAME, data.get(CONF_ZONE_NAME, "Zone"))),
