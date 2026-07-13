@@ -71,6 +71,12 @@ ausgewählten Klima-Entity als Fallback aktiviert werden. Sie wird nur verwendet
 wenn der externe Sensor fehlt oder unplausibel ist; der Raumplan weist die
 genutzte Temperaturquelle dabei aus.
 
+Das Temperaturbudget ergänzt die aktuelle Temperatur um Komfort- und
+Grenzreserve, Minuten bis zur erwarteten Überschreitung sowie einen daraus
+abgeleiteten Prioritätsbonus. Es lernt ausschließlich aus lokalen Messpunkten
+seit dem Start. Damit kann der Shadow-Plan eine frühzeitige Kühlung empfehlen,
+ohne aus einer unsicheren oder fehlenden Historie eine Prognose zu erfinden.
+
 ## Zonenverwaltung
 
 Unter **Konfigurieren** der Integration lassen sich Zonen hinzufügen,

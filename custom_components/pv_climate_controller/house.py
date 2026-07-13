@@ -23,6 +23,7 @@ class ZoneTelemetry:
     climate_available: bool = True
     forecast: ZoneForecast | None = None
     temperature_source: str = "external_sensor"
+    thermal_budget: dict[str, float | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,7 @@ class ZonePlan:
     decision: ZoneDecision
     forecast: ZoneForecast | None
     temperature_source: str
+    thermal_budget: dict[str, float | None] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +70,12 @@ def build_house_plan(
     # ``auto`` is deliberately not interpreted as cooling: it may select heat.
     # The integration observes it, but never derives thermal output from it.
     active = [zone for zone in zones if zone.hvac_mode in {"cool", "dry"}]
-    demand = [zone for zone in zones if zone.decision.demand]
+    demand = [
+        zone for zone in zones
+        if zone.decision.demand or (zone.thermal_budget or {}).get("priority_bonus", 0.0) > 0
+    ]
     delivered = sum(max(0.0, zone.delivered_cooling_btu_h or 0.0) for zone in active)
-    ranked = tuple(zone.zone_id for zone in sorted(demand, key=lambda zone: (zone.decision.score, zone.priority), reverse=True))
+    ranked = tuple(zone.zone_id for zone in sorted(demand, key=lambda zone: ((zone.decision.score + (zone.thermal_budget or {}).get("priority_bonus", 0.0)), zone.priority), reverse=True))
     if len(zones) > spec.max_indoor_units:
         reason = "Mehr Zonen als Anschlüsse der Außenanlage konfiguriert."
     elif any(zone.hvac_mode == "heat" for zone in zones) and active:
@@ -78,7 +83,10 @@ def build_house_plan(
     elif delivered > spec.nominal_cooling_btu_h:
         reason = "Beobachtete Kühlleistung über Nennbudget; nur beobachten."
     elif demand:
-        reason = "Gemeinsames Nennbudget verfügbar; Priorisierung folgt der Temperaturdringlichkeit."
+        if any(not zone.decision.demand for zone in demand):
+            reason = "Gemeinsames Nennbudget verfügbar; Prognose priorisiert frühe Kühlung."
+        else:
+            reason = "Gemeinsames Nennbudget verfügbar; Priorisierung folgt der Temperaturdringlichkeit."
     else:
         reason = "Kein thermischer Kühlbedarf."
     zone_plans = tuple(
@@ -93,6 +101,7 @@ def build_house_plan(
             decision=zone.decision,
             forecast=zone.forecast,
             temperature_source=zone.temperature_source,
+            thermal_budget=zone.thermal_budget,
         )
         for zone in zones
     )

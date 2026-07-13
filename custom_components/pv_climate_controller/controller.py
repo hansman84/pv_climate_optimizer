@@ -14,6 +14,7 @@ from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
 from .models import ControllerConfig, EMSGrant, EnergySnapshot, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
+from .thermal_budget import build_thermal_budget
 
 
 def _optional_entity(options: Mapping[str, object], data: Mapping[str, object], key: str) -> str | None:
@@ -104,6 +105,7 @@ class PVClimateController:
         for zone in self.config.house_zones:
             sample, mode, cooling = states.get(zone.zone_id, (ZoneInput(None, False), "off", None))
             forecast = self._record_forecast(zone, sample.temperature_c)
+            thermal_budget = build_thermal_budget(zone, sample.temperature_c, forecast)
             try:
                 delivered = float(str(cooling))
             except (TypeError, ValueError):
@@ -119,6 +121,7 @@ class PVClimateController:
                 climate_available=sample.climate_available,
                 forecast=forecast,
                 temperature_source=sample.temperature_source,
+                thermal_budget=thermal_budget,
             ))
         self.last_house_plan = build_house_plan(
             HISENSE_5AMW125U4RTA,

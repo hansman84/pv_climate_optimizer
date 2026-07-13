@@ -33,6 +33,7 @@ diagnostics = _load("diagnostics")
 storage = _load("storage")
 outdoor_unit = _load("outdoor_unit")
 house = _load("house")
+thermal_budget = _load("thermal_budget")
 
 
 class Clock:
@@ -457,3 +458,26 @@ def test_zone_temperature_fallback_changes_only_the_explicit_zone_setting() -> N
 
     assert not runtime.config.house_zones[0].use_climate_temperature_fallback
     assert runtime.config.house_zones[1].use_climate_temperature_fallback
+
+
+def test_thermal_budget_calculates_reserve_and_time_to_hard_limit() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    forecast = models.ZoneForecast("living", 1.0, 25.0, 3, "valid")
+
+    budget = thermal_budget.build_thermal_budget(zone, 24.5, forecast)
+
+    assert budget["comfort_reserve_c"] == -1.0
+    assert budget["hard_limit_reserve_c"] == 1.0
+    assert budget["minutes_to_hard_limit"] == 60.0
+    assert budget["priority_bonus"] == 90.0
+
+
+def test_house_plan_can_prioritize_predicted_breach_before_current_demand() -> None:
+    idle = models.ZoneDecision("sleep", const.ZoneState.IDLE, False, 0, False, "idle", "Kein Bedarf")
+    plan = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry("sleep", idle, "off", None, thermal_budget={"priority_bonus": 100.0})],
+    )
+
+    assert plan.thermal_demand_count == 1
+    assert "Prognose priorisiert" in plan.reason

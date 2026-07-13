@@ -274,4 +274,5 @@ def _zone_attributes(zone) -> dict[str, object]:
         "temperature_trend_c_per_h": None if zone.forecast is None else zone.forecast.trend_c_per_h,
         "forecast_sample_count": None if zone.forecast is None else zone.forecast.sample_count,
         "data_quality": None if zone.forecast is None else zone.forecast.data_quality,
+        "thermal_budget": zone.thermal_budget,
     }
