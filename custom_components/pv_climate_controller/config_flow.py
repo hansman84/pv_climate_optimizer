@@ -17,16 +17,23 @@ from .const import CONF_CLIMATE_ENTITY_ID, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CO
 def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Build a selector-only schema; users choose existing entities."""
     values = defaults or {}
-    return vol.Schema({
+    schema: dict[Any, Any] = {
         vol.Required(CONF_NAME, default=values.get(CONF_NAME, DEFAULT_NAME)): str,
         vol.Required(CONF_SHADOW_MODE, default=values.get(CONF_SHADOW_MODE, True)): bool,
         vol.Required(CONF_ENERGY_POLICY, default=values.get(CONF_ENERGY_POLICY, EnergyPolicy.PV_PREFERRED)): vol.In([item.value for item in EnergyPolicy]),
         vol.Optional(CONF_ZONE_NAME, default=values.get(CONF_ZONE_NAME, "Wohnzone")): str,
         vol.Optional(CONF_CLIMATE_ENTITY_ID, default=values.get(CONF_CLIMATE_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="climate", multiple=False)),
         vol.Optional(CONF_TEMPERATURE_ENTITY_ID, default=values.get(CONF_TEMPERATURE_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
-        vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID, default=values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
-    })
+    }
+    ems_key = vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID)
+    if values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID):
+        ems_key = vol.Optional(
+            CONF_EMS_GRANTED_STAGES_ENTITY_ID,
+            default=values[CONF_EMS_GRANTED_STAGES_ENTITY_ID],
+        )
+    schema[ems_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+    return vol.Schema(schema)
 
 
 class PVClimateControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
