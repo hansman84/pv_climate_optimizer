@@ -260,6 +260,7 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     azimuths = values.get("facade_azimuths", [])
     primary_azimuth = azimuths[0] if isinstance(azimuths, list) and azimuths else None
     secondary_azimuth = azimuths[1] if isinstance(azimuths, list) and len(azimuths) > 1 else None
+    tertiary_azimuth = azimuths[2] if isinstance(azimuths, list) and len(azimuths) > 2 else None
     return vol.Schema({
         vol.Optional("cooling_power_entity_id", default=values.get("cooling_power_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
         vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
@@ -272,6 +273,7 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         # "expected float" before a user can save the shade selection.
         vol.Optional("facade_azimuth_primary", default="" if primary_azimuth is None else str(primary_azimuth)): str,
         vol.Optional("facade_azimuth_secondary", default="" if secondary_azimuth is None else str(secondary_azimuth)): str,
+        vol.Optional("facade_azimuth_tertiary", default="" if tertiary_azimuth is None else str(tertiary_azimuth)): str,
         vol.Optional("overhang_cutoff_elevation", default="" if values.get("overhang_cutoff_elevation") is None else str(values["overhang_cutoff_elevation"])): str,
     })
 
@@ -280,7 +282,7 @@ def _normalize_zone_tuning(user_input: dict[str, Any]) -> dict[str, Any]:
     """Store a stable azimuth list while presenting only serializable fields."""
     tuning = dict(user_input)
     azimuths = []
-    for key in ("facade_azimuth_primary", "facade_azimuth_secondary"):
+    for key in ("facade_azimuth_primary", "facade_azimuth_secondary", "facade_azimuth_tertiary"):
         raw = tuning.pop(key, "")
         try:
             value = float(str(raw).strip())
