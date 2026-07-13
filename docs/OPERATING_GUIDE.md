@@ -41,17 +41,44 @@ Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 
 ## Dashboard
 
-Das Dashboard **PV Klimaregler** zeigt PV-Lage, Überschuss, die aktuelle
-Shadow-Entscheidung und verstellbare Sicherheitswerte. Zusätzlich erzeugt jede
-Zone einen eigenen **Shadow-Plan** mit Temperatur, Betriebsmodus, Priorität,
-BTU/h-Beobachtung und Reason-Code. Der Haus-Kühlplan enthält alle Raumpläne,
-die aktive Zonenzahl, die Zahl thermischer Anforderungen, das Nennbudget und
-die aktuelle Prioritätsreihenfolge.
+Das Dashboard **PV Klimaregler** ist bewusst in vier Ansichten geteilt:
 
-Eine Zone mit einer Temperatur unter 5 °C oder über 50 °C wird als
-**Datenqualitätsproblem** behandelt, nicht als echter Komfortzustand. Die
-zugehörige Temperaturprognose bleibt leer, bis mindestens zwei plausible
-Messpunkte seit dem Start des Reglers vorhanden sind.
+1. **Übersicht** ist die Alltagsansicht. Sie zeigt die Empfehlung jetzt, die
+   hausweite Priorität, PV-Leistung, freien Überschuss und die geschätzte
+   Gesamtleistung der gemeinsamen Außenanlage.
+2. **Räume** ist die Komfortansicht. Für jeden Raum stehen nebeneinander die
+   Temperatur jetzt, die Prognose für 60 Minuten und die aktuelle Priorität.
+   `Arbeitszimmer / Spielzimmer` bezeichnet dabei den Raum Arbeitszimmer mit
+   dem Klimagerät Spielzimmer.
+3. **Steuerung** enthält nur Werte, die sinnvoll und sicher bedienbar sind:
+   Shadow Mode, Energiepolitik, Mindestüberschuss und den optionalen
+   Temperatur-Backup je Raum.
+4. **Technik** enthält Rohwerte, Leistungsquellen und vollständige
+   Diagnosen. Sie ist für Fehlersuche und Feintuning gedacht, nicht für den
+   täglichen Betrieb.
+
+Raumziele, harte Grenzen und Prioritäten gehören absichtlich nicht zwischen
+die täglichen Kacheln. Sie werden sauber pro Zone gesetzt unter
+**Einstellungen → Geräte & Dienste → PV Climate Controller → Konfigurieren →
+Zonen verwalten**. Die Standardwerte für neu angelegte Zonen sind 23,5 °C
+Komforttemperatur und 25,5 °C harte Grenze.
+
+Der **Shadow-Plan** einer Zone enthält Temperatur, Betriebsmodus, Priorität,
+BTU/h-Beobachtung und Reason-Code. Der Haus-Kühlplan fasst alle Raumpläne, die
+aktive Zonenzahl, thermischen Bedarf, gemeinsames Nennbudget und die aktuelle
+Prioritätsreihenfolge zusammen.
+
+### Temperatur-Backup
+
+Jede Zone kann optional die vom Innengerät gemeldete Temperatur als Backup
+verwenden. Dieser Schalter ist nur sinnvoll, wenn der externe Raumfühler
+ausfällt oder offensichtliche Fehlwerte liefert. Er ersetzt den externen Fühler
+nur bei fehlenden oder unplausiblen Werten und sendet keinen Befehl an das
+Klimagerät. Eine Temperatur unter 5 °C oder über 50 °C gilt als unplausibel.
+
+Die Temperaturprognose bleibt leer, bis mindestens zwei plausible Messpunkte
+seit dem Start des Reglers vorhanden sind. Das ist absichtlich konservativ:
+Eine fehlende Prognose ist keine erfundene Schätzung.
 
 ## Produktiver Pilot
 
