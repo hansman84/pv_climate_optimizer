@@ -260,6 +260,7 @@ def _zone_attributes(zone) -> dict[str, object]:
         "zone_id": zone.zone_id,
         "name": zone.name,
         "temperature_c": zone.temperature_c,
+        "temperature_source": zone.temperature_source,
         "hvac_mode": zone.hvac_mode,
         "climate_available": zone.climate_available,
         "priority": zone.priority,

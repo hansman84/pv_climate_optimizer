@@ -22,6 +22,7 @@ class ZoneTelemetry:
     temperature_c: float | None = None
     climate_available: bool = True
     forecast: ZoneForecast | None = None
+    temperature_source: str = "external_sensor"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,7 @@ class ZonePlan:
     observed_cooling_btu_h: float | None
     decision: ZoneDecision
     forecast: ZoneForecast | None
+    temperature_source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +92,7 @@ def build_house_plan(
             observed_cooling_btu_h=zone.delivered_cooling_btu_h,
             decision=zone.decision,
             forecast=zone.forecast,
+            temperature_source=zone.temperature_source,
         )
         for zone in zones
     )

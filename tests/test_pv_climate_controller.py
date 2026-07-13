@@ -425,3 +425,35 @@ def test_house_plan_explains_pv_policy_without_controlling_devices() -> None:
     assert "Strikte PV-Politik" in strict.energy_reason
     assert comfort.energy_permits_cooling
     assert "Komfort priorisiert" in comfort.energy_reason
+
+
+def test_zone_config_preserves_explicit_climate_temperature_fallback() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"house_zones": [{
+            "zone_id": "dining", "name": "Speis", "climate_entity_id": "climate.dining",
+            "temperature_entity_id": "sensor.dining", "use_climate_temperature_fallback": True,
+        }]},
+    )
+
+    plan = runtime.evaluate_house({
+        "dining": (models.ZoneInput(24.0, True, temperature_source="climate_current_temperature"), "off", None),
+    })
+
+    assert runtime.config.house_zones[0].use_climate_temperature_fallback
+    assert plan.zones[0].temperature_source == "climate_current_temperature"
+
+
+def test_zone_temperature_fallback_changes_only_the_explicit_zone_setting() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"house_zones": [
+            {"zone_id": "living", "name": "Wohnzimmer", "climate_entity_id": "climate.living", "temperature_entity_id": "sensor.living"},
+            {"zone_id": "dining", "name": "Speis", "climate_entity_id": "climate.dining", "temperature_entity_id": "sensor.dining"},
+        ]},
+    )
+
+    runtime.set_zone_temperature_fallback("dining", True)
+
+    assert not runtime.config.house_zones[0].use_climate_temperature_fallback
+    assert runtime.config.house_zones[1].use_climate_temperature_fallback

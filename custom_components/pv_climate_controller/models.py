@@ -21,6 +21,7 @@ class ZoneConfig:
     priority: int = 50
     minimum_plausible_temperature_c: float = 5.0
     maximum_plausible_temperature_c: float = 50.0
+    use_climate_temperature_fallback: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,7 @@ class ZoneInput:
     temperature_c: float | None
     climate_available: bool
     manual_override: bool = False
+    temperature_source: str = "external_sensor"
 
 
 @dataclass(frozen=True, slots=True)

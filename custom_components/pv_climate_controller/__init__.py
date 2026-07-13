@@ -97,10 +97,20 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         temperature_state = hass.states.get(house_zone.temperature_entity_id)
         climate_state = hass.states.get(house_zone.climate_entity_id)
         cooling_state = None if house_zone.cooling_power_entity_id is None else hass.states.get(house_zone.cooling_power_entity_id)
+        temperature_value = _temperature_value(None if temperature_state is None else temperature_state.state)
+        temperature_source = "external_sensor"
+        if (
+            house_zone.use_climate_temperature_fallback
+            and (temperature_value is None or not house_zone.minimum_plausible_temperature_c <= temperature_value <= house_zone.maximum_plausible_temperature_c)
+            and climate_state is not None
+        ):
+            temperature_value = _temperature_value(climate_state.attributes.get("current_temperature"))
+            temperature_source = "climate_current_temperature"
         house_states[house_zone.zone_id] = (
             ZoneInput(
-                temperature_c=_temperature_value(None if temperature_state is None else temperature_state.state),
+                temperature_c=temperature_value,
                 climate_available=climate_state is not None and climate_state.state not in {"unknown", "unavailable"},
+                temperature_source=temperature_source,
             ),
             "off" if climate_state is None else climate_state.state,
             None if cooling_state is None else cooling_state.state,

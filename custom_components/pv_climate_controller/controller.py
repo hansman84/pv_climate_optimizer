@@ -39,6 +39,7 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
             priority=int(item.get("priority", 50)),
+            use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
         ))
     return tuple(result)
 
@@ -117,6 +118,7 @@ class PVClimateController:
                 temperature_c=sample.temperature_c,
                 climate_available=sample.climate_available,
                 forecast=forecast,
+                temperature_source=sample.temperature_source,
             ))
         self.last_house_plan = build_house_plan(
             HISENSE_5AMW125U4RTA,
@@ -288,6 +290,14 @@ class PVClimateController:
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:
         """Set only the display normalization convention for the selected source."""
         self.config = replace(self.config, export_power_positive=positive_when_exporting)
+
+    def set_zone_temperature_fallback(self, zone_id: str, enabled: bool) -> None:
+        """Enable only an explicit per-zone read fallback; never a device action."""
+        zones = tuple(
+            replace(zone, use_climate_temperature_fallback=enabled) if zone.zone_id == zone_id else zone
+            for zone in self.config.house_zones
+        )
+        self.config = replace(self.config, house_zones=zones)
 
     async def async_apply_last_decision(self) -> CommandResult:
         """Demonstrate the sole write boundary; Gate C always blocks it."""

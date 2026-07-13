@@ -154,6 +154,7 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
                 "comfort_temperature": options.get(CONF_COMFORT_TEMPERATURE, 23.5),
                 "hard_max_temperature": options.get(CONF_HARD_MAX_TEMPERATURE, 25.5),
                 "priority": 50,
+                "use_climate_temperature_fallback": False,
             })
         return zones
 
@@ -172,4 +173,5 @@ def _zone_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
         vol.Required("hard_max_temperature", default=values.get("hard_max_temperature", 25.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+        vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
     })

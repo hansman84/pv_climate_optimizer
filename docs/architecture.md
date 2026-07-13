@@ -66,6 +66,11 @@ leer, bis mindestens zwei valide Messpunkte vorliegen. Werte außerhalb von
 Kühlbedarf auslösen. Das schützt insbesondere vor ausgefallenen Sensoren, die
 statt `unavailable` einen Platzhalterwert liefern.
 
+Für jeden Raum kann optional die `current_temperature` der bereits explizit
+ausgewählten Klima-Entity als Fallback aktiviert werden. Sie wird nur verwendet,
+wenn der externe Sensor fehlt oder unplausibel ist; der Raumplan weist die
+genutzte Temperaturquelle dabei aus.
+
 ## Zonenverwaltung
 
 Unter **Konfigurieren** der Integration lassen sich Zonen hinzufügen,
