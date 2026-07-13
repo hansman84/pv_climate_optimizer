@@ -264,6 +264,16 @@ def test_options_can_replace_confirmed_input_entities() -> None:
     assert runtime.config.zone.temperature_entity_id == "sensor.confirmed"
 
 
+def test_house_zone_profiles_preserve_explicit_room_entities() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"house_zones": [{"zone_id": "sleep", "name": "Schlafzimmer", "climate_entity_id": "climate.sleep", "temperature_entity_id": "sensor.sleep", "cooling_power_entity_id": "sensor.sleep_cooling", "priority": 80}]},
+    )
+
+    assert len(runtime.config.house_zones) == 1
+    assert runtime.config.house_zones[0].cooling_power_entity_id == "sensor.sleep_cooling"
+
+
 def test_export_sign_setting_changes_only_the_normalized_energy_reading() -> None:
     runtime = controller.PVClimateController.from_config(
         {"shadow_mode": True, "export_power_entity_id": "sensor.confirmed_export", "export_power_positive": False},

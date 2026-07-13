@@ -23,6 +23,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ExportPowerSensor(controller, entry.entry_id, "export_power"),
         PVForecastPowerSensor(controller, entry.entry_id, "pv_forecast_power"),
         EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
+        HouseCoolingSensor(controller, entry.entry_id, "house_cooling"),
+        HousePlanSensor(controller, entry.entry_id, "house_plan"),
     ])
 
 
@@ -139,3 +141,28 @@ class EnergyRecommendationSensor(ControllerEntity, SensorEntity):
             "export_power_w": self.controller.last_energy.export_power_w,
             "minimum_surplus_w": self.controller.config.min_pv_surplus_w,
         }
+
+
+class HouseCoolingSensor(_PowerSensor):
+    _attr_name = "Beobachtete Haus-Kühlleistung"
+
+    @property
+    def native_value(self) -> float | None:
+        plan = self.controller.last_house_plan
+        return None if plan is None else round(plan.observed_cooling_btu_h / 3.412142, 3)
+
+
+class HousePlanSensor(ControllerEntity, SensorEntity):
+    _attr_name = "Haus-Kühlplan"
+
+    @property
+    def native_value(self) -> str:
+        plan = self.controller.last_house_plan
+        return "Noch keine Hausauswertung." if plan is None else plan.reason
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int | float]:
+        plan = self.controller.last_house_plan
+        if plan is None:
+            return {}
+        return {"active_zones": plan.active_zone_count, "thermal_demand_zones": plan.thermal_demand_count, "nominal_budget_btu_h": plan.nominal_budget_btu_h}

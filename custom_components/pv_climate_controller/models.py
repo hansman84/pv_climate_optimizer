@@ -17,6 +17,8 @@ class ZoneConfig:
     temperature_entity_id: str
     comfort_temperature: float = 23.5
     hard_max_temperature: float = 25.5
+    cooling_power_entity_id: str | None = None
+    priority: int = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +57,7 @@ class ControllerConfig:
     export_power_positive: bool = True
     pv_forecast_power_entity_id: str | None = None
     min_pv_surplus_w: float = 1000.0
+    house_zones: tuple[ZoneConfig, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

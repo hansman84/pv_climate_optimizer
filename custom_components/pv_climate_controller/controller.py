@@ -6,16 +6,39 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
+from .house import HousePlan, ZoneTelemetry, build_house_plan
 from .models import ControllerConfig, EMSGrant, EnergySnapshot, ZoneConfig, ZoneDecision, ZoneInput
+from .outdoor_unit import HISENSE_5AMW125U4RTA
 
 
 def _optional_entity(options: Mapping[str, object], data: Mapping[str, object], key: str) -> str | None:
     """Accept only explicitly selected source entities."""
     value = options.get(key, data.get(key))
     return value if isinstance(value, str) else None
+
+
+def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
+    """Load only complete, explicitly configured zone records."""
+    if not isinstance(value, list):
+        return ()
+    result: list[ZoneConfig] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name, climate, temperature = item.get("name"), item.get("climate_entity_id"), item.get("temperature_entity_id")
+        if not all(isinstance(field, str) for field in (name, climate, temperature)):
+            continue
+        result.append(ZoneConfig(
+            zone_id=str(item.get("zone_id", climate)), name=name, climate_entity_id=climate,
+            temperature_entity_id=temperature, comfort_temperature=float(item.get("comfort_temperature", 23.5)),
+            hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
+            cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
+            priority=int(item.get("priority", 50)),
+        ))
+    return tuple(result)
 
 
 @dataclass(slots=True)
@@ -28,6 +51,7 @@ class PVClimateController:
     last_ems_grant: EMSGrant | None = None
     last_requested_stages: int = 0
     last_energy: EnergySnapshot = field(default_factory=EnergySnapshot)
+    last_house_plan: HousePlan | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -51,6 +75,9 @@ class PVClimateController:
             )
         grant_entity = options.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID, data.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID))
         stale_after = options.get(CONF_EMS_STALE_AFTER_S, data.get(CONF_EMS_STALE_AFTER_S, 300.0))
+        zones = _house_zones(options.get(CONF_HOUSE_ZONES))
+        if not zones and zone is not None:
+            zones = (zone,)
         config = ControllerConfig(
             shadow_mode=shadow_mode,
             energy_policy=policy,
@@ -62,8 +89,22 @@ class PVClimateController:
             export_power_positive=bool(options.get(CONF_EXPORT_POWER_POSITIVE, data.get(CONF_EXPORT_POWER_POSITIVE, True))),
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
             min_pv_surplus_w=float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 1000.0))),
+            house_zones=zones,
         )
         return cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=False))
+
+    def evaluate_house(self, states: Mapping[str, tuple[ZoneInput, str, object]]) -> HousePlan:
+        """Create a read-only common-outdoor-unit plan for every configured zone."""
+        telemetry = []
+        for zone in self.config.house_zones:
+            sample, mode, cooling = states.get(zone.zone_id, (ZoneInput(None, False), "off", None))
+            try:
+                delivered = float(str(cooling))
+            except (TypeError, ValueError):
+                delivered = None
+            telemetry.append(ZoneTelemetry(zone.zone_id, evaluate_zone(zone, sample), mode, delivered))
+        self.last_house_plan = build_house_plan(HISENSE_5AMW125U4RTA, telemetry)
+        return self.last_house_plan
 
     @property
     def state(self) -> ControllerState:

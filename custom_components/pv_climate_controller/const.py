@@ -22,6 +22,7 @@ CONF_EXPORT_POWER_ENTITY_ID = "export_power_entity_id"
 CONF_EXPORT_POWER_POSITIVE = "export_power_positive"
 CONF_PV_FORECAST_POWER_ENTITY_ID = "pv_forecast_power_entity_id"
 CONF_MIN_PV_SURPLUS_W = "min_pv_surplus_w"
+CONF_HOUSE_ZONES = "house_zones"
 
 
 class EnergyPolicy(StrEnum):

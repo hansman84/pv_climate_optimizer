@@ -9,6 +9,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN
 from .controller import PVClimateController
+from .models import ZoneInput
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.SENSOR,
@@ -54,6 +55,7 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.pv_power_entity_id,
             config.export_power_entity_id,
             config.pv_forecast_power_entity_id,
+            *(entity for house_zone in config.house_zones for entity in (house_zone.climate_entity_id, house_zone.temperature_entity_id, house_zone.cooling_power_entity_id)),
         )
         if entity_id is not None
     ]
@@ -90,7 +92,28 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         pv_forecast_power_state=None if forecast is None else forecast.state,
         pv_forecast_power_unit=None if forecast is None else forecast.attributes.get("unit_of_measurement"),
     )
+    house_states = {}
+    for house_zone in config.house_zones:
+        temperature_state = hass.states.get(house_zone.temperature_entity_id)
+        climate_state = hass.states.get(house_zone.climate_entity_id)
+        cooling_state = None if house_zone.cooling_power_entity_id is None else hass.states.get(house_zone.cooling_power_entity_id)
+        house_states[house_zone.zone_id] = (
+            ZoneInput(
+                temperature_c=_temperature_value(None if temperature_state is None else temperature_state.state),
+                climate_available=climate_state is not None and climate_state.state not in {"unknown", "unavailable"},
+            ),
+            "off" if climate_state is None else climate_state.state,
+            None if cooling_state is None else cooling_state.state,
+        )
+    controller.evaluate_house(house_states)
     controller.notify_state_listeners()
+
+
+def _temperature_value(value: object) -> float | None:
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

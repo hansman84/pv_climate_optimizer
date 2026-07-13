@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
 
 
 def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -67,7 +67,34 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
     """Edit policy and Shadow Mode without mutating entry data."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        return self.async_show_menu(step_id="init", menu_options=["general", "add_zone"])
+
+    async def async_step_general(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        return self.async_show_form(step_id="init", data_schema=_schema(defaults))
+        return self.async_show_form(step_id="general", data_schema=_schema(defaults))
+
+    async def async_step_add_zone(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        schema = vol.Schema({
+            vol.Required("name"): str,
+            vol.Required("climate_entity_id"): EntitySelector(EntitySelectorConfig(domain="climate", multiple=False)),
+            vol.Required("temperature_entity_id"): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+            vol.Optional("cooling_power_entity_id"): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+            vol.Required("priority", default=50): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+        })
+        if user_input is None:
+            return self.async_show_form(step_id="add_zone", data_schema=schema)
+        options = {**self.config_entry.data, **self.config_entry.options}
+        zones = list(options.get(CONF_HOUSE_ZONES, []))
+        if not zones and isinstance(options.get(CONF_CLIMATE_ENTITY_ID), str) and isinstance(options.get(CONF_TEMPERATURE_ENTITY_ID), str):
+            zones.append({
+                "zone_id": "configured_zone", "name": options.get(CONF_ZONE_NAME, "Wohnzone"),
+                "climate_entity_id": options[CONF_CLIMATE_ENTITY_ID], "temperature_entity_id": options[CONF_TEMPERATURE_ENTITY_ID],
+                "priority": 50,
+            })
+        if any(zone.get("climate_entity_id") == user_input["climate_entity_id"] for zone in zones if isinstance(zone, dict)):
+            return self.async_show_form(step_id="add_zone", data_schema=schema, errors={"base": "already_configured"})
+        zones.append({"zone_id": user_input["climate_entity_id"], **user_input})
+        options[CONF_HOUSE_ZONES] = zones
+        return self.async_create_entry(data=options)
