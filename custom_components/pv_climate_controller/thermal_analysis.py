@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from .models import ThermalProfile
 
-Sample = tuple[float, float, str, bool, float | None, float | None]
+Sample = tuple[float, float, str, bool, float | None, float | None, float | None]
 
 
 def _mean(values: list[float]) -> float | None:

@@ -67,7 +67,7 @@ class PVClimateController:
     last_zone_forecasts: dict[str, ZoneForecast] = field(default_factory=dict)
     _temperature_samples: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
-    _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None]]] = field(default_factory=dict)
+    _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = field(default_factory=dict)
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
@@ -157,8 +157,17 @@ class PVClimateController:
         now = monotonic()
         shade = context.get("shade_open_percent")
         outside = context.get("outdoor_temperature_c")
+        irradiance = context.get("irradiance_w_m2")
         samples = self._thermal_context_samples.setdefault(zone.zone_id, [])
-        record = (now, temperature_c, mode, bool(context.get("direct_sun", False)), float(shade) if isinstance(shade, (int, float)) else None, float(outside) if isinstance(outside, (int, float)) else None)
+        record = (
+            now,
+            temperature_c,
+            mode,
+            bool(context.get("direct_sun", False)),
+            float(shade) if isinstance(shade, (int, float)) else None,
+            float(outside) if isinstance(outside, (int, float)) else None,
+            float(irradiance) if isinstance(irradiance, (int, float)) else None,
+        )
         if not samples or now - samples[-1][0] >= 300 or samples[-1][2:] != record[2:]:
             samples.append(record)
         self._thermal_context_samples[zone.zone_id] = samples = [sample for sample in samples if sample[0] >= now - 7 * 86400]
@@ -210,16 +219,25 @@ class PVClimateController:
             "temperature_samples": {
                 zone_id: [[round(now - timestamp, 3), temperature] for timestamp, temperature in samples if now - timestamp <= 7200]
                 for zone_id, samples in self._temperature_samples.items()
-            }
+            },
+            "thermal_context_samples": {
+                zone_id: [
+                    [round(now - timestamp, 3), temperature, mode, direct_sun, shade, outside, irradiance]
+                    for timestamp, temperature, mode, direct_sun, shade, outside, irradiance in samples
+                    if now - timestamp <= 7 * 86400
+                ]
+                for zone_id, samples in self._thermal_context_samples.items()
+            },
         }
 
     def restore_learning_state(self, state: object) -> None:
         """Restore only bounded numeric samples; malformed data is ignored."""
-        if not isinstance(state, dict) or not isinstance(state.get("temperature_samples"), dict):
+        if not isinstance(state, dict):
             return
         now = monotonic()
         restored: dict[str, list[tuple[float, float]]] = {}
-        for zone_id, samples in state["temperature_samples"].items():
+        raw_temperature_samples = state.get("temperature_samples", {})
+        for zone_id, samples in raw_temperature_samples.items() if isinstance(raw_temperature_samples, dict) else ():
             if not isinstance(zone_id, str) or not isinstance(samples, list):
                 continue
             valid = []
@@ -235,6 +253,27 @@ class PVClimateController:
             if valid:
                 restored[zone_id] = valid
         self._temperature_samples = restored
+        restored_context: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = {}
+        raw_context_samples = state.get("thermal_context_samples", {})
+        for zone_id, samples in raw_context_samples.items() if isinstance(raw_context_samples, dict) else ():
+            if not isinstance(zone_id, str) or not isinstance(samples, list):
+                continue
+            valid_context = []
+            for sample in samples:
+                if not isinstance(sample, list) or len(sample) != 7 or not isinstance(sample[2], str) or not isinstance(sample[3], bool):
+                    continue
+                try:
+                    age, temperature = float(sample[0]), float(sample[1])
+                    shade = None if sample[4] is None else float(sample[4])
+                    outside = None if sample[5] is None else float(sample[5])
+                    irradiance = None if sample[6] is None else float(sample[6])
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= age <= 7 * 86400:
+                    valid_context.append((now - age, temperature, sample[2], sample[3], shade, outside, irradiance))
+            if valid_context:
+                restored_context[zone_id] = valid_context
+        self._thermal_context_samples = restored_context
 
     @property
     def state(self) -> ControllerState:
