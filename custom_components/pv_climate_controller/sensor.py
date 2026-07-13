@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower
+from homeassistant.const import UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -32,6 +32,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
     entities.extend(
         ZoneForecastSensor(controller, entry.entry_id, f"zone_forecast_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        ZoneTemperatureGradientSensor(controller, entry.entry_id, f"zone_gradient_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        ZoneThresholdTimeSensor(controller, entry.entry_id, f"zone_time_to_comfort_{index}", zone.zone_id, "comfort")
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        ZoneThresholdTimeSensor(controller, entry.entry_id, f"zone_time_to_hard_limit_{index}", zone.zone_id, "hard_limit")
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        ZoneCoolingEffectSensor(controller, entry.entry_id, f"zone_cooling_effect_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
     async_add_entities(entities)
@@ -251,6 +267,115 @@ class ZoneForecastSensor(ControllerEntity, SensorEntity):
             "trend_c_per_h": zone.forecast.trend_c_per_h,
             "sample_count": zone.forecast.sample_count,
             "horizon": "60m",
+        }
+
+
+class _ZoneMetricSensor(ControllerEntity, SensorEntity):
+    """Common lookup for a human-readable per-zone planning metric."""
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        plan = self.controller.last_house_plan
+        return None if plan is None else next((zone for zone in plan.zones if zone.zone_id == self._zone_id), None)
+
+    @property
+    def _zone_name(self) -> str:
+        zone = self._zone
+        return zone.name if zone is not None else self._zone_id
+
+
+class ZoneTemperatureGradientSensor(_ZoneMetricSensor):
+    """Observed room temperature change per hour, never a synthetic gradient."""
+
+    _attr_native_unit_of_measurement = "°C/h"
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Temperaturgradient"
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._zone
+        if zone is None or zone.forecast is None:
+            return None
+        return zone.forecast.trend_c_per_h
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        return {
+            "meaning": "Positive Werte bedeuten Erwärmung, negative Werte Abkühlung.",
+            "data_quality": None if zone is None or zone.forecast is None else zone.forecast.data_quality,
+            "sample_count": None if zone is None or zone.forecast is None else zone.forecast.sample_count,
+        }
+
+
+class ZoneThresholdTimeSensor(_ZoneMetricSensor):
+    """Minutes until a zone reaches its configured comfort or hard threshold."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str, threshold: str) -> None:
+        super().__init__(controller, entry_id, key, zone_id)
+        self._threshold = threshold
+
+    @property
+    def name(self) -> str:
+        label = "Zeit bis Komfortgrenze" if self._threshold == "comfort" else "Zeit bis harter Grenze"
+        return f"{self._zone_name} – {label}"
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._zone
+        if zone is None or zone.thermal_budget is None:
+            return None
+        key = "minutes_to_comfort" if self._threshold == "comfort" else "minutes_to_hard_limit"
+        return zone.thermal_budget.get(key)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        if zone is None or zone.thermal_budget is None:
+            return {"meaning": "Leer bedeutet: keine belastbare Erwärmung bis zu diesem Grenzwert ermittelt."}
+        threshold_key = "comfort_reserve_c" if self._threshold == "comfort" else "hard_limit_reserve_c"
+        return {
+            "meaning": "0 Minuten bedeutet, dass der Grenzwert bereits erreicht oder überschritten ist.",
+            "remaining_degrees_c": zone.thermal_budget.get(threshold_key),
+            "priority_bonus": zone.thermal_budget.get("priority_bonus"),
+        }
+
+
+class ZoneCoolingEffectSensor(_ZoneMetricSensor):
+    """Observed cooling effect compared with passive warming, in degrees per hour."""
+
+    _attr_native_unit_of_measurement = "°C/h"
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Beobachteter Kühleffekt"
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._zone
+        if zone is None or zone.thermal_response is None:
+            return None
+        return zone.thermal_response.observed_cooling_effect_c_per_h
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        response = None if zone is None else zone.thermal_response
+        return {
+            "meaning": "Gemessener Unterschied zwischen passiver Erwärmung und Kühlbetrieb; erst nach beobachteten Proben verfügbar.",
+            "passive_trend_c_per_h": None if response is None else response.passive_trend_c_per_h,
+            "cooling_trend_c_per_h": None if response is None else response.cooling_trend_c_per_h,
+            "passive_sample_count": None if response is None else response.passive_sample_count,
+            "cooling_sample_count": None if response is None else response.cooling_sample_count,
         }
 
 
