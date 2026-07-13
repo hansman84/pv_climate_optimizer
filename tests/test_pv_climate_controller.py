@@ -31,6 +31,8 @@ pilot = _load("pilot")
 forecasting = _load("forecasting")
 diagnostics = _load("diagnostics")
 storage = _load("storage")
+outdoor_unit = _load("outdoor_unit")
+house = _load("house")
 
 
 class Clock:
@@ -293,3 +295,26 @@ def test_storage_rejects_unknown_schema() -> None:
 
     assert storage.unpack(packed)["manual_override_until"]["climate.confirmed"] == 10
     assert storage.unpack({"version": 99, "runtime": {"unsafe": True}}) == {}
+
+
+def test_house_plan_uses_verified_outdoor_nominal_capacity() -> None:
+    decision = models.ZoneDecision("living", const.ZoneState.REQUESTED, True, 100, True, "demand", "Kühlbedarf")
+    plan = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry("living", decision, "cool", 3369)],
+    )
+
+    assert round(plan.nominal_budget_btu_h, 3) == 42651.775
+    assert plan.observed_cooling_btu_h == 3369
+    assert plan.thermal_demand_count == 1
+
+
+def test_house_plan_blocks_recommendation_for_mixed_heat_and_cool() -> None:
+    demand = models.ZoneDecision("living", const.ZoneState.REQUESTED, True, 100, True, "demand", "Kühlbedarf")
+    idle = models.ZoneDecision("sleep", const.ZoneState.IDLE, False, 0, False, "idle", "Kein Bedarf")
+    plan = house.build_house_plan(
+        outdoor_unit.HISENSE_5AMW125U4RTA,
+        [house.ZoneTelemetry("living", demand, "cool", 1000), house.ZoneTelemetry("sleep", idle, "heat", None)],
+    )
+
+    assert "Heiz- und Kühlmodus" in plan.reason

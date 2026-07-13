@@ -45,6 +45,21 @@ python3 -m compileall -q custom_components/pv_climate_controller
 - Fehlende, ungueltige oder veraltete EMS-Freigaben sperren fail-safe.
 - Rate-Limits und Entscheidungsgruende sind nachvollziehbar sichtbar.
 
+## Multi-Split-Hausmodell
+
+Die installierte Außenanlage ist eine Hisense `5AMW125U4RTA` mit fünf
+Anschlüssen. Ihr konservatives gemeinsames Kühlbudget beträgt 12,5 kW
+(rund 42.650 BTU/h); die im Datenblatt genannte modulierte Maximalleistung
+von 15,3 kW ist kein Regel-Sollwert. Die Leistungssensoren der Innengeräte
+werden als Beobachtung der tatsächlich abgegebenen Kühlleistung addiert.
+
+Für eine spätere Hausfreigabe gelten feste Sicherheitsregeln: höchstens fünf
+Zonen, keine automatische Empfehlung bei gleichzeitig beobachtetem Heiz- und
+Kühlbetrieb, und keine automatische Änderung von `fan_mode`, `swing_mode`,
+`dry`, `fan_only` oder `auto`. Diese Betriebsarten bleiben Bedien- bzw.
+Komfortfunktionen; die temperaturgeführte Planung verwendet ausschließlich
+eindeutige Kühl- oder Heizanforderungen.
+
 Die bisherige Hisense-LAN-Untersuchung bleibt als
 [`docs/hisense_local_poc.md`](docs/hisense_local_poc.md) erhalten und ist
 nicht Teil des HACS-Releases.
