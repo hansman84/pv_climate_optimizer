@@ -28,6 +28,12 @@ def test_german_ui_text_uses_real_umlauts_and_no_ascii_replacements() -> None:
     assert all(word not in text for word in forbidden)
 
 
+def test_legacy_room_typo_never_reaches_customer_facing_labels() -> None:
+    zone = models.ZoneConfig("bedroom", "Schlafzimmrt", "climate.bedroom", "sensor.bedroom")
+
+    assert zone.name == "Schlafzimmer"
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"

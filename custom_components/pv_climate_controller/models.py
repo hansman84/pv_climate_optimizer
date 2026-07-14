@@ -27,6 +27,12 @@ class ZoneConfig:
     facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()
     overhang_cutoff_elevation: float | None = None
 
+    def __post_init__(self) -> None:
+        """Keep legacy typos out of every customer-facing room label."""
+        normalized = " ".join(self.name.split())
+        aliases = {"Schlafzimmrt": "Schlafzimmer"}
+        object.__setattr__(self, "name", aliases.get(normalized, normalized))
+
 
 @dataclass(frozen=True, slots=True)
 class ZoneInput:
