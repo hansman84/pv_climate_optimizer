@@ -30,6 +30,7 @@ class LivingRoomPilot:
         self._demand_since: float | None = None
         self._target_reached_since: float | None = None
         self._cooling_started_at: float | None = None
+        self._active_target_temperature_c: float | None = None
         self._owns_cooling = False
 
     @property
@@ -41,6 +42,7 @@ class LivingRoomPilot:
         self._owns_cooling = False
         self._cooling_started_at = None
         self._target_reached_since = None
+        self._active_target_temperature_c = None
 
     def mark_sent(self, action: PilotAction) -> None:
         """Record only a command accepted by the guarded write boundary."""
@@ -48,6 +50,9 @@ class LivingRoomPilot:
         if action.action == "start":
             self._owns_cooling = True
             self._cooling_started_at = now
+            self._active_target_temperature_c = action.target_temperature_c
+        elif action.action == "adjust":
+            self._active_target_temperature_c = action.target_temperature_c
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -100,6 +105,8 @@ class LivingRoomPilot:
         if climate_mode != "cool":
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
+        if pv_available and self._active_target_temperature_c != target:
+            return PilotAction("adjust", target, "pv_target_adjustment", "PV-Überschuss hat sich geändert; Solltemperatur wird angepasst.")
         if temperature_c <= target:
             if self._target_reached_since is None:
                 self._target_reached_since = now
@@ -115,13 +122,13 @@ class LivingRoomPilot:
 
 
 def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int) -> tuple[bool, str]:
-    """Allow only an explicitly named living-room pilot with a fresh grant."""
+    """Allow the explicit living-room pilot; an EMS grant is optional."""
     if config.shadow_mode:
         return False, "shadow_mode"
     if config.zone is None:
         return False, "zone_missing"
     if config.zone.name.strip().casefold() != "wohnzimmer":
         return False, "pilot_living_room_only"
-    if granted_stages < 1:
+    if config.ems_granted_stages_entity_id is not None and granted_stages < 1:
         return False, "ems_grant_missing"
     return True, "pilot_eligible"

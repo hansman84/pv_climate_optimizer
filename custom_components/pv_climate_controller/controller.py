@@ -430,7 +430,7 @@ class PVClimateController:
 
     async def async_apply_pilot_action(self, action: PilotAction, executor) -> CommandResult:
         """Send a pilot action only through the guarded, rate-limited boundary."""
-        if action.action not in {"start", "stop"} or self.config.zone is None:
+        if action.action not in {"start", "adjust", "stop"} or self.config.zone is None:
             return CommandResult("noop", action.reason_text)
         command = Command(self.config.zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c)
         result = await self.command_adapter.async_request(command, executor)

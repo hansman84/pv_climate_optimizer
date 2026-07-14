@@ -242,7 +242,7 @@ def test_living_room_pilot_never_selects_a_different_zone() -> None:
     )
 
     assert pilot.living_room_pilot_eligible(non_living, 1) == (False, "pilot_living_room_only")
-    assert pilot.living_room_pilot_eligible(living, 0) == (False, "ems_grant_missing")
+    assert pilot.living_room_pilot_eligible(living, 0) == (True, "pilot_eligible")
     assert pilot.living_room_pilot_eligible(living, 1) == (True, "pilot_eligible")
 
 
@@ -616,9 +616,19 @@ def test_living_room_pilot_preconditions_from_pv_then_stops_at_target() -> None:
     assert start.target_temperature_c == 23.0
 
     living_pilot.mark_sent(start)
+    clock.now = 900
+    adjustment = living_pilot.decide(runtime, temperature_c=23.2, climate_mode="cool", granted_stages=1, export_power_w=2500)
+    assert adjustment.action == "adjust"
+    assert adjustment.target_temperature_c == 22.5
+    living_pilot.mark_sent(adjustment)
     clock.now = 1800
-    assert living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
+    adjustment = living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200)
+    assert adjustment.action == "adjust"
+    assert adjustment.target_temperature_c == 23.0
+    living_pilot.mark_sent(adjustment)
     clock.now = 2400
+    assert living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
+    clock.now = 3000
     assert living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200).action == "stop"
 
 

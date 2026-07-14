@@ -179,6 +179,11 @@ def _pilot_service_executor(hass: HomeAssistant):
             if command.action == "pilot_stop":
                 await hass.services.async_call("climate", "turn_off", {"entity_id": command.entity_id}, blocking=True)
                 return True
+            if command.action == "pilot_adjust":
+                if command.value is None:
+                    return False
+                await hass.services.async_call("climate", "set_temperature", {"entity_id": command.entity_id, "temperature": command.value}, blocking=True)
+                return True
         except Exception:  # HA service errors must never escape into a command loop.
             return False
         return False
