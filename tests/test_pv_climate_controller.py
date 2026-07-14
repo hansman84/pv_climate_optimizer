@@ -27,6 +27,7 @@ models = _load("models")
 evaluator = _load("evaluator")
 ems_adapter = _load("ems_adapter")
 adapter = _load("command_adapter")
+power_learning = _load("power_learning")
 controller = _load("controller")
 pilot = _load("pilot")
 forecasting = _load("forecasting")
@@ -335,6 +336,7 @@ def test_energy_values_are_normalized_only_for_explicit_sources() -> None:
             "pv_power_entity_id": "sensor.confirmed_pv",
             "export_power_entity_id": "sensor.confirmed_export",
             "pv_forecast_power_entity_id": "sensor.confirmed_forecast",
+            "outdoor_unit_power_entity_id": "sensor.confirmed_outdoor_unit",
             "export_power_positive": False,
         },
         {},
@@ -347,11 +349,33 @@ def test_energy_values_are_normalized_only_for_explicit_sources() -> None:
         export_power_unit="W",
         pv_forecast_power_state="3200",
         pv_forecast_power_unit="W",
+        outdoor_unit_power_state="0.94",
+        outdoor_unit_power_unit="kW",
     )
 
     assert snapshot.pv_power_w == 2500
     assert snapshot.export_power_w == 1800
     assert snapshot.pv_forecast_power_w == 3200
+    assert snapshot.outdoor_unit_power_w == 940
+
+
+def test_outdoor_power_learning_requires_stability_and_reports_conservative_increment() -> None:
+    learner = power_learning.OutdoorPowerLearner()
+
+    assert not learner.observe((), 300, 0)
+    assert learner.observe((), 300, 300)
+    assert learner.observe((), 310, 600)
+    assert learner.observe((), 290, 900)
+    assert not learner.observe(("living",), 700, 901)
+    assert learner.observe(("living",), 700, 1201)
+    assert learner.observe(("living",), 710, 1501)
+    assert learner.observe(("living",), 690, 1801)
+
+    estimate = learner.estimate("living", ())
+
+    assert estimate.data_quality == "learned"
+    assert estimate.sample_count == 3
+    assert estimate.incremental_w == 460.0
 
 
 def test_energy_values_reject_unknown_units_and_unconfigured_sources() -> None:

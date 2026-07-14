@@ -64,6 +64,7 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.pv_power_entity_id,
             config.export_power_entity_id,
             config.pv_forecast_power_entity_id,
+            config.outdoor_unit_power_entity_id,
             config.outdoor_temperature_entity_id,
             config.solar_irradiance_entity_id,
             config.sun_entity_id,
@@ -99,6 +100,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
     pv_power = None if config.pv_power_entity_id is None else hass.states.get(config.pv_power_entity_id)
     export_power = None if config.export_power_entity_id is None else hass.states.get(config.export_power_entity_id)
     forecast = None if config.pv_forecast_power_entity_id is None else hass.states.get(config.pv_forecast_power_entity_id)
+    outdoor_power = None if config.outdoor_unit_power_entity_id is None else hass.states.get(config.outdoor_unit_power_entity_id)
     controller.evaluate_from_states(
         temperature_state=None if temperature is None else temperature.state,
         climate_state=None if climate is None else climate.state,
@@ -110,6 +112,8 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         export_power_unit=None if export_power is None else export_power.attributes.get("unit_of_measurement"),
         pv_forecast_power_state=None if forecast is None else forecast.state,
         pv_forecast_power_unit=None if forecast is None else forecast.attributes.get("unit_of_measurement"),
+        outdoor_unit_power_state=None if outdoor_power is None else outdoor_power.state,
+        outdoor_unit_power_unit=None if outdoor_power is None else outdoor_power.attributes.get("unit_of_measurement"),
     )
     outside_state = None if config.outdoor_temperature_entity_id is None else hass.states.get(config.outdoor_temperature_entity_id)
     irradiance_state = None if config.solar_irradiance_entity_id is None else hass.states.get(config.solar_irradiance_entity_id)
@@ -149,6 +153,10 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         )
         contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
     controller.evaluate_house(house_states, contexts)
+    controller.observe_outdoor_power(tuple(
+        house_zone.zone_id for house_zone in config.house_zones
+        if house_states[house_zone.zone_id][1] in {"cool", "dry"}
+    ))
     action = controller.decide_living_room_pilot(
         temperature_c=_temperature_value(None if temperature is None else temperature.state),
         climate_mode=None if climate is None else climate.state,

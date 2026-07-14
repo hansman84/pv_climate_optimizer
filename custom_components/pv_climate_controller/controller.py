@@ -8,7 +8,7 @@ from datetime import datetime
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -16,6 +16,7 @@ from .house import HousePlan, ZoneTelemetry, build_house_plan
 from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalProfile, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
 from .pilot import LivingRoomPilot, PilotAction
+from .power_learning import OutdoorPowerLearner, PowerEstimate
 from .thermal_budget import build_thermal_budget
 from .thermal_response import learn_thermal_response
 from .thermal_analysis import learn_thermal_profile
@@ -93,6 +94,8 @@ class PVClimateController:
     _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
     _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = field(default_factory=dict)
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
+    power_learner: OutdoorPowerLearner = field(default_factory=OutdoorPowerLearner)
+    last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
     pilot: LivingRoomPilot = field(default_factory=LivingRoomPilot)
     last_pilot_action: PilotAction | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
@@ -137,6 +140,7 @@ class PVClimateController:
             export_power_entity_id=_optional_entity(options, data, CONF_EXPORT_POWER_ENTITY_ID),
             export_power_positive=bool(options.get(CONF_EXPORT_POWER_POSITIVE, data.get(CONF_EXPORT_POWER_POSITIVE, True))),
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
+            outdoor_unit_power_entity_id=_optional_entity(options, data, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID),
             min_pv_surplus_w=float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 1000.0))),
             house_zones=zones,
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
@@ -190,6 +194,15 @@ class PVClimateController:
             min_pv_surplus_w=self.config.min_pv_surplus_w,
         )
         return self.last_house_plan
+
+    def observe_outdoor_power(self, active_zone_ids: tuple[str, ...]) -> None:
+        """Learn shared compressor power passively from stable observed modes."""
+        self.power_learner.observe(active_zone_ids, self.last_energy.outdoor_unit_power_w, monotonic())
+        self.last_power_estimates = {
+            zone.zone_id: self.power_learner.estimate(zone.zone_id, active_zone_ids)
+            for zone in self.config.house_zones
+            if zone.zone_id not in active_zone_ids
+        }
 
     def _record_thermal_profile(self, zone: ZoneConfig, temperature_c: float | None, mode: str, context: Mapping[str, object]) -> ThermalProfile | None:
         if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:
@@ -268,6 +281,7 @@ class PVClimateController:
                 ]
                 for zone_id, samples in self._thermal_context_samples.items()
             },
+            "outdoor_power_samples": self.power_learner.export_state(),
         }
 
     def restore_learning_state(self, state: object) -> None:
@@ -314,6 +328,7 @@ class PVClimateController:
             if valid_context:
                 restored_context[zone_id] = valid_context
         self._thermal_context_samples = restored_context
+        self.power_learner.restore_state(state.get("outdoor_power_samples"))
 
     @property
     def state(self) -> ControllerState:
@@ -361,6 +376,8 @@ class PVClimateController:
         export_power_unit: object = None,
         pv_forecast_power_state: object = None,
         pv_forecast_power_unit: object = None,
+        outdoor_unit_power_state: object = None,
+        outdoor_unit_power_unit: object = None,
     ) -> EnergySnapshot:
         """Read configured PV values only; this does not affect a climate device."""
         pv_power = self._power_w(pv_power_state, pv_power_unit) if self.config.pv_power_entity_id else None
@@ -368,7 +385,8 @@ class PVClimateController:
         if export_power is not None and not self.config.export_power_positive:
             export_power *= -1
         forecast = self._power_w(pv_forecast_power_state, pv_forecast_power_unit) if self.config.pv_forecast_power_entity_id else None
-        self.last_energy = EnergySnapshot(pv_power, export_power, forecast)
+        outdoor_power = self._power_w(outdoor_unit_power_state, outdoor_unit_power_unit) if self.config.outdoor_unit_power_entity_id else None
+        self.last_energy = EnergySnapshot(pv_power, export_power, forecast, outdoor_power)
         return self.last_energy
 
     def evaluate_from_states(
@@ -384,6 +402,8 @@ class PVClimateController:
         export_power_unit: object = None,
         pv_forecast_power_state: object = None,
         pv_forecast_power_unit: object = None,
+        outdoor_unit_power_state: object = None,
+        outdoor_unit_power_unit: object = None,
     ) -> ZoneDecision | None:
         """Evaluate raw HA state values without importing or writing to HA."""
         try:
@@ -405,6 +425,8 @@ class PVClimateController:
             export_power_unit=export_power_unit,
             pv_forecast_power_state=pv_forecast_power_state,
             pv_forecast_power_unit=pv_forecast_power_unit,
+            outdoor_unit_power_state=outdoor_unit_power_state,
+            outdoor_unit_power_unit=outdoor_unit_power_unit,
         )
         return decision
 

@@ -25,6 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         PVPowerSensor(controller, entry.entry_id, "pv_power"),
         ExportPowerSensor(controller, entry.entry_id, "export_power"),
         PVForecastPowerSensor(controller, entry.entry_id, "pv_forecast_power"),
+        OutdoorUnitPowerSensor(controller, entry.entry_id, "outdoor_unit_power"),
         EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
         HouseCoolingSensor(controller, entry.entry_id, "house_cooling"),
         HousePlanSensor(controller, entry.entry_id, "house_plan"),
@@ -55,6 +56,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
     entities.extend(
         ZoneThermalProfileSensor(controller, entry.entry_id, f"zone_thermal_profile_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        ZonePowerEstimateSensor(controller, entry.entry_id, f"zone_power_estimate_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
     async_add_entities(entities)
@@ -165,6 +170,18 @@ class PVForecastPowerSensor(_PowerSensor):
     @property
     def extra_state_attributes(self) -> dict[str, str | None]:
         return {"source_entity_id": self.controller.config.pv_forecast_power_entity_id}
+
+
+class OutdoorUnitPowerSensor(_PowerSensor):
+    _attr_name = "Außeneinheit – gemessene Leistung"
+
+    @property
+    def native_value(self) -> float | None:
+        return self.controller.last_energy.outdoor_unit_power_w
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        return {"source_entity_id": self.controller.config.outdoor_unit_power_entity_id}
 
 
 class EnergyRecommendationSensor(ControllerEntity, SensorEntity):
@@ -452,6 +469,38 @@ class ZoneThermalProfileSensor(_ZoneMetricSensor):
             "context_samples_total": len(samples),
             "last_context_sample_age_minutes": last_sample_age_minutes,
             "source_status": source_status,
+        }
+
+
+class ZonePowerEstimateSensor(_PowerSensor):
+    """Conservative PV requirement for adding one room to the active set."""
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def name(self) -> str:
+        zone = next((item for item in self.controller.config.house_zones if item.zone_id == self._zone_id), None)
+        return f"{self._zone_id if zone is None else zone.name} – gelernter PV-Bedarf"
+
+    @property
+    def native_value(self) -> float | None:
+        estimate = self.controller.last_power_estimates.get(self._zone_id)
+        if estimate is None or estimate.incremental_w is None:
+            return None
+        return round(self.controller.config.min_pv_surplus_w + estimate.incremental_w, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        estimate = self.controller.last_power_estimates.get(self._zone_id)
+        return {
+            "meaning": "Benötigter PV-Überschuss für das zusätzliche Zuschalten dieses Raums; inklusive konfigurierter Reserve.",
+            "incremental_outdoor_unit_power_w": None if estimate is None else estimate.incremental_w,
+            "pv_reserve_w": self.controller.config.min_pv_surplus_w,
+            "sample_count": 0 if estimate is None else estimate.sample_count,
+            "data_quality": "outdoor_power_source_missing" if self.controller.config.outdoor_unit_power_entity_id is None else ("insufficient_history" if estimate is None else estimate.data_quality),
+            "source_entity_id": self.controller.config.outdoor_unit_power_entity_id,
         }
 
 

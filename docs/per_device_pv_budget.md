@@ -1,5 +1,23 @@
 # Per-device PV budget and learned electrical demand
 
+## Implemented first stage: shared outdoor-unit meter
+
+`sensor.total_backup_power` is the confirmed meter for the complete
+multi-split outdoor unit. Configure it under **PV & Energiepolitik → Leistung
+der Klima-Außeneinheit**. The controller records a value only after the same
+set of cooling rooms has run for five minutes and at most once every five
+minutes. It retains a bounded history of 24 values per active-room set.
+
+For a candidate room, it compares the medians of the stable sets *without*
+and *with* that room. The difference plus a 15% margin is its learned
+incremental demand. The `… – gelernter PV-Bedarf` sensor exposes
+`PV-Mindestüberschuss + incremental demand`; until both sets have three valid
+samples its value remains unavailable and reports `insufficient_history`.
+
+This phase is diagnostic and Shadow-only for all rooms other than the already
+separately approved Wohnzimmer pilot. It deliberately does not infer a value
+from BTU/h cooling sensors and does not send new climate commands.
+
 ## Goal
 
 The current `sensor.export_power_raw` is the **whole-house net export**. It
@@ -13,9 +31,9 @@ must not pretend to know the value until enough observations exist.
 
 ## Safe staged design
 
-1. **Direct metering preferred.** Configure an optional electrical-power
-   sensor (W) for each indoor unit or its circuit. This becomes the primary
-   consumption source.
+1. **Shared meter preferred.** Use the confirmed total outdoor-unit meter.
+   Per-indoor-unit circuit meters remain optional refinements, not a
+   prerequisite for the conservative active-set method.
 2. **Observed fallback.** Where no meter exists, learn only from stable
    windows: no other climate command, no large household-load transition,
    valid net-export reading, and at least five minutes before and after a
