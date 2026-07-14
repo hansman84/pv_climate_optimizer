@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -103,6 +103,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         temperature_state=None if temperature is None else temperature.state,
         climate_state=None if climate is None else climate.state,
         ems_grant_state=None if grant is None else grant.state,
+        ems_grant_age_s=_state_age_s(grant),
         pv_power_state=None if pv_power is None else pv_power.state,
         pv_power_unit=None if pv_power is None else pv_power.attributes.get("unit_of_measurement"),
         export_power_state=None if export_power is None else export_power.state,
@@ -148,9 +149,41 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         )
         contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
     controller.evaluate_house(house_states, contexts)
+    action = controller.decide_living_room_pilot(
+        temperature_c=_temperature_value(None if temperature is None else temperature.state),
+        climate_mode=None if climate is None else climate.state,
+    )
+    await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
     if store is not None:
         store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()
+
+
+def _pilot_service_executor(hass: HomeAssistant):
+    """Build the sole HA service route for the explicitly enabled PoC.
+
+    Hisense requires power before mode and temperature commands, so this order
+    is intentional.  Home Assistant validates service availability; a raised
+    service error becomes an adapter retry and then a fail-safe backoff.
+    """
+
+    async def _execute(command) -> bool:
+        try:
+            if command.action == "pilot_start":
+                if command.value is None:
+                    return False
+                await hass.services.async_call("climate", "turn_on", {"entity_id": command.entity_id}, blocking=True)
+                await hass.services.async_call("climate", "set_hvac_mode", {"entity_id": command.entity_id, "hvac_mode": "cool"}, blocking=True)
+                await hass.services.async_call("climate", "set_temperature", {"entity_id": command.entity_id, "temperature": command.value}, blocking=True)
+                return True
+            if command.action == "pilot_stop":
+                await hass.services.async_call("climate", "turn_off", {"entity_id": command.entity_id}, blocking=True)
+                return True
+        except Exception:  # HA service errors must never escape into a command loop.
+            return False
+        return False
+
+    return _execute
 
 
 def _temperature_value(value: object) -> float | None:
@@ -158,6 +191,16 @@ def _temperature_value(value: object) -> float | None:
         return float(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _state_age_s(state) -> float | None:
+    """Return the HA update age for a fail-closed EMS grant."""
+    if state is None:
+        return None
+    updated = getattr(state, "last_updated", None)
+    if updated is None:
+        return None
+    return max(0.0, (datetime.now(updated.tzinfo) - updated).total_seconds())
 
 
 def _direct_sun(facades: tuple[float, ...], cutoff: float | None, azimuth: float | None, elevation: float | None) -> bool:

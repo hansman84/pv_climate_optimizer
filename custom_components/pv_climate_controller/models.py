@@ -84,6 +84,8 @@ class ZoneDecision:
     requested: bool
     reason_code: str
     reason_text: str
+    strategy: str = "standard"
+    recommended_target_temperature_c: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,7 @@ class ControllerConfig:
 
     shadow_mode: bool
     energy_policy: EnergyPolicy
+    living_room_pilot_enabled: bool = False
     zone: ZoneConfig | None = None
     ems_granted_stages_entity_id: str | None = None
     ems_stale_after_s: float = 300.0

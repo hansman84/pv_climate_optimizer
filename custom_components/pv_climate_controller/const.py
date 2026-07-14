@@ -9,6 +9,7 @@ DEFAULT_NAME = "PV Klimaregler"
 
 CONF_NAME = "name"
 CONF_SHADOW_MODE = "shadow_mode"
+CONF_LIVING_ROOM_PILOT_ENABLED = "living_room_pilot_enabled"
 CONF_ENERGY_POLICY = "energy_policy"
 CONF_ZONE_NAME = "zone_name"
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"

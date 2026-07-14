@@ -11,7 +11,8 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .facades import normalize_zone_tuning
 
 
 def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -239,6 +240,7 @@ def _safety_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     ems_key = vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID, default=values[CONF_EMS_GRANTED_STAGES_ENTITY_ID]) if values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID) else vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID)
     return vol.Schema({
         vol.Required(CONF_SHADOW_MODE, default=values.get(CONF_SHADOW_MODE, True)): bool,
+        vol.Required(CONF_LIVING_ROOM_PILOT_ENABLED, default=values.get(CONF_LIVING_ROOM_PILOT_ENABLED, False)): bool,
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
         ems_key: EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
     })
@@ -284,27 +286,4 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     })
 
 
-def _normalize_zone_tuning(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Store a stable azimuth list while presenting only serializable fields."""
-    tuning = dict(user_input)
-    azimuths = []
-    for key in ("facade_azimuth_primary", "facade_azimuth_secondary", "facade_azimuth_tertiary"):
-        raw = tuning.pop(key, "")
-        try:
-            value = float(str(raw).strip())
-        except (TypeError, ValueError):
-            continue
-        if 0 <= value <= 359:
-            azimuths.append(value)
-    tuning["facade_azimuths"] = azimuths
-    tuning["facade_shade_entity_ids"] = [
-        [entity for entity in tuning.pop(key, []) if isinstance(entity, str)]
-        for key in ("facade_shade_primary", "facade_shade_secondary", "facade_shade_tertiary")
-    ]
-    raw_cutoff = tuning.get("overhang_cutoff_elevation", "")
-    try:
-        cutoff = float(str(raw_cutoff).strip())
-    except (TypeError, ValueError):
-        cutoff = None
-    tuning["overhang_cutoff_elevation"] = cutoff if cutoff is not None and 0 <= cutoff <= 90 else None
-    return tuning
+_normalize_zone_tuning = normalize_zone_tuning

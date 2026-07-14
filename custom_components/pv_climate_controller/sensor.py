@@ -448,6 +448,8 @@ def _zone_attributes(zone) -> dict[str, object]:
         "state": zone.decision.state.value,
         "reason_code": zone.decision.reason_code,
         "reason": zone.decision.reason_text,
+        "strategy": zone.decision.strategy,
+        "recommended_target_temperature_c": zone.decision.recommended_target_temperature_c,
         "forecast_60m_c": None if zone.forecast is None else zone.forecast.predicted_temperature_60m_c,
         "temperature_trend_c_per_h": None if zone.forecast is None else zone.forecast.trend_c_per_h,
         "forecast_sample_count": None if zone.forecast is None else zone.forecast.sample_count,

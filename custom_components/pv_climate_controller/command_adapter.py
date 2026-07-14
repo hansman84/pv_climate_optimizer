@@ -67,6 +67,11 @@ class ClimateCommandAdapter:
     def shadow_mode(self) -> bool:
         return self._shadow_mode
 
+    def set_operating_mode(self, *, shadow_mode: bool, productive_enabled: bool) -> None:
+        """Update the explicit runtime gate without loosening any rate limits."""
+        self._shadow_mode = shadow_mode
+        self._productive_enabled = productive_enabled
+
     def is_manual_override(self, entity_id: str) -> bool:
         return self._manual_override_until.get(entity_id, 0.0) > self._clock()
 

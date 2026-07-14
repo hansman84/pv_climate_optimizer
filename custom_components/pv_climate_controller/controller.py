@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
 from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalProfile, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
+from .pilot import LivingRoomPilot, PilotAction
 from .thermal_budget import build_thermal_budget
 from .thermal_response import learn_thermal_response
 from .thermal_analysis import learn_thermal_profile
@@ -72,6 +74,8 @@ class PVClimateController:
     _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
     _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = field(default_factory=dict)
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
+    pilot: LivingRoomPilot = field(default_factory=LivingRoomPilot)
+    last_pilot_action: PilotAction | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -98,9 +102,15 @@ class PVClimateController:
         zones = _house_zones(options.get(CONF_HOUSE_ZONES))
         if not zones and zone is not None:
             zones = (zone,)
+        # A room added through the GUI is already an explicit mapping.  Reuse
+        # only an exactly named Wohnzimmer mapping for the one-room pilot;
+        # never select an arbitrary first zone.
+        if zone is None:
+            zone = next((item for item in zones if item.name.strip().casefold() == "wohnzimmer"), None)
         config = ControllerConfig(
             shadow_mode=shadow_mode,
             energy_policy=policy,
+            living_room_pilot_enabled=bool(options.get(CONF_LIVING_ROOM_PILOT_ENABLED, data.get(CONF_LIVING_ROOM_PILOT_ENABLED, False))),
             zone=zone,
             ems_granted_stages_entity_id=grant_entity if isinstance(grant_entity, str) else None,
             ems_stale_after_s=float(stale_after),
@@ -114,7 +124,7 @@ class PVClimateController:
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
             sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
         )
-        return cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=False))
+        return cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=config.living_room_pilot_enabled and not shadow_mode))
 
     def evaluate_house(self, states: Mapping[str, tuple[ZoneInput, str, object]], contexts: Mapping[str, Mapping[str, object]] | None = None) -> HousePlan:
         """Create a read-only common-outdoor-unit plan for every configured zone."""
@@ -133,7 +143,15 @@ class PVClimateController:
                 delivered = None
             telemetry.append(ZoneTelemetry(
                 zone_id=zone.zone_id,
-                decision=evaluate_zone(zone, sample),
+                decision=evaluate_zone(
+                    zone,
+                    sample,
+                    now=datetime.now().astimezone().time(),
+                    pv_surplus_available=(
+                        self.last_energy.export_power_w is not None
+                        and self.last_energy.export_power_w >= self.config.min_pv_surplus_w
+                    ),
+                ),
                 hvac_mode=mode,
                 delivered_cooling_btu_h=delivered,
                 priority=zone.priority,
@@ -283,6 +301,8 @@ class PVClimateController:
         """Return an explicit, fail-safe global state."""
         if self.config.shadow_mode:
             return ControllerState.SHADOW
+        if self.config.living_room_pilot_enabled:
+            return ControllerState.AUTOMATIC
         return ControllerState.DISABLED
 
     def evaluate(self, sample: ZoneInput) -> ZoneDecision | None:
@@ -386,6 +406,37 @@ class PVClimateController:
     def set_shadow_mode(self, enabled: bool) -> None:
         """Update the UI-visible mode; the command adapter remains hard locked."""
         self.config = replace(self.config, shadow_mode=enabled)
+        self.command_adapter.set_operating_mode(shadow_mode=enabled, productive_enabled=self.config.living_room_pilot_enabled and not enabled)
+
+    def set_living_room_pilot_enabled(self, enabled: bool) -> None:
+        """Change the explicit GUI pilot gate; no command is sent here."""
+        self.config = replace(self.config, living_room_pilot_enabled=enabled)
+        self.command_adapter.set_operating_mode(shadow_mode=self.config.shadow_mode, productive_enabled=enabled and not self.config.shadow_mode)
+
+    def decide_living_room_pilot(self, *, temperature_c: float | None, climate_mode: str | None) -> PilotAction:
+        """Evaluate the only productive PoC route after HA state refresh."""
+        if not self.config.living_room_pilot_enabled:
+            self.last_pilot_action = PilotAction("none", None, "pilot_disabled", "Wohnzimmer-Pilot ist in der GUI ausgeschaltet.")
+            return self.last_pilot_action
+        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        self.last_pilot_action = self.pilot.decide(
+            self.config,
+            temperature_c=temperature_c,
+            climate_mode=climate_mode,
+            granted_stages=grant,
+            export_power_w=self.last_energy.export_power_w,
+        )
+        return self.last_pilot_action
+
+    async def async_apply_pilot_action(self, action: PilotAction, executor) -> CommandResult:
+        """Send a pilot action only through the guarded, rate-limited boundary."""
+        if action.action not in {"start", "stop"} or self.config.zone is None:
+            return CommandResult("noop", action.reason_text)
+        command = Command(self.config.zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c)
+        result = await self.command_adapter.async_request(command, executor)
+        if result.status == "sent":
+            self.pilot.mark_sent(action)
+        return result
 
     def set_energy_policy(self, policy: EnergyPolicy) -> None:
         """Update the selected evaluation policy."""

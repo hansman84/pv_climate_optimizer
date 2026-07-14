@@ -32,6 +32,35 @@ sie bei jeder Aenderung der gewaehlten Quelle.
 - Nicht konfigurierte oder ungueltig dimensionierte Quellen bleiben leer,
   statt einen Wert zu erfinden.
 
+## Familien-Komfortprofil (Shadow Mode)
+
+Der Raumplan zeigt zusätzlich zu Messwerten eine **Strategie** und eine
+empfohlene Zieltemperatur. Das ist absichtlich noch keine Geräteansteuerung;
+es macht die künftige Regelentscheidung zuerst beobachtbar.
+
+| Raumgruppe | Zeitfenster | Shadow-Empfehlung |
+| --- | --- | --- |
+| Wohnzimmer | 07:00–22:00 | Komforttemperatur (derzeit 23,5 °C) bewerten |
+| Wohnzimmer | 22:00–07:00 | Kein Komfortkühlen; nur die harte Raumgrenze schützen |
+| Schlaf- und Kinderzimmer | 15:00–21:00 | Bei PV-Mindestüberschuss auf höchstens 23 °C vorkühlen |
+| Schlaf- und Kinderzimmer | 21:00–07:00 | Bei mehr als 23 °C Schlafziel als Kühlbedarf ausweisen |
+| Schlaf- und Kinderzimmer | übrige Tageszeit | Kein Komfortziel; die harte Grenze bleibt immer aktiv |
+
+Der PV-Überschuss ist erreicht, wenn die konfigurierte Netzeinspeisung den
+`PV-Mindestüberschuss` erreicht. Die Attribute jedes Raum-Shadow-Plans
+enthalten `strategy`, `recommended_target_temperature_c`, `reason_code` und
+die gemessene thermische Entwicklung. Damit lässt sich die Logik mit realen
+Familienabläufen prüfen, bevor überhaupt eine ConnectLife-Anbindung in
+Betracht kommt.
+
+## Beschattung pro Fassade
+
+Eine Fassade kann mehrere Rolläden enthalten. Für breite Schiebetüren werden
+beide Teilrolläden in **derselben** Auswahl „Fassade n – alle Teilrollläden“
+gewählt. Ihr Mittelwert wird als gemeinsamer Beschattungsgrad dieser Fassade
+verwendet. Azimut und Teilrollladengruppe werden als Paar gespeichert; eine
+leere frühere Fassade verschiebt die Zuordnung nicht.
+
 ## Entwicklung
 
 ```bash

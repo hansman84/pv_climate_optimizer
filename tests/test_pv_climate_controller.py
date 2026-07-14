@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import sys
 import types
+from datetime import time
 from pathlib import Path
 
 PACKAGE = "pv_climate_controller"
@@ -36,6 +37,7 @@ house = _load("house")
 thermal_budget = _load("thermal_budget")
 thermal_response = _load("thermal_response")
 thermal_analysis = _load("thermal_analysis")
+facades = _load("facades")
 
 
 class Clock:
@@ -67,6 +69,20 @@ def test_thermal_learning_counts_shade_only_when_the_facade_is_sunlit() -> None:
 
     assert night.passive_shaded_samples == 0
     assert shaded.passive_shaded_samples == 1
+
+
+def test_facade_group_keeps_both_sliding_door_rollers_with_its_azimuth() -> None:
+    tuning = facades.normalize_zone_tuning({
+        "facade_azimuth_primary": "",
+        "facade_shade_primary": ["cover.unused"],
+        "facade_azimuth_secondary": "180",
+        "facade_shade_secondary": ["cover.sliding_left", "cover.sliding_right"],
+        "facade_azimuth_tertiary": "",
+        "facade_shade_tertiary": [],
+    })
+
+    assert tuning["facade_azimuths"] == [180.0]
+    assert tuning["facade_shade_entity_ids"] == [["cover.sliding_left", "cover.sliding_right"]]
 
 
 def test_non_shadow_gate_c_is_still_not_a_write_path() -> None:
@@ -102,6 +118,34 @@ def test_hard_temperature_limit_has_priority() -> None:
     assert decision.requested
     assert decision.score >= 100
     assert decision.reason_code == "hard_temperature_limit"
+
+
+def test_living_room_is_only_comfort_controlled_during_the_day() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+
+    decision = evaluator.evaluate_zone(
+        zone, models.ZoneInput(24.0, True), now=time(23, 0), pv_surplus_available=True,
+    )
+
+    assert not decision.demand
+    assert decision.reason_code == "family_living_night_limit"
+
+
+def test_bedroom_uses_pv_surplus_for_preconditioning_before_sleep() -> None:
+    zone = models.ZoneConfig("sleep", "Schlafzimmer", "climate.sleep", "sensor.sleep", comfort_temperature=22.0)
+
+    with_pv = evaluator.evaluate_zone(
+        zone, models.ZoneInput(24.0, True), now=time(17, 0), pv_surplus_available=True,
+    )
+    without_pv = evaluator.evaluate_zone(
+        zone, models.ZoneInput(24.0, True), now=time(17, 0), pv_surplus_available=False,
+    )
+
+    assert with_pv.demand
+    assert with_pv.reason_code == "family_sleep_pv_precondition"
+    assert with_pv.recommended_target_temperature_c == 23.0
+    assert not without_pv.demand
+    assert without_pv.reason_code == "family_sleep_waiting_for_pv"
 
 
 def test_deduplicates_confirmed_command_and_enforces_global_rate_limit() -> None:
@@ -552,3 +596,43 @@ def test_contextual_thermal_learning_never_bridges_mode_changes() -> None:
     assert profile.cooling_samples == 1
     assert profile.passive_sun_trend_c_per_h == 1.2
     assert profile.cooling_trend_c_per_h == -2.4
+
+
+def test_living_room_pilot_preconditions_from_pv_then_stops_at_target() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    living_pilot = pilot.LivingRoomPilot(clock)
+
+    assert living_pilot.decide(runtime, temperature_c=23.2, climate_mode="off", granted_stages=1, export_power_w=1200).reason_code == "pilot_demand_stabilizing"
+    clock.now = 600
+    start = living_pilot.decide(runtime, temperature_c=23.2, climate_mode="off", granted_stages=1, export_power_w=1200)
+    assert start.action == "start"
+    assert start.target_temperature_c == 23.0
+
+    living_pilot.mark_sent(start)
+    clock.now = 1800
+    assert living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
+    clock.now = 2400
+    assert living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200).action == "stop"
+
+
+def test_living_room_pilot_never_takes_over_external_cooling() -> None:
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+    )
+
+    action = pilot.LivingRoomPilot(lambda: 0).decide(
+        runtime, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=2000,
+    )
+
+    assert action.action == "none"
+    assert action.reason_code == "external_climate_control"
