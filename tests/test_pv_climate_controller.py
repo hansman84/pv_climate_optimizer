@@ -34,6 +34,16 @@ def test_legacy_room_typo_never_reaches_customer_facing_labels() -> None:
     assert zone.name == "Schlafzimmer"
 
 
+def test_clearing_optional_ems_source_overrides_legacy_config_data() -> None:
+    updated = config_options.merge_safety_options(
+        {"ems_granted_stages_entity_id": "sensor.loxone_ems"},
+        {"shadow_mode": False, "living_room_pilot_enabled": True},
+        "ems_granted_stages_entity_id",
+    )
+
+    assert updated["ems_granted_stages_entity_id"] is None
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"
@@ -63,6 +73,7 @@ thermal_budget = _load("thermal_budget")
 thermal_response = _load("thermal_response")
 thermal_analysis = _load("thermal_analysis")
 facades = _load("facades")
+config_options = _load("config_options")
 
 
 class Clock:

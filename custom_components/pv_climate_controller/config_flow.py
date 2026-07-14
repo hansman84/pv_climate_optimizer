@@ -12,6 +12,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
 from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .config_options import merge_safety_options
 from .facades import normalize_zone_tuning
 
 
@@ -105,7 +106,9 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_safety(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Keep fail-safe and optional EMS inputs away from daily energy settings."""
         if user_input is not None:
-            return self.async_create_entry(data={**self._options(), **user_input})
+            return self.async_create_entry(data=merge_safety_options(
+                self._options(), user_input, CONF_EMS_GRANTED_STAGES_ENTITY_ID
+            ))
         return self.async_show_form(step_id="safety", data_schema=_safety_schema(self._options()))
 
     async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> FlowResult:
