@@ -35,7 +35,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     source_entities = _configured_entities(controller)
     if source_entities:
         entry.async_on_unload(async_track_state_change_event(hass, source_entities, _handle_state_change(hass, controller, store)))
-    entry.async_on_unload(async_track_time_interval(hass, lambda _: hass.async_create_task(_async_refresh_controller(hass, controller, store)), timedelta(minutes=5)))
+    # The event helper awaits an async callback itself.  Wrapping it in
+    # hass.async_create_task can cross the event-loop boundary on HA 2026.7,
+    # dropping the sampling coroutine instead of collecting a power sample.
+    entry.async_on_unload(async_track_time_interval(
+        hass,
+        lambda _: _async_refresh_controller(hass, controller, store),
+        timedelta(minutes=5),
+    ))
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await _async_refresh_controller(hass, controller, store)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

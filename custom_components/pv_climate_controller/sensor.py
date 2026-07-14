@@ -26,6 +26,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ExportPowerSensor(controller, entry.entry_id, "export_power"),
         PVForecastPowerSensor(controller, entry.entry_id, "pv_forecast_power"),
         OutdoorUnitPowerSensor(controller, entry.entry_id, "outdoor_unit_power"),
+        OutdoorPowerLearningSensor(controller, entry.entry_id, "outdoor_power_learning"),
         EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
         HouseCoolingSensor(controller, entry.entry_id, "house_cooling"),
         HousePlanSensor(controller, entry.entry_id, "house_plan"),
@@ -182,6 +183,39 @@ class OutdoorUnitPowerSensor(_PowerSensor):
     @property
     def extra_state_attributes(self) -> dict[str, str | None]:
         return {"source_entity_id": self.controller.config.outdoor_unit_power_entity_id}
+
+
+class OutdoorPowerLearningSensor(ControllerEntity, SensorEntity):
+    """Show whether the current operating combination is producing usable data."""
+
+    _attr_name = "Außeneinheit – Lernstatus"
+
+    @property
+    def native_value(self) -> str:
+        if self.controller.config.outdoor_unit_power_entity_id is None:
+            return "Messquelle fehlt"
+        status = self.controller.power_learner.status(monotonic())
+        count = int(status["active_set_sample_count"])
+        needed = int(status["minimum_estimate_samples"])
+        if count >= needed:
+            return "Stabile Leistungsreihe vorhanden"
+        if float(status["stable_for_s"]) < 300:
+            return "Warte auf stabile 5 Minuten"
+        return f"Sammle Vergleichsproben ({count}/{needed})"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        status = self.controller.power_learner.status(monotonic())
+        names = {
+            zone.zone_id: zone.name
+            for zone in self.controller.config.house_zones
+        }
+        return {
+            **status,
+            "active_zone_names": [names.get(zone_id, zone_id) for zone_id in status["active_zone_ids"]],
+            "source_entity_id": self.controller.config.outdoor_unit_power_entity_id,
+            "meaning": "Eine Probe entsteht nur nach fünf Minuten unveränderter Raumkombination und maximal einmal je fünf Minuten.",
+        }
 
 
 class EnergyRecommendationSensor(ControllerEntity, SensorEntity):

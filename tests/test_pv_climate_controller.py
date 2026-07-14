@@ -378,6 +378,20 @@ def test_outdoor_power_learning_requires_stability_and_reports_conservative_incr
     assert estimate.incremental_w == 460.0
 
 
+def test_outdoor_power_learning_reports_the_current_combination_status() -> None:
+    learner = power_learning.OutdoorPowerLearner()
+
+    learner.observe(("bedroom", "children"), 880, 0)
+    learner.observe(("bedroom", "children"), 875, 300)
+
+    status = learner.status(420)
+
+    assert status["active_zone_ids"] == ("bedroom", "children")
+    assert status["active_set_sample_count"] == 1
+    assert status["active_set_median_w"] == 875.0
+    assert status["stable_for_s"] == 420.0
+
+
 def test_energy_values_reject_unknown_units_and_unconfigured_sources() -> None:
     runtime = controller.PVClimateController.from_config({"shadow_mode": True}, {})
 

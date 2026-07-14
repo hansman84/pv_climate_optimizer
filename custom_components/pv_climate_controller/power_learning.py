@@ -57,6 +57,18 @@ class OutdoorPowerLearner:
         # Add 15 % to avoid spending the last watts of export on a noisy estimate.
         return PowerEstimate(zone_id, round(incremental * 1.15, 1), count, "learned")
 
+    def status(self, now: float) -> dict[str, object]:
+        """Expose the current learning window without treating it as an estimate."""
+        active = self._active_set or ()
+        stable_for_s = 0.0 if self._active_set_since is None else max(0.0, now - self._active_set_since)
+        return {
+            "active_zone_ids": active,
+            "stable_for_s": round(stable_for_s, 1),
+            "active_set_sample_count": len(self.samples.get(active, [])),
+            "active_set_median_w": None if not self.samples.get(active) else round(median(self.samples[active]), 1),
+            "minimum_estimate_samples": 3,
+        }
+
     def export_state(self) -> dict[str, list[float]]:
         return {"|".join(key): values for key, values in self.samples.items()}
 
