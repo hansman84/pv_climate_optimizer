@@ -16,7 +16,13 @@ class ControllerEntity(Entity):
         self.controller = controller
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{key}"
-        self._attr_device_info = {"identifiers": {(DOMAIN, entry_id)}, "name": "PV Klimaregler"}
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "PV Klimaregler",
+            "manufacturer": "PV Klimaregler",
+            "model": "PV-orientierte Hauskühlung",
+            "sw_version": "0.2.5",
+        }
 
     async def async_added_to_hass(self) -> None:
         """Register for in-memory controller changes."""

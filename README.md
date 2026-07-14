@@ -1,7 +1,7 @@
 # PV Climate Optimizer
 
 Home-Assistant-Custom-Integration zur sicheren, nachvollziehbaren
-PV-orientierten Bewertung vorhandener Klimageraete.
+PV-orientierten Bewertung vorhandener Klimageräte.
 
 Der Controller startet immer im **Shadow Mode**. Er wertet Temperatur,
 PV-/EMS-Signale und Schutzbedingungen aus, erzeugt aber keine direkten
@@ -11,25 +11,25 @@ separate produktive Freigabe implementiert und getestet wurde.
 ## HACS-Installation
 
 1. In HACS unter **Custom repositories**
-   `hansman84/pv_climate_optimizer` als Typ **Integration** hinzufuegen.
+   `hansman84/pv_climate_optimizer` als Typ **Integration** hinzufügen.
 2. Die Integration herunterladen und Home Assistant neu starten.
-3. Unter **Einstellungen > Geraete & Dienste** `PV Climate Optimizer`
-   hinzufuegen.
+3. Unter **Einstellungen > Geräte & Dienste** `PV Climate Optimizer`
+   hinzufügen.
 4. Den ersten Pilot im Shadow Mode konfigurieren und die Diagnose-Entities
    beobachten.
 
 ## PV-Werte im Dashboard
 
 Unter **Konfigurieren** der Integration lassen sich drei vorhandene Sensoren
-auswaehlen: aktuelle PV-Leistung, Netzeinspeisung und PV-Prognose. Die
+auswählen: aktuelle PV-Leistung, Netzeinspeisung und PV-Prognose. Die
 Integration zeigt sie als eigene Diagnose-Entities in Watt an und aktualisiert
-sie bei jeder Aenderung der gewaehlten Quelle.
+sie bei jeder Änderung der gewählten Quelle.
 
-- **Netzeinspeisung ist positiv** legt die Vorzeichenkonvention der gewaehlten
+- **Netzeinspeisung ist positiv** legt die Vorzeichenkonvention der gewählten
   Quelle fest. Ist Einspeisung dort negativ, den Schalter deaktivieren.
-- **PV-Mindestueberschuss** ist die Grenze fuer `PV-Ueberschuss verfuegbar`.
-  Das ist derzeit eine reine Shadow-Mode-Diagnose und schaltet kein Geraet.
-- Nicht konfigurierte oder ungueltig dimensionierte Quellen bleiben leer,
+- **PV-Mindestüberschuss** ist die Grenze für `PV-Überschuss verfügbar`.
+  Das ist derzeit eine reine Shadow-Mode-Diagnose und schaltet kein Gerät.
+- Nicht konfigurierte oder ungültig dimensionierte Quellen bleiben leer,
   statt einen Wert zu erfinden.
 
 ## Familien-Komfortprofil (Shadow Mode)
@@ -70,9 +70,9 @@ python3 -m compileall -q custom_components/pv_climate_controller
 
 ## Sicherheit
 
-- Kein automatisches Einschalten oder Ausschalten von Klimageraeten.
-- Fehlende, ungueltige oder veraltete EMS-Freigaben sperren fail-safe.
-- Rate-Limits und Entscheidungsgruende sind nachvollziehbar sichtbar.
+- Kein automatisches Einschalten oder Ausschalten von Klimageräten.
+- Fehlende, ungültige oder veraltete EMS-Freigaben sperren fail-safe.
+- Rate-Limits und Entscheidungsgründe sind nachvollziehbar sichtbar.
 
 ## Multi-Split-Hausmodell
 

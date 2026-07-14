@@ -11,6 +11,23 @@ PACKAGE = "pv_climate_controller"
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / PACKAGE
 
 
+def test_german_ui_text_uses_real_umlauts_and_no_ascii_replacements() -> None:
+    """Keep customer-facing German wording fit for release."""
+    text = (ROOT / "strings.json").read_text(encoding="utf-8")
+    forbidden = (
+        "Klimageraet",
+        "Geraet",
+        "Mindestueberschuss",
+        "Kuehl",
+        "fuer ",
+        " ueber ",
+        "Ueber",
+        "Ã",
+    )
+
+    assert all(word not in text for word in forbidden)
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"
