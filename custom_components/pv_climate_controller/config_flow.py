@@ -269,7 +269,7 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     primary_azimuth = azimuths[0] if isinstance(azimuths, list) and azimuths else None
     secondary_azimuth = azimuths[1] if isinstance(azimuths, list) and len(azimuths) > 1 else None
     tertiary_azimuth = azimuths[2] if isinstance(azimuths, list) and len(azimuths) > 2 else None
-    facade_shades = values.get("facade_shade_entity_ids", [])
+    facade_shades = values.get("facade_shade_defaults", values.get("facade_shade_entity_ids", []))
     def facade_default(index: int) -> list[str]:
         return facade_shades[index] if isinstance(facade_shades, list) and index < len(facade_shades) and isinstance(facade_shades[index], list) else []
     return vol.Schema({

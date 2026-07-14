@@ -120,6 +120,26 @@ def test_facade_group_keeps_both_sliding_door_rollers_with_its_azimuth() -> None
 
     assert tuning["facade_azimuths"] == [180.0]
     assert tuning["facade_shade_entity_ids"] == [["cover.sliding_left", "cover.sliding_right"]]
+    assert tuning["facade_shade_defaults"] == [
+        ["cover.unused"],
+        ["cover.sliding_left", "cover.sliding_right"],
+        [],
+    ]
+
+
+def test_facade_cover_selection_is_retained_without_an_azimuth() -> None:
+    tuning = facades.normalize_zone_tuning({
+        "facade_azimuth_primary": "",
+        "facade_shade_primary": ["cover.sliding_left", "cover.sliding_right"],
+        "facade_azimuth_secondary": "",
+        "facade_shade_secondary": [],
+        "facade_azimuth_tertiary": "",
+        "facade_shade_tertiary": [],
+    })
+
+    assert tuning["facade_azimuths"] == []
+    assert tuning["facade_shade_entity_ids"] == []
+    assert tuning["facade_shade_defaults"][0] == ["cover.sliding_left", "cover.sliding_right"]
 
 
 def test_non_shadow_gate_c_is_still_not_a_write_path() -> None:
