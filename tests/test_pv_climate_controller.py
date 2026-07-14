@@ -28,6 +28,7 @@ evaluator = _load("evaluator")
 ems_adapter = _load("ems_adapter")
 adapter = _load("command_adapter")
 power_learning = _load("power_learning")
+house_learning = _load("house_learning")
 controller = _load("controller")
 pilot = _load("pilot")
 forecasting = _load("forecasting")
@@ -390,6 +391,21 @@ def test_outdoor_power_learning_reports_the_current_combination_status() -> None
     assert status["active_set_sample_count"] == 1
     assert status["active_set_median_w"] == 875.0
     assert status["stable_for_s"] == 420.0
+
+
+def test_house_learning_persists_contextual_combination_envelope() -> None:
+    model = house_learning.HouseLearningModel()
+    model.observe(timestamp=100, local_hour=21, active_zone_ids=("sleep", "child"), outdoor_power_w=850, pv_power_w=1200, export_power_w=500, outdoor_temperature_c=25, irradiance_w_m2=0)
+    model.observe(timestamp=400, local_hour=21, active_zone_ids=("child", "sleep"), outdoor_power_w=900, pv_power_w=1100, export_power_w=400, outdoor_temperature_c=25, irradiance_w_m2=0)
+
+    summary = model.summaries()[0]
+    restored = house_learning.HouseLearningModel()
+    restored.restore_state(model.export_state(500), 1000)
+
+    assert summary["active_zone_ids"] == ["child", "sleep"]
+    assert summary["median_power_w"] == 875.0
+    assert summary["local_hours"] == [21]
+    assert len(restored.observations) == 2
 
 
 def test_energy_values_reject_unknown_units_and_unconfigured_sources() -> None:

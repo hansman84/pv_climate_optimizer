@@ -13,6 +13,7 @@ from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
+from .house_learning import HouseLearningModel
 from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalProfile, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
 from .pilot import LivingRoomPilot, PilotAction
@@ -96,6 +97,7 @@ class PVClimateController:
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
     power_learner: OutdoorPowerLearner = field(default_factory=OutdoorPowerLearner)
     last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
+    house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
     pilot: LivingRoomPilot = field(default_factory=LivingRoomPilot)
     last_pilot_action: PilotAction | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
@@ -195,14 +197,29 @@ class PVClimateController:
         )
         return self.last_house_plan
 
-    def observe_outdoor_power(self, active_zone_ids: tuple[str, ...]) -> None:
+    def observe_outdoor_power(self, active_zone_ids: tuple[str, ...], context: Mapping[str, object] | None = None) -> bool:
         """Learn shared compressor power passively from stable observed modes."""
-        self.power_learner.observe(active_zone_ids, self.last_energy.outdoor_unit_power_w, monotonic())
+        now = monotonic()
+        captured = self.power_learner.observe(active_zone_ids, self.last_energy.outdoor_unit_power_w, now)
+        if captured:
+            wall_clock = datetime.now().astimezone()
+            values = context or {}
+            self.house_learning.observe(
+                timestamp=now,
+                local_hour=wall_clock.hour,
+                active_zone_ids=active_zone_ids,
+                outdoor_power_w=self.last_energy.outdoor_unit_power_w,
+                pv_power_w=self.last_energy.pv_power_w,
+                export_power_w=self.last_energy.export_power_w,
+                outdoor_temperature_c=values.get("outdoor_temperature_c") if isinstance(values.get("outdoor_temperature_c"), (int, float)) else None,
+                irradiance_w_m2=values.get("irradiance_w_m2") if isinstance(values.get("irradiance_w_m2"), (int, float)) else None,
+            )
         self.last_power_estimates = {
             zone.zone_id: self.power_learner.estimate(zone.zone_id, active_zone_ids)
             for zone in self.config.house_zones
             if zone.zone_id not in active_zone_ids
         }
+        return captured
 
     def _record_thermal_profile(self, zone: ZoneConfig, temperature_c: float | None, mode: str, context: Mapping[str, object]) -> ThermalProfile | None:
         if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:
@@ -282,6 +299,7 @@ class PVClimateController:
                 for zone_id, samples in self._thermal_context_samples.items()
             },
             "outdoor_power_samples": self.power_learner.export_state(),
+            "house_power_observations": self.house_learning.export_state(now),
         }
 
     def restore_learning_state(self, state: object) -> None:
@@ -329,6 +347,7 @@ class PVClimateController:
                 restored_context[zone_id] = valid_context
         self._thermal_context_samples = restored_context
         self.power_learner.restore_state(state.get("outdoor_power_samples"))
+        self.house_learning.restore_state(state.get("house_power_observations"), now)
 
     @property
     def state(self) -> ControllerState:

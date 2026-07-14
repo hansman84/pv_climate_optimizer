@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from homeassistant.components.number import NumberDeviceClass, NumberEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower, UnitOfTemperature
+from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CONF_COMFORT_TEMPERATURE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, DOMAIN
 from .entity import ControllerEntity
+from .controller import serialize_zone_config
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
@@ -31,6 +32,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 
 class _TemperatureNumber(ControllerEntity, NumberEntity):
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_native_min_value = 16.0
     _attr_native_max_value = 32.0
     _attr_native_step = 0.5
@@ -73,6 +75,7 @@ class MinPVSurplusNumber(ControllerEntity, NumberEntity):
     _attr_native_step = 100.0
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = NumberDeviceClass.POWER
+    _attr_entity_category = EntityCategory.CONFIG
 
     @property
     def native_value(self) -> float:
@@ -101,23 +104,14 @@ class _ZoneSettingNumber(ControllerEntity, NumberEntity):
         return zone.name if zone is not None else self._zone_id
 
     async def _async_persist_zones(self) -> None:
-        await self.async_persist_option(CONF_HOUSE_ZONES, [
-            {
-                "zone_id": zone.zone_id,
-                "name": zone.name,
-                "climate_entity_id": zone.climate_entity_id,
-                "temperature_entity_id": zone.temperature_entity_id,
-                "cooling_power_entity_id": zone.cooling_power_entity_id,
-                "comfort_temperature": zone.comfort_temperature,
-                "hard_max_temperature": zone.hard_max_temperature,
-                "priority": zone.priority,
-                "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
-            }
-            for zone in self.controller.config.house_zones
-        ])
+        await self.async_persist_option(
+            CONF_HOUSE_ZONES,
+            [serialize_zone_config(zone) for zone in self.controller.config.house_zones],
+        )
 
 
 class ZoneComfortTemperatureNumber(_ZoneSettingNumber):
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_native_min_value = 16.0
     _attr_native_max_value = 32.0
     _attr_native_step = 0.5

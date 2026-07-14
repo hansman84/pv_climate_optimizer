@@ -27,6 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         PVForecastPowerSensor(controller, entry.entry_id, "pv_forecast_power"),
         OutdoorUnitPowerSensor(controller, entry.entry_id, "outdoor_unit_power"),
         OutdoorPowerLearningSensor(controller, entry.entry_id, "outdoor_power_learning"),
+        HouseLearningModelSensor(controller, entry.entry_id, "house_learning_model"),
         EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
         HouseCoolingSensor(controller, entry.entry_id, "house_cooling"),
         HousePlanSensor(controller, entry.entry_id, "house_plan"),
@@ -215,6 +216,34 @@ class OutdoorPowerLearningSensor(ControllerEntity, SensorEntity):
             "active_zone_names": [names.get(zone_id, zone_id) for zone_id in status["active_zone_ids"]],
             "source_entity_id": self.controller.config.outdoor_unit_power_entity_id,
             "meaning": "Eine Probe entsteht nur nach fünf Minuten unveränderter Raumkombination und maximal einmal je fünf Minuten.",
+        }
+
+
+class HouseLearningModelSensor(ControllerEntity, SensorEntity):
+    """Expose the persisted model input and resulting power envelopes."""
+
+    _attr_name = "Hausmodell – Lernstand"
+
+    @property
+    def native_value(self) -> str:
+        count = len(self.controller.house_learning.observations)
+        return "Noch keine stabile Beobachtung" if count == 0 else f"{count} stabile Hausbeobachtungen"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            "meaning": "Jede Beobachtung enthält aktive Räume, Außenleistung, PV, Einspeisung, Außentemperatur, Solarstrahlung und lokale Stunde.",
+            "observation_count": len(self.controller.house_learning.observations),
+            "power_envelopes": self.controller.house_learning.summaries(),
+            "thermal_profiles": {
+                zone_id: {
+                    "data_quality": profile.data_quality,
+                    "passive_sun_trend_c_per_h": profile.passive_sun_trend_c_per_h,
+                    "passive_shaded_trend_c_per_h": profile.passive_shaded_trend_c_per_h,
+                    "cooling_trend_c_per_h": profile.cooling_trend_c_per_h,
+                }
+                for zone_id, profile in self.controller.last_thermal_profiles.items()
+            },
         }
 
 

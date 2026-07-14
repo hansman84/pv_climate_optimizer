@@ -163,7 +163,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
     controller.observe_outdoor_power(tuple(
         house_zone.zone_id for house_zone in config.house_zones
         if house_states[house_zone.zone_id][1] in {"cool", "dry"}
-    ))
+    ), {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance})
     action = controller.decide_living_room_pilot(
         temperature_c=_temperature_value(None if temperature is None else temperature.state),
         climate_mode=None if climate is None else climate.state,

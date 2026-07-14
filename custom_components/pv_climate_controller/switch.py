@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -70,6 +71,7 @@ class ExportPowerPositiveSwitch(ControllerEntity, SwitchEntity):
     """Expose the selected net-meter sign convention without changing its source."""
 
     _attr_name = "Netzeinspeisung positiv"
+    _attr_entity_category = EntityCategory.CONFIG
 
     @property
     def is_on(self) -> bool:
@@ -92,6 +94,7 @@ class ClimateTemperatureFallbackSwitch(ControllerEntity, SwitchEntity):
     def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
         super().__init__(controller, entry_id, key)
         self._zone_id = zone_id
+        self._attr_entity_category = EntityCategory.CONFIG
 
     @property
     def _zone(self):
