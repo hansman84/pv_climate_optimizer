@@ -37,8 +37,9 @@ def test_legacy_room_typo_never_reaches_customer_facing_labels() -> None:
 def test_clearing_optional_ems_source_overrides_legacy_config_data() -> None:
     updated = config_options.merge_safety_options(
         {"ems_granted_stages_entity_id": "sensor.loxone_ems"},
-        {"shadow_mode": False, "living_room_pilot_enabled": True},
+        {"shadow_mode": False, "living_room_pilot_enabled": True, "use_ems_grant": False},
         "ems_granted_stages_entity_id",
+        "use_ems_grant",
     )
 
     assert updated["ems_granted_stages_entity_id"] is None
