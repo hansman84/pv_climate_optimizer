@@ -663,6 +663,44 @@ def test_living_room_pilot_preconditions_from_pv_then_stops_at_target() -> None:
     assert living_pilot.decide(runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=1200).action == "stop"
 
 
+def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
+    clock = Clock()
+    base = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.PV_PREFERRED,
+        living_room_pilot_enabled=True,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        ems_granted_stages_entity_id="input_number.living_ems",
+        min_pv_surplus_w=200,
+    )
+
+    def decision(config=base, temperature=25.0, mode="off", grant=1, export=500):
+        return pilot.LivingRoomPilot(clock).decide(
+            config, temperature_c=temperature, climate_mode=mode,
+            granted_stages=grant, export_power_w=export,
+        )
+
+    assert decision(config=models.ControllerConfig(True, const.EnergyPolicy.PV_PREFERRED, True, base.zone)).reason_code == "shadow_mode"
+    assert decision(config=models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, base.zone, "input_number.living_ems"), grant=0).reason_code == "ems_grant_missing"
+    assert decision(temperature=None).reason_code == "temperature_invalid"
+    assert decision(mode="unavailable").reason_code == "climate_unavailable"
+    assert decision(temperature=24.0, export=0).reason_code == "pv_or_thermal_need_missing"
+    assert decision(mode="cool").reason_code == "external_climate_control"
+
+    hard_limit = decision(temperature=25.5, export=0)
+    assert hard_limit.action == "start"
+    assert hard_limit.reason_code == "hard_temperature_limit"
+
+    controlled = pilot.LivingRoomPilot(clock)
+    assert controlled.decide(base, temperature_c=25.0, climate_mode="off", granted_stages=1, export_power_w=200).reason_code == "pilot_demand_stabilizing"
+    clock.now = 600
+    start = controlled.decide(base, temperature_c=25.0, climate_mode="off", granted_stages=1, export_power_w=200)
+    assert (start.action, start.target_temperature_c) == ("start", 23.0)
+    controlled.mark_sent(start)
+    clock.now = 900
+    assert controlled.decide(base, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=400).reason_code == "pv_target_adjustment"
+
+
 def test_living_room_pilot_never_takes_over_external_cooling() -> None:
     runtime = models.ControllerConfig(
         shadow_mode=False,

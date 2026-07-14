@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PV-Klimaregler – Pilot-Testbericht</title>
+  <style>
+    :root { color-scheme: dark; --bg:#10151d; --card:#19222e; --muted:#9db0c6; --ink:#f3f7fb; --good:#51d69a; --warn:#ffc867; --line:#304052; --accent:#67b7ff; }
+    * { box-sizing:border-box } body { margin:0; font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; color:var(--ink); background:linear-gradient(135deg,#10151d,#142235); }
+    main { max-width:1180px; margin:auto; padding:42px 22px 70px } h1 { font-size:clamp(2rem,5vw,3.5rem); line-height:1.08; margin:.2em 0 } h2 { margin-top:42px } .lede,.muted { color:var(--muted) } .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)) } .card { background:rgba(25,34,46,.94); border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:0 10px 30px #0003 } .metric { font-size:2.25rem; font-weight:750; color:var(--good) } .status { display:inline-block; padding:3px 9px; border-radius:999px; font-weight:700; background:#173d2e; color:var(--good) } .warning { background:#4d3920; color:var(--warn) } table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden } th,td { padding:12px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top } th { color:var(--muted); font-weight:650 } tr:last-child td { border:0 } .pass { color:var(--good); font-weight:700 } .flow { display:flex; flex-wrap:wrap; gap:8px; align-items:center } .node { background:var(--card); border:1px solid var(--line); padding:12px; border-radius:10px } .arrow { color:var(--accent); font-size:24px } code { color:#a8d6ff } ul { padding-left:20px } @media print { body { background:#fff; color:#111 } .card,table,.node { background:#fff; border-color:#bbb; box-shadow:none } .lede,.muted,th { color:#444 } }
+  </style>
+</head>
+<body><main>
+  <p class="muted">Testlauf · 14. Juli 2026 · Wohnzimmer-Pilot</p>
+  <h1>PV-Klimaregler<br>vollständiger Pilot-Test</h1>
+  <p class="lede">Der Überschuss ist eine <strong>Haus-Netzgröße</strong>. Die Quelle <code>sensor.export_power_raw</code> wird einmal gelesen und entscheidet, ob der Pilot überhaupt PV-Strom nutzen darf. Sie wird nicht pro Klimagerät aufgeteilt.</p>
+
+  <section class="grid">
+    <article class="card"><div class="metric">47</div><div>automatisierte Tests bestanden</div></article>
+    <article class="card"><div class="metric">3/3</div><div>reale Klima-Servicepfade bestätigt</div></article>
+    <article class="card"><div class="metric">2</div><div>neue Live-Diagnosen ausgerollt</div></article>
+    <article class="card"><div class="metric">0</div><div>offene Schreibfehler im Test</div></article>
+  </section>
+
+  <h2>Produktiver Istzustand</h2>
+  <div class="grid">
+    <article class="card"><span class="status">AUTOMATIC</span><p>Shadow Mode aus, Wohnzimmer-Pilot an, EMS-Freigabe 1.</p></article>
+    <article class="card"><span class="status">SICHERER ENDE</span><p><code>climate.wohnzimmer</code> ist nach dem Test ausgeschaltet.</p></article>
+    <article class="card"><span class="status warning">BEOBACHTEN</span><p>Negative Rohwerte zählen nur dann als Überschuss, wenn „Netzeinspeisung positiv“ ausgeschaltet wird.</p></article>
+  </div>
+
+  <h2>Entscheidungsfluss</h2>
+  <div class="flow"><div class="node">Haus-Netzexport<br><code>sensor.export_power_raw</code></div><div class="arrow">→</div><div class="node">Vorzeichen normalisieren</div><div class="arrow">→</div><div class="node">≥ 200 W für 10 min?</div><div class="arrow">→</div><div class="node">Wohnzimmer-Pilot</div><div class="arrow">→</div><div class="node">eine Klima</div></div>
+  <p class="muted">Die Leistung wird nicht „reserviert“ oder pro Gerät gemessen. Der Pilot startet aktuell nur die bestätigte Wohnzimmer-Einheit; andere Zonen bleiben reine Planung/Diagnose.</p>
+
+  <h2>Mock-Matrix – alle Eingangszustände</h2>
+  <table><thead><tr><th>Mock-Zustand</th><th>Erwartete Pilotentscheidung</th><th>Ergebnis</th></tr></thead><tbody>
+    <tr><td>Shadow Mode an</td><td>keinerlei Befehl</td><td class="pass">PASS · shadow_mode</td></tr>
+    <tr><td>EMS = 0 / fehlend</td><td>keinerlei Befehl</td><td class="pass">PASS · ems_grant_missing</td></tr>
+    <tr><td>Temperatur fehlt / unplausibel</td><td>keinerlei Befehl</td><td class="pass">PASS · temperature_invalid</td></tr>
+    <tr><td>Klimagerät unavailable</td><td>keinerlei Befehl</td><td class="pass">PASS · climate_unavailable</td></tr>
+    <tr><td>Kein Überschuss, unter 25,5 °C</td><td>keinerlei Befehl</td><td class="pass">PASS · pv_or_thermal_need_missing</td></tr>
+    <tr><td>Manuell bereits auf cool</td><td>Besitz nicht übernehmen</td><td class="pass">PASS · external_climate_control</td></tr>
+    <tr><td>25,5 °C oder höher</td><td>Start auch ohne PV</td><td class="pass">PASS · hard_temperature_limit</td></tr>
+    <tr><td>≥ 200 W, Minute 0–9</td><td>Wartezeit</td><td class="pass">PASS · pilot_demand_stabilizing</td></tr>
+    <tr><td>≥ 200 W, ab Minute 10</td><td>Start auf 23,0 °C</td><td class="pass">PASS · pv_preconditioning</td></tr>
+    <tr><td>≥ 400 W während Kühlung</td><td>Absenken auf 22,5 °C</td><td class="pass">PASS · pv_target_adjustment</td></tr>
+    <tr><td>Ziel 10 min gehalten, Laufzeit ≥ 20 min</td><td>Ausschalten</td><td class="pass">PASS · pilot_target_reached</td></tr>
+  </tbody></table>
+
+  <h2>Realer Gerätetest</h2>
+  <table><thead><tr><th>Schritt</th><th>Beobachtetes Ergebnis</th><th>Ergebnis</th></tr></thead><tbody>
+    <tr><td><code>climate.turn_on</code> + <code>set_hvac_mode(cool)</code></td><td>Wohnzimmer meldete <code>cool</code></td><td class="pass">PASS</td></tr>
+    <tr><td><code>set_temperature(23)</code>, danach <code>set_temperature(22)</code></td><td>Sollwerte jeweils vom Gerät bestätigt</td><td class="pass">PASS</td></tr>
+    <tr><td><code>climate.turn_off</code></td><td>Endzustand <code>off</code></td><td class="pass">PASS</td></tr>
+  </tbody></table>
+
+  <h2>Nächste Schritte</h2>
+  <ol>
+    <li><strong>Vorzeichen validieren:</strong> Bei physischer Einspeisung mit negativen W den Schalter „Netzeinspeisung positiv“ ausschalten. Danach muss die PV-Entscheidung bei z. B. −500 W einen positiven Export von 500 W ausweisen.</li>
+    <li><strong>Live-Beobachtung:</strong> Die neue Entität <code>sensor.pv_klimaregler_wohnzimmer_pilotentscheidung</code> zeigt Aktion, Grundcode und Sollwert.</li>
+    <li><strong>Ersten autonomen Lauf bewerten:</strong> Bei stabilem Überschuss startet der Pilot nach zehn Minuten; nach dem Ziel und den Schutzzeiten schaltet er wieder ab.</li>
+  </ol>
+
+  <h2>Mögliche Erweiterung</h2>
+  <div class="grid"><article class="card"><h3>Leistungsbudget pro Gerät</h3><p>Eigene Leistungsaufnahme je Innengerät messen und den Haus-Export um bereits laufende Verbraucher bereinigen. Ergebnis: keine unbewusste Netzaufnahme durch parallele Starts.</p></article><article class="card"><h3>Mehrzonen-Freigabe</h3><p>Nach akzeptiertem Wohnzimmer-Pilot nur jeweils eine weitere Zone aktivieren. Das gemeinsame Außengerätebudget und Prioritäten bleiben die Zuteilungsinstanz.</p></article><article class="card"><h3>PV-Prognose als Vorlauf</h3><p>Prognose nur als Vorbereitungsinformation nutzen, den tatsächlichen Start aber weiterhin an gemessenem Netzexport und EMS koppeln.</p></article></div>
+</main></body></html>

@@ -2,6 +2,8 @@
 !.gitignore
 !README.md
 !hacs.json
+!docs/
+!docs/pilot_test_report.html
 !custom_components/
 custom_components/*
 !custom_components/pv_climate_controller/
