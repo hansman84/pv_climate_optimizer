@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_SHADOW_MODE, DOMAIN
 from .entity import ControllerEntity
 
 
@@ -15,6 +15,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     controller = hass.data[DOMAIN][entry.entry_id]
     entities = [
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
+        LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
     entities.extend(
@@ -38,9 +39,29 @@ class ShadowModeSwitch(ControllerEntity, SwitchEntity):
         self.controller.notify_state_listeners()
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Disable evaluations; this does not enable productive control."""
+        """Leave Shadow Mode; the dedicated pilot switch remains a second gate."""
         self.controller.set_shadow_mode(False)
         await self.async_persist_option(CONF_SHADOW_MODE, False)
+        self.controller.notify_state_listeners()
+
+
+class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
+    """Explicit productive gate for the confirmed Wohnzimmer pilot only."""
+
+    _attr_name = "Wohnzimmer-Pilot aktiv"
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.living_room_pilot_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_living_room_pilot_enabled(True)
+        await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_living_room_pilot_enabled(False)
+        await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, False)
         self.controller.notify_state_listeners()
 
 

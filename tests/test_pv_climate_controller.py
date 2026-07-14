@@ -246,6 +246,22 @@ def test_living_room_pilot_never_selects_a_different_zone() -> None:
     assert pilot.living_room_pilot_eligible(living, 1) == (True, "pilot_eligible")
 
 
+def test_living_room_pilot_gate_updates_the_command_boundary() -> None:
+    runtime = controller.PVClimateController.from_config({
+        "shadow_mode": False,
+        "living_room_pilot_enabled": False,
+        "climate_entity_id": "climate.living",
+        "temperature_entity_id": "sensor.living",
+        "zone_name": "Wohnzimmer",
+    }, {})
+
+    assert runtime.state is const.ControllerState.DISABLED
+    runtime.set_living_room_pilot_enabled(True)
+    assert runtime.state is const.ControllerState.AUTOMATIC
+    runtime.set_shadow_mode(True)
+    assert runtime.state is const.ControllerState.SHADOW
+
+
 def test_raw_ha_states_are_evaluated_without_a_write() -> None:
     runtime = controller.PVClimateController.from_config(
         {"shadow_mode": True, "climate_entity_id": "climate.confirmed", "temperature_entity_id": "sensor.confirmed"},
