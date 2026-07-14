@@ -19,6 +19,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         ControllerStateSensor(controller, entry.entry_id, "controller_state"),
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
+        PilotActionSensor(controller, entry.entry_id, "pilot_action"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
         GrantedStagesSensor(controller, entry.entry_id, "granted_stages"),
         PVPowerSensor(controller, entry.entry_id, "pv_power"),
@@ -75,6 +76,28 @@ class DecisionReasonSensor(ControllerEntity, SensorEntity):
         if self.controller.last_decision is None:
             return "Shadow Mode aktiv; noch keine Zonenauswertung."
         return self.controller.last_decision.reason_text
+
+
+class PilotActionSensor(ControllerEntity, SensorEntity):
+    """Expose the productive pilot's own decision separately from Shadow plans."""
+
+    _attr_name = "Wohnzimmer-Pilotentscheidung"
+
+    @property
+    def native_value(self) -> str:
+        action = self.controller.last_pilot_action
+        return "Pilot noch nicht ausgewertet." if action is None else action.reason_text
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        action = self.controller.last_pilot_action
+        if action is None:
+            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
+        return {
+            "action": action.action,
+            "reason_code": action.reason_code,
+            "target_temperature_c": action.target_temperature_c,
+        }
 
 
 class RequestedStagesSensor(ControllerEntity, SensorEntity):
