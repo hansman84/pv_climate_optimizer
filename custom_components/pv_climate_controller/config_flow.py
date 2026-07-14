@@ -35,7 +35,9 @@ def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             CONF_EMS_GRANTED_STAGES_ENTITY_ID,
             default=values[CONF_EMS_GRANTED_STAGES_ENTITY_ID],
         )
-    schema[ems_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+    # EMS grants may come from a real sensor or the visible numeric helper
+    # used to gate the living-room pilot.
+    schema[ems_key] = EntitySelector(EntitySelectorConfig(domain=["sensor", "input_number"], multiple=False))
     for key in (CONF_PV_POWER_ENTITY_ID, CONF_EXPORT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID):
         selector_key = vol.Optional(key)
         if values.get(key):
@@ -242,7 +244,7 @@ def _safety_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required(CONF_SHADOW_MODE, default=values.get(CONF_SHADOW_MODE, True)): bool,
         vol.Required(CONF_LIVING_ROOM_PILOT_ENABLED, default=values.get(CONF_LIVING_ROOM_PILOT_ENABLED, False)): bool,
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
-        ems_key: EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
+        ems_key: EntitySelector(EntitySelectorConfig(domain=["sensor", "input_number"], multiple=False)),
     })
 
 
