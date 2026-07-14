@@ -277,6 +277,24 @@ def test_controller_reports_disabled_pilot_action() -> None:
     assert runtime.last_pilot_action == action
 
 
+def test_zone_serialization_preserves_all_shade_geometry() -> None:
+    zone = models.ZoneConfig(
+        "living", "Wohnzimmer", "climate.living", "sensor.living",
+        shade_entity_ids=("cover.fallback",),
+        facade_azimuths=(180.0, 315.0),
+        facade_shade_entity_ids=(("cover.south_left", "cover.south_right"), ("cover.flower",)),
+        overhang_cutoff_elevation=42.0,
+    )
+
+    saved = controller.serialize_zone_config(zone)
+    restored = controller._house_zones([saved])[0]
+
+    assert restored.shade_entity_ids == zone.shade_entity_ids
+    assert restored.facade_azimuths == zone.facade_azimuths
+    assert restored.facade_shade_entity_ids == zone.facade_shade_entity_ids
+    assert restored.overhang_cutoff_elevation == zone.overhang_cutoff_elevation
+
+
 def test_raw_ha_states_are_evaluated_without_a_write() -> None:
     runtime = controller.PVClimateController.from_config(
         {"shadow_mode": True, "climate_entity_id": "climate.confirmed", "temperature_entity_id": "sensor.confirmed"},

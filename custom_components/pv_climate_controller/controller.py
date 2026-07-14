@@ -58,6 +58,25 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
     return tuple(result)
 
 
+def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
+    """Persist every configured zone field without silently dropping geometry."""
+    return {
+        "zone_id": zone.zone_id,
+        "name": zone.name,
+        "climate_entity_id": zone.climate_entity_id,
+        "temperature_entity_id": zone.temperature_entity_id,
+        "cooling_power_entity_id": zone.cooling_power_entity_id,
+        "comfort_temperature": zone.comfort_temperature,
+        "hard_max_temperature": zone.hard_max_temperature,
+        "priority": zone.priority,
+        "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
+        "shade_entity_ids": list(zone.shade_entity_ids),
+        "facade_azimuths": list(zone.facade_azimuths),
+        "facade_shade_entity_ids": [list(group) for group in zone.facade_shade_entity_ids],
+        "overhang_cutoff_elevation": zone.overhang_cutoff_elevation,
+    }
+
+
 @dataclass(slots=True)
 class PVClimateController:
     """Coordinates pure decisions and preserves Shadow Mode."""

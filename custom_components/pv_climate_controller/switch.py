@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_SHADOW_MODE, DOMAIN
+from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
 
@@ -114,18 +115,6 @@ class ClimateTemperatureFallbackSwitch(ControllerEntity, SwitchEntity):
 
     async def _async_set(self, enabled: bool) -> None:
         self.controller.set_zone_temperature_fallback(self._zone_id, enabled)
-        zones = [
-            {
-                "zone_id": zone.zone_id, "name": zone.name,
-                "climate_entity_id": zone.climate_entity_id,
-                "temperature_entity_id": zone.temperature_entity_id,
-                "cooling_power_entity_id": zone.cooling_power_entity_id,
-                "comfort_temperature": zone.comfort_temperature,
-                "hard_max_temperature": zone.hard_max_temperature,
-                "priority": zone.priority,
-                "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
-            }
-            for zone in self.controller.config.house_zones
-        ]
+        zones = [serialize_zone_config(zone) for zone in self.controller.config.house_zones]
         await self.async_persist_option(CONF_HOUSE_ZONES, zones)
         self.controller.notify_state_listeners()

@@ -4,6 +4,7 @@
 !hacs.json
 !docs/
 !docs/pilot_test_report.html
+!docs/per_device_pv_budget.md
 !custom_components/
 custom_components/*
 !custom_components/pv_climate_controller/
