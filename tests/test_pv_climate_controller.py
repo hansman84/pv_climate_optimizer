@@ -813,9 +813,11 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     assert (settling.action, settling.target_temperature_c, settling.reason_code) == ("adjust", 24.0, "pilot_soft_target_adjustment")
     living_pilot.mark_sent(settling)
     clock.now = 5400
-    assert living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_settling"
+    assert living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
     clock.now = 6600
-    assert living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "thermal_target_reached"
+    assert living_pilot.decide(runtime, temperature_c=22.9, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_settling"
+    clock.now = 7800
+    assert living_pilot.decide(runtime, temperature_c=22.9, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "thermal_target_reached"
 
 
 def test_living_room_pilot_holds_target_when_solar_rebound_is_expected() -> None:

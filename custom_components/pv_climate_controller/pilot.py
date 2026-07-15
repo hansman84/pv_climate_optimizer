@@ -177,12 +177,14 @@ class LivingRoomPilot:
 
         # PV alone is not a reason to cool indefinitely.  When the room has
         # reached its currently planned target and no solar rebound is likely,
-        # allow a short settle period, then switch the unit off.  With direct
-        # sun or an observed positive passive trend, retain the settled target
-        # so the split can quietly counter the predictable rebound.
+        # allow a short settle period, then switch the unit off.  Productive
+        # PV may instead retain the relaxed whole-degree target while the room
+        # is still inside its comfort band: this avoids needless compressor
+        # cycling without silently overcooling the room.
         at_target = temperature_c <= desired_target
         rebound_expected = self._rebound_expected(thermal_profile, direct_sun, irradiance_w_m2)
-        if at_target and not rebound_expected:
+        pv_holding_allowed = pv_available and temperature_c >= zone.comfort_temperature - 0.5
+        if at_target and not rebound_expected and not pv_holding_allowed:
             if self._active_target_temperature_c != hold_target and target_change_due:
                 self._settled_since = now
                 return PilotAction("adjust", hold_target, "pilot_settling", f"Kühlziel erreicht; Solltemperatur wird zum ruhigen Auslaufen auf {hold_target:.0f} °C angehoben.")
