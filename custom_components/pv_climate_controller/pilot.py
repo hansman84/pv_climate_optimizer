@@ -30,15 +30,12 @@ class LivingRoomPilot:
     _MAX_START_TARGET_C = 24.0
     _DEEP_PRECOOL_AFTER_S = 30 * 60
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
-    _MIN_RUNTIME_S = 60 * 60
-    _TARGET_STABLE_S = 15 * 60
     _PV_WIND_DOWN_S = 10 * 60
     _MIN_OFF_TIME_S = 30 * 60
 
     def __init__(self, clock=monotonic) -> None:
         self._clock = clock
         self._demand_since: float | None = None
-        self._target_reached_since: float | None = None
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
         self._last_target_change_at: float | None = None
@@ -54,7 +51,6 @@ class LivingRoomPilot:
         """Leave an externally controlled device untouched."""
         self._owns_cooling = False
         self._cooling_started_at = None
-        self._target_reached_since = None
         self._active_target_temperature_c = None
         self._last_target_change_at = None
         self._pv_missing_since = None
@@ -137,23 +133,17 @@ class LivingRoomPilot:
                 self._pv_missing_since = now
             if self._active_target_temperature_c != start_target:
                 return PilotAction("adjust", start_target, "pv_wind_down", f"PV-Überschuss endet; Solltemperatur wird sanft auf {start_target:.0f} °C angehoben.")
-            if runtime_s >= self._MIN_RUNTIME_S and now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
+            if now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
                 return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; sanfter Auslauf ist beendet.")
         else:
             self._pv_missing_since = None
             if self._active_target_temperature_c != desired_target and target_change_due:
                 return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", "Stabiler PV-Überschuss erlaubt eine einzelne, ruhige Sollwertstufe.")
 
-        active_target = self._active_target_temperature_c or start_target
-        if temperature_c <= active_target:
-            if self._target_reached_since is None:
-                self._target_reached_since = now
-            stable_target = now - self._target_reached_since >= self._TARGET_STABLE_S
-            if runtime_s >= self._MIN_RUNTIME_S and stable_target and not strong_pv:
-                return PilotAction("stop", None, "pilot_target_reached", f"{start_target:.0f}-°C-Ziel stabil erreicht; Mindestlaufzeit erfüllt.")
-        else:
-            self._target_reached_since = None
-        return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird ruhig innerhalb der Pilotgrenzen gekühlt.")
+        # Reaching the setpoint is deliberately not a stop criterion while
+        # export remains available.  The inverter can modulate at the settled
+        # target and consume PV instead of being forced into short cycles.
+        return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird mit PV ruhig und langlaufend moduliert.")
 
 
 def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int) -> tuple[bool, str]:

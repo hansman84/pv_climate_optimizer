@@ -756,7 +756,7 @@ def test_contextual_thermal_learning_never_bridges_mode_changes() -> None:
     assert profile.cooling_trend_c_per_h == -2.4
 
 
-def test_living_room_pilot_preconditions_from_pv_then_stops_at_target() -> None:
+def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -791,7 +791,7 @@ def test_living_room_pilot_preconditions_from_pv_then_stops_at_target() -> None:
     clock.now = 4200
     assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
     clock.now = 5400
-    assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).action == "stop"
+    assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
 
 
 def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
@@ -816,9 +816,9 @@ def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
     assert wind_down.action == "adjust"
     assert wind_down.target_temperature_c == 24.0
     living_pilot.mark_sent(wind_down)
-    clock.now = 3000
+    clock.now = 2999
     assert living_pilot.decide(runtime, temperature_c=24.4, climate_mode="cool", granted_stages=1, export_power_w=0).reason_code == "pilot_cooling_active"
-    clock.now = 4200
+    clock.now = 3000
     assert living_pilot.decide(runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=0).action == "stop"
 
 
