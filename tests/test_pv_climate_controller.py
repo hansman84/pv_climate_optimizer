@@ -910,3 +910,22 @@ def test_living_room_pilot_never_takes_over_external_cooling() -> None:
 
     assert action.action == "none"
     assert action.reason_code == "external_climate_control"
+
+
+def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        living_room_pilot_force_takeover=True,
+        min_pv_surplus_w=1000,
+    )
+
+    action = pilot.LivingRoomPilot(lambda: 0).decide(
+        runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1200,
+    )
+
+    assert action.action == "adjust"
+    assert action.target_temperature_c == 24.0
+    assert action.reason_code == "pilot_soft_target_adjustment"

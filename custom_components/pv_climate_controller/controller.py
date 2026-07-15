@@ -8,7 +8,7 @@ from datetime import datetime
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_LIVING_ROOM_PILOT_FORCE_TAKEOVER, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -135,6 +135,7 @@ class PVClimateController:
             shadow_mode=shadow_mode,
             energy_policy=policy,
             living_room_pilot_enabled=bool(options.get(CONF_LIVING_ROOM_PILOT_ENABLED, data.get(CONF_LIVING_ROOM_PILOT_ENABLED, False))),
+            living_room_pilot_force_takeover=bool(options.get(CONF_LIVING_ROOM_PILOT_FORCE_TAKEOVER, data.get(CONF_LIVING_ROOM_PILOT_FORCE_TAKEOVER, False))),
             zone=zone,
             ems_granted_stages_entity_id=grant_entity if isinstance(grant_entity, str) else None,
             ems_stale_after_s=float(stale_after),
@@ -472,6 +473,12 @@ class PVClimateController:
         """Change the explicit GUI pilot gate; no command is sent here."""
         self.config = replace(self.config, living_room_pilot_enabled=enabled)
         self.command_adapter.set_operating_mode(shadow_mode=self.config.shadow_mode, productive_enabled=enabled and not self.config.shadow_mode)
+
+    def set_living_room_pilot_force_takeover(self, enabled: bool) -> None:
+        """Allow the explicit GUI switch to hand a manually cooling room to the pilot."""
+        self.config = replace(self.config, living_room_pilot_force_takeover=enabled)
+        if not enabled:
+            self.pilot.release_ownership()
 
     def decide_living_room_pilot(
         self,

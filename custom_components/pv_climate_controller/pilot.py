@@ -111,7 +111,9 @@ class LivingRoomPilot:
         needs_cooling = hard_limit or (pv_available and temperature_c > start_target)
 
         if climate_mode == "cool" and not self._owns_cooling:
-            return PilotAction("none", None, "external_climate_control", "Klimagerät wird extern gesteuert; Pilot greift nicht ein.")
+            if not config.living_room_pilot_force_takeover:
+                return PilotAction("none", None, "external_climate_control", "Klimagerät wird extern gesteuert; Pilot greift nicht ein.")
+            self._adopt_external_cooling(now)
         if not self._owns_cooling:
             if not needs_cooling:
                 self._demand_since = None
@@ -168,6 +170,15 @@ class LivingRoomPilot:
             self._settled_since = None
 
         return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird mit PV ruhig und langlaufend moduliert.")
+
+    def _adopt_external_cooling(self, now: float) -> None:
+        """Treat an explicitly handed-over cooling run as pilot-owned from now on."""
+        self._owns_cooling = True
+        self._cooling_started_at = now
+        self._active_target_temperature_c = None
+        self._last_target_change_at = None
+        self._pv_missing_since = None
+        self._settled_since = None
 
     @staticmethod
     def _rebound_expected(
