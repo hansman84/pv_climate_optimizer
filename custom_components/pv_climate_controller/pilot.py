@@ -23,7 +23,16 @@ class PilotAction:
 
 
 class LivingRoomPilot:
-    """PV pre-cooling with explicit ownership and compressor protection."""
+    """Gentle PV pre-cooling with explicit ownership and compressor protection."""
+
+    _START_TARGET_C = 23.0
+    _DEEP_PRECOOL_TARGET_C = 22.0
+    _DEEP_PRECOOL_AFTER_S = 20 * 60
+    _TARGET_CHANGE_INTERVAL_S = 15 * 60
+    _MIN_RUNTIME_S = 45 * 60
+    _TARGET_STABLE_S = 15 * 60
+    _PV_WIND_DOWN_S = 10 * 60
+    _MIN_OFF_TIME_S = 30 * 60
 
     def __init__(self, clock=monotonic) -> None:
         self._clock = clock
@@ -31,6 +40,9 @@ class LivingRoomPilot:
         self._target_reached_since: float | None = None
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
+        self._last_target_change_at: float | None = None
+        self._pv_missing_since: float | None = None
+        self._last_stopped_at: float | None = None
         self._owns_cooling = False
 
     @property
@@ -43,6 +55,8 @@ class LivingRoomPilot:
         self._cooling_started_at = None
         self._target_reached_since = None
         self._active_target_temperature_c = None
+        self._last_target_change_at = None
+        self._pv_missing_since = None
 
     def mark_sent(self, action: PilotAction) -> None:
         """Record only a command accepted by the guarded write boundary."""
@@ -51,11 +65,15 @@ class LivingRoomPilot:
             self._owns_cooling = True
             self._cooling_started_at = now
             self._active_target_temperature_c = action.target_temperature_c
+            self._last_target_change_at = now
+            self._pv_missing_since = None
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
+            self._last_target_change_at = now
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
+            self._last_stopped_at = now
 
     def decide(
         self,
@@ -80,13 +98,12 @@ class LivingRoomPilot:
         now = self._clock()
         pv_available = export_power_w is not None and export_power_w >= config.min_pv_surplus_w
         hard_limit = temperature_c >= zone.hard_max_temperature
-        # Use the exported energy for a small, bounded thermal buffer.  The
-        # target never drops by more than 1 °C below the selected comfort value.
-        extra_cooling = 0.5 if pv_available else 0.3
-        if pv_available and export_power_w >= 2 * config.min_pv_surplus_w:
-            extra_cooling = 1.0
-        target = max(16.0, round(zone.comfort_temperature - extra_cooling, 1))
-        needs_cooling = hard_limit or (pv_available and temperature_c > target)
+        # A split unit modulates best when it is allowed to settle.  Always
+        # start at 23 °C; only sustained, genuinely high surplus may request
+        # the single lower 22 °C pre-cooling step later in the run.
+        start_target = self._START_TARGET_C
+        strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
+        needs_cooling = hard_limit or (pv_available and temperature_c > start_target)
 
         if climate_mode == "cool" and not self._owns_cooling:
             return PilotAction("none", None, "external_climate_control", "Klimagerät wird extern gesteuert; Pilot greift nicht ein.")
@@ -94,31 +111,47 @@ class LivingRoomPilot:
             if not needs_cooling:
                 self._demand_since = None
                 return PilotAction("none", None, "pv_or_thermal_need_missing", "Kein PV-gestützter oder thermischer Kühlbedarf.")
+            if not hard_limit and self._last_stopped_at is not None and now - self._last_stopped_at < self._MIN_OFF_TIME_S:
+                return PilotAction("none", None, "pilot_resting", "Wohnzimmer-Pilot hält die Kompressor-Ruhezeit ein.")
             if hard_limit:
-                return PilotAction("start", target, "hard_temperature_limit", "Harte Temperaturgrenze erreicht; Kühlung wird angefordert.")
+                return PilotAction("start", start_target, "hard_temperature_limit", "Harte Temperaturgrenze erreicht; Kühlung startet sanft bei 23 °C.")
             if self._demand_since is None:
                 self._demand_since = now
             if now - self._demand_since < 600:
                 return PilotAction("none", None, "pilot_demand_stabilizing", "PV-Kühlbedarf wird zehn Minuten auf Stabilität geprüft.")
-            return PilotAction("start", target, "pv_preconditioning", "PV-Überschuss wird zum begrenzten Vorkühlen genutzt.")
+            return PilotAction("start", start_target, "pv_preconditioning", "PV-Überschuss startet eine ruhige Vorkühlung bei 23 °C.")
 
         if climate_mode != "cool":
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
-        if pv_available and self._active_target_temperature_c != target:
-            return PilotAction("adjust", target, "pv_target_adjustment", "PV-Überschuss hat sich geändert; Solltemperatur wird angepasst.")
-        if temperature_c <= target:
+        runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
+        target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
+        desired_target = start_target
+        if strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > start_target + 0.5:
+            desired_target = self._DEEP_PRECOOL_TARGET_C
+
+        if not pv_available and not hard_limit:
+            if self._pv_missing_since is None:
+                self._pv_missing_since = now
+            if self._active_target_temperature_c != start_target:
+                return PilotAction("adjust", start_target, "pv_wind_down", "PV-Überschuss endet; Solltemperatur wird sanft auf 23 °C angehoben.")
+            if runtime_s >= self._MIN_RUNTIME_S and now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
+                return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; sanfter Auslauf ist beendet.")
+        else:
+            self._pv_missing_since = None
+            if self._active_target_temperature_c != desired_target and target_change_due:
+                return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", "Stabiler PV-Überschuss erlaubt eine einzelne, ruhige Sollwertstufe.")
+
+        active_target = self._active_target_temperature_c or start_target
+        if temperature_c <= active_target:
             if self._target_reached_since is None:
                 self._target_reached_since = now
-            ran_long_enough = self._cooling_started_at is not None and now - self._cooling_started_at >= 1200
-            stable_target = now - self._target_reached_since >= 600
-            if ran_long_enough and stable_target:
-                return PilotAction("stop", None, "pilot_target_reached", "PV-Ziel erreicht und Mindestlaufzeit erfüllt.")
+            stable_target = now - self._target_reached_since >= self._TARGET_STABLE_S
+            if runtime_s >= self._MIN_RUNTIME_S and stable_target and not strong_pv:
+                return PilotAction("stop", None, "pilot_target_reached", "23-°C-Ziel stabil erreicht; Mindestlaufzeit erfüllt.")
         else:
             self._target_reached_since = None
-        if not pv_available and not hard_limit and self._cooling_started_at is not None and now - self._cooling_started_at >= 1200:
-            return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss beendet; Mindestlaufzeit ist erfüllt.")
-        return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird innerhalb der Pilotgrenzen gekühlt.")
+        return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird ruhig innerhalb der Pilotgrenzen gekühlt.")
 
 
 def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int) -> tuple[bool, str]:
