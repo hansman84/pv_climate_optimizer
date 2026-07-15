@@ -473,7 +473,14 @@ class PVClimateController:
         self.config = replace(self.config, living_room_pilot_enabled=enabled)
         self.command_adapter.set_operating_mode(shadow_mode=self.config.shadow_mode, productive_enabled=enabled and not self.config.shadow_mode)
 
-    def decide_living_room_pilot(self, *, temperature_c: float | None, climate_mode: str | None) -> PilotAction:
+    def decide_living_room_pilot(
+        self,
+        *,
+        temperature_c: float | None,
+        climate_mode: str | None,
+        direct_sun: bool = False,
+        irradiance_w_m2: float | None = None,
+    ) -> PilotAction:
         """Evaluate the only productive PoC route after HA state refresh."""
         if not self.config.living_room_pilot_enabled:
             self.last_pilot_action = PilotAction("none", None, "pilot_disabled", "Wohnzimmer-Pilot ist in der GUI ausgeschaltet.")
@@ -485,6 +492,9 @@ class PVClimateController:
             climate_mode=climate_mode,
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
+            thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
+            direct_sun=direct_sun,
+            irradiance_w_m2=irradiance_w_m2,
         )
         return self.last_pilot_action
 

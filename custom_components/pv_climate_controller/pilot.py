@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from math import ceil
 from time import monotonic
 
-from .models import ControllerConfig
+from .models import ControllerConfig, ThermalProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +32,7 @@ class LivingRoomPilot:
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
     _PV_WIND_DOWN_S = 10 * 60
     _MIN_OFF_TIME_S = 30 * 60
+    _SETTLE_STOP_DELAY_S = 10 * 60
 
     def __init__(self, clock=monotonic) -> None:
         self._clock = clock
@@ -40,6 +41,7 @@ class LivingRoomPilot:
         self._active_target_temperature_c: float | None = None
         self._last_target_change_at: float | None = None
         self._pv_missing_since: float | None = None
+        self._settled_since: float | None = None
         self._last_stopped_at: float | None = None
         self._owns_cooling = False
 
@@ -54,6 +56,7 @@ class LivingRoomPilot:
         self._active_target_temperature_c = None
         self._last_target_change_at = None
         self._pv_missing_since = None
+        self._settled_since = None
 
     def mark_sent(self, action: PilotAction) -> None:
         """Record only a command accepted by the guarded write boundary."""
@@ -64,6 +67,7 @@ class LivingRoomPilot:
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
             self._pv_missing_since = None
+            self._settled_since = None
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
@@ -80,6 +84,9 @@ class LivingRoomPilot:
         climate_mode: str | None,
         granted_stages: int,
         export_power_w: float | None,
+        thermal_profile: ThermalProfile | None = None,
+        direct_sun: bool = False,
+        irradiance_w_m2: float | None = None,
     ) -> PilotAction | None:
         """Return a PV-first action or a visible reason for doing nothing."""
         allowed, reason = living_room_pilot_eligible(config, granted_stages)
@@ -129,6 +136,7 @@ class LivingRoomPilot:
             desired_target = deep_precool_target
 
         if not pv_available and not hard_limit:
+            self._settled_since = None
             if self._pv_missing_since is None:
                 self._pv_missing_since = now
             if self._active_target_temperature_c != start_target:
@@ -140,10 +148,42 @@ class LivingRoomPilot:
             if self._active_target_temperature_c != desired_target and target_change_due:
                 return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", "Stabiler PV-Überschuss erlaubt eine einzelne, ruhige Sollwertstufe.")
 
-        # Reaching the setpoint is deliberately not a stop criterion while
-        # export remains available.  The inverter can modulate at the settled
-        # target and consume PV instead of being forced into short cycles.
+        # PV alone is not a reason to cool indefinitely.  When the room has
+        # reached its currently planned target and no solar rebound is likely,
+        # allow a short settle period, then switch the unit off.  With direct
+        # sun or an observed positive passive trend, retain the settled target
+        # so the split can quietly counter the predictable rebound.
+        at_target = temperature_c <= desired_target
+        rebound_expected = self._rebound_expected(thermal_profile, direct_sun, irradiance_w_m2)
+        if at_target and not rebound_expected:
+            if self._active_target_temperature_c != start_target and target_change_due:
+                self._settled_since = now
+                return PilotAction("adjust", start_target, "pilot_settling", f"Kühlziel erreicht; Solltemperatur wird zum ruhigen Auslaufen auf {start_target:.0f} °C angehoben.")
+            if self._settled_since is None:
+                self._settled_since = now
+                return PilotAction("none", None, "pilot_settling", "Kühlziel erreicht; Pilot prüft zehn Minuten lang, ob der Raum stabil bleibt.")
+            if now - self._settled_since >= self._SETTLE_STOP_DELAY_S:
+                return PilotAction("stop", None, "thermal_target_reached", "Kühlziel ist stabil erreicht; ohne erwartete Wiederaufheizung wird das Klimagerät ausgeschaltet.")
+        else:
+            self._settled_since = None
+
         return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird mit PV ruhig und langlaufend moduliert.")
+
+    @staticmethod
+    def _rebound_expected(
+        profile: ThermalProfile | None,
+        direct_sun: bool,
+        irradiance_w_m2: float | None,
+    ) -> bool:
+        """Keep cooling only where solar gain or learned passive warming supports it."""
+        if direct_sun:
+            return True
+        if irradiance_w_m2 is not None and irradiance_w_m2 >= 250:
+            return True
+        if profile is None:
+            return False
+        trends = (profile.passive_sun_trend_c_per_h, profile.passive_shaded_trend_c_per_h)
+        return any(trend is not None and trend >= 0.3 for trend in trends)
 
 
 def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int) -> tuple[bool, str]:

@@ -167,6 +167,8 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
     action = controller.decide_living_room_pilot(
         temperature_c=_temperature_value(None if temperature is None else temperature.state),
         climate_mode=None if climate is None else climate.state,
+        direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
+        irradiance_w_m2=irradiance,
     )
     await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
     if store is not None:

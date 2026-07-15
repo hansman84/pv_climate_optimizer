@@ -789,9 +789,45 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     assert adjustment.target_temperature_c == 24.0
     living_pilot.mark_sent(adjustment)
     clock.now = 4200
-    assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
+    assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_settling"
     clock.now = 5400
-    assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
+    assert living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "thermal_target_reached"
+
+
+def test_living_room_pilot_holds_target_when_solar_rebound_is_expected() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    living_pilot = pilot.LivingRoomPilot(clock)
+    living_pilot.mark_sent(pilot.PilotAction("start", 24.0, "test", "test"))
+
+    clock.now = 1800
+    action = living_pilot.decide(
+        runtime,
+        temperature_c=24.0,
+        climate_mode="cool",
+        granted_stages=1,
+        export_power_w=1200,
+        direct_sun=True,
+        irradiance_w_m2=500,
+    )
+    assert action.reason_code == "pilot_cooling_active"
+
+    clock.now = 3600
+    action = living_pilot.decide(
+        runtime,
+        temperature_c=24.0,
+        climate_mode="cool",
+        granted_stages=1,
+        export_power_w=1200,
+        thermal_profile=models.ThermalProfile(0.7, None, -1.0, 8, 0, 8, "learning"),
+    )
+    assert action.reason_code == "pilot_cooling_active"
 
 
 def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
