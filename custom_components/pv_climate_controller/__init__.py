@@ -167,6 +167,9 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
     action = controller.decide_living_room_pilot(
         temperature_c=_temperature_value(None if temperature is None else temperature.state),
         climate_mode=None if climate is None else climate.state,
+        climate_target_temperature_c=_temperature_value(None if climate is None else climate.attributes.get("temperature")),
+        climate_fan_mode=None if climate is None else climate.attributes.get("fan_mode"),
+        climate_swing_mode=None if climate is None else climate.attributes.get("swing_mode"),
         direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
         irradiance_w_m2=irradiance,
     )

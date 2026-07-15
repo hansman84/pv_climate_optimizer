@@ -44,6 +44,9 @@ class LivingRoomPilot:
         self._settled_since: float | None = None
         self._last_stopped_at: float | None = None
         self._owns_cooling = False
+        self._takeover_requested = False
+        self._observed_snapshot: tuple[str | None, float | None, str | None, str | None] | None = None
+        self._expected_snapshot: tuple[str | None, float | None, str | None, str | None] | None = None
 
     @property
     def owns_cooling(self) -> bool:
@@ -57,6 +60,13 @@ class LivingRoomPilot:
         self._last_target_change_at = None
         self._pv_missing_since = None
         self._settled_since = None
+        self._takeover_requested = False
+        self._observed_snapshot = None
+        self._expected_snapshot = None
+
+    def request_takeover(self) -> None:
+        """Accept a one-shot handover from the dashboard button."""
+        self._takeover_requested = True
 
     def mark_sent(self, action: PilotAction) -> None:
         """Record only a command accepted by the guarded write boundary."""
@@ -68,9 +78,11 @@ class LivingRoomPilot:
             self._last_target_change_at = now
             self._pv_missing_since = None
             self._settled_since = None
+            self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
+            self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -87,6 +99,9 @@ class LivingRoomPilot:
         thermal_profile: ThermalProfile | None = None,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
+        climate_target_temperature_c: float | None = None,
+        climate_fan_mode: str | None = None,
+        climate_swing_mode: str | None = None,
     ) -> PilotAction | None:
         """Return a PV-first action or a visible reason for doing nothing."""
         allowed, reason = living_room_pilot_eligible(config, granted_stages)
@@ -100,6 +115,10 @@ class LivingRoomPilot:
             return PilotAction("none", None, "climate_unavailable", "Klimagerät ist nicht verfügbar.")
 
         now = self._clock()
+        snapshot = (climate_mode, climate_target_temperature_c, climate_fan_mode, climate_swing_mode)
+        if self._owns_cooling and self._manual_change_detected(snapshot):
+            self.release_ownership()
+            return PilotAction("none", None, "manual_control_resumed", "Manuelle Änderung erkannt; Wohnzimmer-Pilot hat die Kontrolle zurückgegeben.")
         pv_available = export_power_w is not None and export_power_w >= config.min_pv_surplus_w
         hard_limit = temperature_c >= zone.hard_max_temperature
         # A split unit modulates best when it is allowed to settle.  Start at
@@ -111,9 +130,9 @@ class LivingRoomPilot:
         needs_cooling = hard_limit or (pv_available and temperature_c > start_target)
 
         if climate_mode == "cool" and not self._owns_cooling:
-            if not config.living_room_pilot_force_takeover:
+            if not self._takeover_requested:
                 return PilotAction("none", None, "external_climate_control", "Klimagerät wird extern gesteuert; Pilot greift nicht ein.")
-            self._adopt_external_cooling(now)
+            self._adopt_external_cooling(now, snapshot)
         if not self._owns_cooling:
             if not needs_cooling:
                 self._demand_since = None
@@ -171,7 +190,7 @@ class LivingRoomPilot:
 
         return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird mit PV ruhig und langlaufend moduliert.")
 
-    def _adopt_external_cooling(self, now: float) -> None:
+    def _adopt_external_cooling(self, now: float, snapshot: tuple[str | None, float | None, str | None, str | None]) -> None:
         """Treat an explicitly handed-over cooling run as pilot-owned from now on."""
         self._owns_cooling = True
         self._cooling_started_at = now
@@ -179,6 +198,22 @@ class LivingRoomPilot:
         self._last_target_change_at = None
         self._pv_missing_since = None
         self._settled_since = None
+        self._takeover_requested = False
+        self._observed_snapshot = snapshot
+        self._expected_snapshot = None
+
+    def _manual_change_detected(self, snapshot: tuple[str | None, float | None, str | None, str | None]) -> bool:
+        """Differentiate acknowledged pilot setpoints from the next user change."""
+        if self._expected_snapshot is not None:
+            if snapshot == self._expected_snapshot:
+                self._observed_snapshot = snapshot
+                self._expected_snapshot = None
+                return False
+            return self._observed_snapshot is not None and snapshot != self._observed_snapshot
+        if self._observed_snapshot is None:
+            self._observed_snapshot = snapshot
+            return False
+        return snapshot != self._observed_snapshot
 
     @staticmethod
     def _rebound_expected(

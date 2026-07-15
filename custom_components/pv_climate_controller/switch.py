@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_LIVING_ROOM_PILOT_FORCE_TAKEOVER, CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_SHADOW_MODE, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
@@ -18,7 +18,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
         LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
-        LivingRoomPilotForceTakeoverSwitch(controller, entry.entry_id, "living_room_pilot_force_takeover"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
     entities.extend(
@@ -67,26 +66,6 @@ class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
         await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, False)
         self.controller.notify_state_listeners()
 
-
-class LivingRoomPilotForceTakeoverSwitch(ControllerEntity, SwitchEntity):
-    """Explicitly allow the pilot to take over an already manually cooling room."""
-
-    _attr_name = "Wohnzimmer-Pilot übernehmen"
-    _attr_icon = "mdi:account-arrow-right-outline"
-
-    @property
-    def is_on(self) -> bool:
-        return self.controller.config.living_room_pilot_force_takeover
-
-    async def async_turn_on(self, **kwargs) -> None:
-        self.controller.set_living_room_pilot_force_takeover(True)
-        await self.async_persist_option(CONF_LIVING_ROOM_PILOT_FORCE_TAKEOVER, True)
-        self.controller.notify_state_listeners()
-
-    async def async_turn_off(self, **kwargs) -> None:
-        self.controller.set_living_room_pilot_force_takeover(False)
-        await self.async_persist_option(CONF_LIVING_ROOM_PILOT_FORCE_TAKEOVER, False)
-        self.controller.notify_state_listeners()
 
 class ExportPowerPositiveSwitch(ControllerEntity, SwitchEntity):
     """Expose the selected net-meter sign convention without changing its source."""

@@ -918,14 +918,45 @@ def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
         energy_policy=const.EnergyPolicy.STRICT_PV,
         zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
         living_room_pilot_enabled=True,
-        living_room_pilot_force_takeover=True,
         min_pv_surplus_w=1000,
     )
+    living_pilot = pilot.LivingRoomPilot(lambda: 0)
+    living_pilot.request_takeover()
 
-    action = pilot.LivingRoomPilot(lambda: 0).decide(
+    action = living_pilot.decide(
         runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1200,
+        climate_target_temperature_c=22.0, climate_fan_mode="auto", climate_swing_mode="auto",
     )
 
     assert action.action == "adjust"
     assert action.target_temperature_c == 24.0
     assert action.reason_code == "pilot_soft_target_adjustment"
+
+
+def test_living_room_pilot_returns_control_after_next_manual_change() -> None:
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    living_pilot = pilot.LivingRoomPilot(lambda: 0)
+    living_pilot.request_takeover()
+    action = living_pilot.decide(
+        runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1200,
+        climate_target_temperature_c=22.0, climate_fan_mode="auto", climate_swing_mode="auto",
+    )
+    living_pilot.mark_sent(action)
+
+    action = living_pilot.decide(
+        runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1200,
+        climate_target_temperature_c=24.0, climate_fan_mode="auto", climate_swing_mode="auto",
+    )
+    assert action.reason_code == "pilot_cooling_active"
+
+    action = living_pilot.decide(
+        runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1200,
+        climate_target_temperature_c=23.0, climate_fan_mode="high", climate_swing_mode="auto",
+    )
+    assert action.reason_code == "manual_control_resumed"

@@ -114,7 +114,6 @@ class ControllerConfig:
     outdoor_temperature_entity_id: str | None = None
     solar_irradiance_entity_id: str | None = None
     sun_entity_id: str | None = None
-    living_room_pilot_force_takeover: bool = False
 
 
 @dataclass(frozen=True, slots=True)
