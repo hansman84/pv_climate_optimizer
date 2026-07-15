@@ -479,6 +479,10 @@ class PVClimateController:
         """Queue one explicit handover; the next manual climate change returns control."""
         self.pilot.request_takeover()
 
+    def request_office_pilot_takeover(self) -> None:
+        """Queue an explicit Arbeitszimmer handover with the same safety boundary."""
+        self.office_pilot.request_takeover()
+
     def decide_living_room_pilot(
         self,
         *,
