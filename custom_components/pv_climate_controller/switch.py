@@ -50,7 +50,7 @@ class ShadowModeSwitch(ControllerEntity, SwitchEntity):
 class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
     """Explicit productive gate for the confirmed Wohnzimmer pilot only."""
 
-    _attr_name = "Wohnzimmer-Pilot aktiv"
+    _attr_name = "PV-Pilot aktiv"
 
     @property
     def is_on(self) -> bool:

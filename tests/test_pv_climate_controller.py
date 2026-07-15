@@ -334,6 +334,26 @@ def test_controller_reports_disabled_pilot_action() -> None:
     assert runtime.last_pilot_action == action
 
 
+def test_controller_office_pilot_uses_only_configured_spielzimmer_zone() -> None:
+    office = models.ZoneConfig("office", "Spielzimmer", "climate.office", "sensor.office")
+    runtime = controller.PVClimateController(
+        config=models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.STRICT_PV,
+            living_room_pilot_enabled=True,
+            zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+            house_zones=(office,),
+            min_pv_surplus_w=1000,
+        ),
+        command_adapter=adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=1200)
+
+    action = runtime.decide_office_pilot(temperature_c=24.3, climate_mode="off")
+
+    assert action.reason_code == "pilot_demand_stabilizing"
+
+
 def test_zone_serialization_preserves_all_shade_geometry() -> None:
     zone = models.ZoneConfig(
         "living", "Wohnzimmer", "climate.living", "sensor.living",

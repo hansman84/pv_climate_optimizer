@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ControllerStateSensor(controller, entry.entry_id, "controller_state"),
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
         PilotActionSensor(controller, entry.entry_id, "pilot_action"),
+        OfficePilotActionSensor(controller, entry.entry_id, "office_pilot_action"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
         GrantedStagesSensor(controller, entry.entry_id, "granted_stages"),
         PVPowerSensor(controller, entry.entry_id, "pv_power"),
@@ -105,6 +106,24 @@ class PilotActionSensor(ControllerEntity, SensorEntity):
             "reason_code": action.reason_code,
             "target_temperature_c": action.target_temperature_c,
         }
+
+
+class OfficePilotActionSensor(PilotActionSensor):
+    """Expose the productive Arbeitszimmer pilot independently."""
+
+    _attr_name = "Arbeitszimmer-Pilotentscheidung"
+
+    @property
+    def native_value(self) -> str:
+        action = self.controller.last_office_pilot_action
+        return "Pilot noch nicht ausgewertet." if action is None else action.reason_text
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        action = self.controller.last_office_pilot_action
+        if action is None:
+            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
+        return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}
 
 
 class RequestedStagesSensor(ControllerEntity, SensorEntity):

@@ -34,8 +34,10 @@ class LivingRoomPilot:
     _MIN_OFF_TIME_S = 30 * 60
     _SETTLE_STOP_DELAY_S = 10 * 60
 
-    def __init__(self, clock=monotonic) -> None:
+    def __init__(self, clock=monotonic, expected_zone_name: str = "Wohnzimmer", display_name: str | None = None) -> None:
         self._clock = clock
+        self._expected_zone_name = expected_zone_name
+        self._display_name = display_name or expected_zone_name
         self._demand_since: float | None = None
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
@@ -104,9 +106,9 @@ class LivingRoomPilot:
         climate_swing_mode: str | None = None,
     ) -> PilotAction | None:
         """Return a PV-first action or a visible reason for doing nothing."""
-        allowed, reason = living_room_pilot_eligible(config, granted_stages)
+        allowed, reason = living_room_pilot_eligible(config, granted_stages, self._expected_zone_name)
         if not allowed:
-            return PilotAction("none", None, reason, "Wohnzimmer-Pilot ist derzeit gesperrt.")
+            return PilotAction("none", None, reason, f"{self._display_name}-Pilot ist derzeit gesperrt.")
         zone = config.zone
         assert zone is not None
         if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:
@@ -232,13 +234,13 @@ class LivingRoomPilot:
         return any(trend is not None and trend >= 0.3 for trend in trends)
 
 
-def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int) -> tuple[bool, str]:
-    """Allow the explicit living-room pilot; an EMS grant is optional."""
+def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int, expected_zone_name: str = "Wohnzimmer") -> tuple[bool, str]:
+    """Allow one explicitly named productive room pilot; an EMS grant is optional."""
     if config.shadow_mode:
         return False, "shadow_mode"
     if config.zone is None:
         return False, "zone_missing"
-    if config.zone.name.strip().casefold() != "wohnzimmer":
+    if config.zone.name.strip().casefold() != expected_zone_name.casefold():
         return False, "pilot_living_room_only"
     if config.ems_granted_stages_entity_id is not None and granted_stages < 1:
         return False, "ems_grant_missing"

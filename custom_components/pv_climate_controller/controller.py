@@ -99,7 +99,9 @@ class PVClimateController:
     last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
     house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
     pilot: LivingRoomPilot = field(default_factory=LivingRoomPilot)
+    office_pilot: LivingRoomPilot = field(default_factory=lambda: LivingRoomPilot(expected_zone_name="Spielzimmer", display_name="Arbeitszimmer"))
     last_pilot_action: PilotAction | None = None
+    last_office_pilot_action: PilotAction | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -508,14 +510,51 @@ class PVClimateController:
         )
         return self.last_pilot_action
 
-    async def async_apply_pilot_action(self, action: PilotAction, executor) -> CommandResult:
+    def decide_office_pilot(
+        self,
+        *,
+        temperature_c: float | None,
+        climate_mode: str | None,
+        climate_target_temperature_c: float | None = None,
+        climate_fan_mode: str | None = None,
+        climate_swing_mode: str | None = None,
+        direct_sun: bool = False,
+        irradiance_w_m2: float | None = None,
+    ) -> PilotAction:
+        """Evaluate the productive Arbeitszimmer route only for its exact mapped zone."""
+        office_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "spielzimmer"), None)
+        if not self.config.living_room_pilot_enabled:
+            self.last_office_pilot_action = PilotAction("none", None, "pilot_disabled", "Arbeitszimmer-Pilot ist in der GUI ausgeschaltet.")
+            return self.last_office_pilot_action
+        if office_zone is None:
+            self.last_office_pilot_action = PilotAction("none", None, "office_zone_missing", "Arbeitszimmer ist nicht als Zone konfiguriert.")
+            return self.last_office_pilot_action
+        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        self.last_office_pilot_action = self.office_pilot.decide(
+            replace(self.config, zone=office_zone),
+            temperature_c=temperature_c,
+            climate_mode=climate_mode,
+            granted_stages=grant,
+            export_power_w=self.last_energy.export_power_w,
+            thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
+            direct_sun=direct_sun,
+            irradiance_w_m2=irradiance_w_m2,
+            climate_target_temperature_c=climate_target_temperature_c,
+            climate_fan_mode=climate_fan_mode,
+            climate_swing_mode=climate_swing_mode,
+        )
+        return self.last_office_pilot_action
+
+    async def async_apply_pilot_action(self, action: PilotAction, executor, *, zone: ZoneConfig | None = None, room_pilot: LivingRoomPilot | None = None) -> CommandResult:
         """Send a pilot action only through the guarded, rate-limited boundary."""
-        if action.action not in {"start", "adjust", "stop"} or self.config.zone is None:
+        target_zone = zone or self.config.zone
+        active_pilot = room_pilot or self.pilot
+        if action.action not in {"start", "adjust", "stop"} or target_zone is None:
             return CommandResult("noop", action.reason_text)
-        command = Command(self.config.zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c)
+        command = Command(target_zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c)
         result = await self.command_adapter.async_request(command, executor)
         if result.status == "sent":
-            self.pilot.mark_sent(action)
+            active_pilot.mark_sent(action)
         return result
 
     def set_energy_policy(self, policy: EnergyPolicy) -> None:

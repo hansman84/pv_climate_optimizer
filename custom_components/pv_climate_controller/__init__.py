@@ -174,6 +174,20 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         irradiance_w_m2=irradiance,
     )
     await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
+    office_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "spielzimmer"), None)
+    if office_zone is not None:
+        office_climate = hass.states.get(office_zone.climate_entity_id)
+        office_sample = house_states.get(office_zone.zone_id, (ZoneInput(None, False), "unavailable", None))[0]
+        office_action = controller.decide_office_pilot(
+            temperature_c=office_sample.temperature_c,
+            climate_mode=None if office_climate is None else office_climate.state,
+            climate_target_temperature_c=_temperature_value(None if office_climate is None else office_climate.attributes.get("temperature")),
+            climate_fan_mode=None if office_climate is None else office_climate.attributes.get("fan_mode"),
+            climate_swing_mode=None if office_climate is None else office_climate.attributes.get("swing_mode"),
+            direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
+            irradiance_w_m2=irradiance,
+        )
+        await controller.async_apply_pilot_action(office_action, _pilot_service_executor(hass), zone=office_zone, room_pilot=controller.office_pilot)
     if store is not None:
         store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()
