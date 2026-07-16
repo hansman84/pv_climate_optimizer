@@ -891,7 +891,7 @@ def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
     assert wind_down.target_temperature_c == 24.0
     living_pilot.mark_sent(wind_down)
     clock.now = 2699
-    assert living_pilot.decide(runtime, temperature_c=24.4, climate_mode="cool", granted_stages=1, export_power_w=0).reason_code == "pilot_cooling_active"
+    assert living_pilot.decide(runtime, temperature_c=24.4, climate_mode="cool", granted_stages=1, export_power_w=0).reason_code == "pv_wind_down_waiting"
     clock.now = 2700
     assert living_pilot.decide(runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=0).action == "stop"
 
