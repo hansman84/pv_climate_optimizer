@@ -926,6 +926,27 @@ def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> N
     ).reason_code == "pv_surplus_ended"
 
 
+def test_controller_passes_the_evening_deadline_to_the_living_room_pilot() -> None:
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.STRICT_PV,
+            zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+            living_room_pilot_enabled=True,
+            min_pv_surplus_w=1000,
+        ),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=0)
+
+    action = runtime.decide_living_room_pilot(
+        temperature_c=24.0, climate_mode="cool", climate_target_temperature_c=22.0,
+        pv_deadline_active=True,
+    )
+
+    assert action.reason_code == "pv_wind_down"
+
+
 def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     clock = Clock()
     base = models.ControllerConfig(
