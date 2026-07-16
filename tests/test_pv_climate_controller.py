@@ -200,9 +200,21 @@ def test_bedroom_uses_pv_surplus_for_preconditioning_before_sleep() -> None:
 
     assert with_pv.demand
     assert with_pv.reason_code == "family_sleep_pv_precondition"
-    assert with_pv.recommended_target_temperature_c == 23.0
+    assert with_pv.recommended_target_temperature_c == 22.0
     assert not without_pv.demand
     assert without_pv.reason_code == "family_sleep_waiting_for_pv"
+
+
+def test_bedroom_relaxes_the_sleep_target_in_small_night_steps() -> None:
+    zone = models.ZoneConfig("sleep", "Schlafzimmer", "climate.sleep", "sensor.sleep", comfort_temperature=22.0)
+
+    bedtime = evaluator.evaluate_zone(zone, models.ZoneInput(23.0, True), now=time(22, 0))
+    after_midnight = evaluator.evaluate_zone(zone, models.ZoneInput(23.1, True), now=time(1, 0))
+    before_waking = evaluator.evaluate_zone(zone, models.ZoneInput(23.6, True), now=time(5, 0))
+
+    assert bedtime.recommended_target_temperature_c == 22.0
+    assert after_midnight.recommended_target_temperature_c == 22.5
+    assert before_waking.recommended_target_temperature_c == 23.0
 
 
 def test_deduplicates_confirmed_command_and_enforces_global_rate_limit() -> None:
@@ -882,6 +894,36 @@ def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
     assert living_pilot.decide(runtime, temperature_c=24.4, climate_mode="cool", granted_stages=1, export_power_w=0).reason_code == "pilot_cooling_active"
     clock.now = 2700
     assert living_pilot.decide(runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=0).action == "stop"
+
+
+def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    living_pilot = pilot.LivingRoomPilot(clock)
+
+    before_deadline = living_pilot.decide(
+        runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
+        climate_target_temperature_c=22.0,
+    )
+    assert before_deadline.reason_code == "external_climate_control"
+
+    at_deadline = living_pilot.decide(
+        runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
+        climate_target_temperature_c=22.0, pv_deadline_active=True,
+    )
+    assert (at_deadline.action, at_deadline.target_temperature_c, at_deadline.reason_code) == ("adjust", 24.0, "pv_wind_down")
+    living_pilot.mark_sent(at_deadline)
+    clock.now = 300
+    assert living_pilot.decide(
+        runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
+        climate_target_temperature_c=24.0,
+    ).reason_code == "pv_surplus_ended"
 
 
 def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:

@@ -67,7 +67,14 @@ def _apply_family_profile(
         )
     if "schlafzimmer" not in room and "kinderzimmer" not in room:
         return base
-    sleep_target = 23.0
+    # Hold the configured bedroom comfort at bedtime, capped at 23 °C, then
+    # relax it in two small steps.  This makes sleep onset pleasantly cool
+    # without asking the system to maintain the coldest target until morning.
+    sleep_target = min(config.comfort_temperature, 23.0)
+    if time(0, 0) <= local_time < time(3, 0):
+        sleep_target += 0.5
+    elif time(3, 0) <= local_time < time(7, 0):
+        sleep_target += 1.0
     precondition = time(15, 0) <= local_time < time(21, 0)
     sleep_window = local_time >= time(21, 0) or local_time < time(7, 0)
     if precondition:

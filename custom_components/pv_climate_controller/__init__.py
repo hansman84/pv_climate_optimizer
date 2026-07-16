@@ -129,6 +129,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
     irradiance = _temperature_value(None if irradiance_state is None else irradiance_state.state)
     sun_azimuth = _temperature_value(None if sun_state is None else sun_state.attributes.get("azimuth"))
     sun_elevation = _temperature_value(None if sun_state is None else sun_state.attributes.get("elevation"))
+    pv_deadline_active = _pv_deadline_active(sun_state)
     house_states = {}
     contexts = {}
     for house_zone in config.house_zones:
@@ -170,6 +171,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         climate_target_temperature_c=_temperature_value(None if climate is None else climate.attributes.get("temperature")),
         climate_fan_mode=None if climate is None else climate.attributes.get("fan_mode"),
         climate_swing_mode=None if climate is None else climate.attributes.get("swing_mode"),
+        pv_deadline_active=pv_deadline_active,
         direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
         irradiance_w_m2=irradiance,
     )
@@ -184,6 +186,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
             climate_target_temperature_c=_temperature_value(None if office_climate is None else office_climate.attributes.get("temperature")),
             climate_fan_mode=None if office_climate is None else office_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if office_climate is None else office_climate.attributes.get("swing_mode"),
+            pv_deadline_active=pv_deadline_active,
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
@@ -191,6 +194,22 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
     if store is not None:
         store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()
+
+
+def _pv_deadline_active(sun_state) -> bool:
+    """Start evening PV ownership 45 minutes before sunset and keep it overnight."""
+    if sun_state is None:
+        return False
+    if sun_state.state == "below_horizon":
+        return True
+    next_setting = sun_state.attributes.get("next_setting")
+    if not isinstance(next_setting, str):
+        return False
+    try:
+        sunset = datetime.fromisoformat(next_setting.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return 0.0 <= (sunset - datetime.now(sunset.tzinfo)).total_seconds() <= 45 * 60
 
 
 def _pilot_service_executor(hass: HomeAssistant):

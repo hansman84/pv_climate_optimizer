@@ -47,6 +47,7 @@ class LivingRoomPilot:
         self._last_stopped_at: float | None = None
         self._owns_cooling = False
         self._takeover_requested = False
+        self._sunset_takeover_active = False
         self._observed_snapshot: tuple[str | None, float | None, str | None, str | None] | None = None
         self._expected_snapshot: tuple[str | None, float | None, str | None, str | None] | None = None
 
@@ -89,6 +90,7 @@ class LivingRoomPilot:
             self.release_ownership()
             self._demand_since = None
             self._last_stopped_at = now
+            self._sunset_takeover_active = False
 
     def decide(
         self,
@@ -104,6 +106,7 @@ class LivingRoomPilot:
         climate_target_temperature_c: float | None = None,
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
+        pv_deadline_active: bool = False,
     ) -> PilotAction | None:
         """Return a PV-first action or a visible reason for doing nothing."""
         allowed, reason = living_room_pilot_eligible(config, granted_stages, self._expected_zone_name)
@@ -118,9 +121,16 @@ class LivingRoomPilot:
 
         now = self._clock()
         snapshot = (climate_mode, climate_target_temperature_c, climate_fan_mode, climate_swing_mode)
+        if climate_mode != "cool":
+            # A stopped unit ends the evening handover.  The next cooling run
+            # starts with normal manual ownership until the next deadline.
+            self._sunset_takeover_active = False
+        if pv_deadline_active:
+            self._sunset_takeover_active = True
         if self._owns_cooling and self._manual_change_detected(snapshot):
             self.release_ownership()
-            return PilotAction("none", None, "manual_control_resumed", "Manuelle Änderung erkannt; Wohnzimmer-Pilot hat die Kontrolle zurückgegeben.")
+            if not self._sunset_takeover_active:
+                return PilotAction("none", None, "manual_control_resumed", "Manuelle Änderung erkannt; Wohnzimmer-Pilot hat die Kontrolle zurückgegeben.")
         pv_available = export_power_w is not None and export_power_w >= config.min_pv_surplus_w
         hard_limit = temperature_c >= zone.hard_max_temperature
         # The configured comfort value is the thermal promise, even when the
@@ -136,7 +146,7 @@ class LivingRoomPilot:
         needs_cooling = hard_limit or (pv_available and temperature_c > zone.comfort_temperature)
 
         if climate_mode == "cool" and not self._owns_cooling:
-            if not self._takeover_requested:
+            if not self._takeover_requested and not self._sunset_takeover_active:
                 # A manual adjustment deliberately ends the pilot's ownership.
                 # Never use a PV condition to override that explicit comfort
                 # choice; the dashboard's handover button is the opt-in path
@@ -200,6 +210,8 @@ class LivingRoomPilot:
         else:
             self._settled_since = None
 
+        if self._sunset_takeover_active:
+            return PilotAction("none", None, "sunset_pv_control_active", "PV-Abendregelung ist aktiv; die Kühlung wird bis zum geordneten Auslauf geführt.")
         return PilotAction("none", None, "pilot_cooling_active", "Wohnzimmer wird mit PV ruhig und langlaufend moduliert.")
 
     def _adopt_external_cooling(self, now: float, snapshot: tuple[str | None, float | None, str | None, str | None]) -> None:
