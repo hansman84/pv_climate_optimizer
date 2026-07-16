@@ -30,7 +30,7 @@ class LivingRoomPilot:
     _MAX_START_TARGET_C = 24.0
     _DEEP_PRECOOL_AFTER_S = 30 * 60
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
-    _PV_WIND_DOWN_S = 10 * 60
+    _PV_WIND_DOWN_S = 5 * 60
     _MIN_OFF_TIME_S = 30 * 60
     _SETTLE_STOP_DELAY_S = 10 * 60
 
@@ -137,6 +137,19 @@ class LivingRoomPilot:
 
         if climate_mode == "cool" and not self._owns_cooling:
             if not self._takeover_requested:
+                # A manual adjustment may take over temperature and airflow,
+                # but it must not turn an already PV-led cooling session into
+                # an unattended grid consumer after sunset.  Preserve the
+                # hard-limit escape hatch and give short PV dips five minutes
+                # to recover before issuing the energy safety stop.
+                if not pv_available and not hard_limit:
+                    if self._pv_missing_since is None:
+                        self._pv_missing_since = now
+                        return PilotAction("none", None, "external_pv_cutoff_pending", "Externe Kühlung wartet fünf Minuten auf zurückkehrenden PV-Überschuss.")
+                    if now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
+                        return PilotAction("stop", None, "external_pv_safety_cutoff", "PV-Überschuss bleibt aus; externe Kühlung wird zum Schutz des Eigenverbrauchs beendet.")
+                else:
+                    self._pv_missing_since = None
                 return PilotAction("none", None, "external_climate_control", "Klimagerät wird extern gesteuert; Pilot greift nicht ein.")
             self._adopt_external_cooling(now, snapshot)
         if not self._owns_cooling:

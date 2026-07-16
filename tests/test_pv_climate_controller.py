@@ -878,9 +878,9 @@ def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
     assert wind_down.action == "adjust"
     assert wind_down.target_temperature_c == 24.0
     living_pilot.mark_sent(wind_down)
-    clock.now = 2999
+    clock.now = 2699
     assert living_pilot.decide(runtime, temperature_c=24.4, climate_mode="cool", granted_stages=1, export_power_w=0).reason_code == "pilot_cooling_active"
-    clock.now = 3000
+    clock.now = 2700
     assert living_pilot.decide(runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=0).action == "stop"
 
 
@@ -936,6 +936,26 @@ def test_living_room_pilot_never_takes_over_external_cooling() -> None:
 
     assert action.action == "none"
     assert action.reason_code == "external_climate_control"
+
+
+def test_external_cooling_stops_after_pv_has_been_missing_for_five_minutes() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+
+    pending = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
+    assert pending.reason_code == "external_pv_cutoff_pending"
+    clock.now = 300
+    action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
+
+    assert action.action == "stop"
+    assert action.reason_code == "external_pv_safety_cutoff"
 
 
 def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
