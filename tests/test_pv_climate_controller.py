@@ -938,7 +938,7 @@ def test_living_room_pilot_never_takes_over_external_cooling() -> None:
     assert action.reason_code == "external_climate_control"
 
 
-def test_external_cooling_stops_after_pv_has_been_missing_for_five_minutes() -> None:
+def test_external_cooling_is_never_stopped_after_pv_has_been_missing() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -949,13 +949,14 @@ def test_external_cooling_stops_after_pv_has_been_missing_for_five_minutes() -> 
     )
     room_pilot = pilot.LivingRoomPilot(clock)
 
-    pending = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert pending.reason_code == "external_pv_cutoff_pending"
+    action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
+    assert action.action == "none"
+    assert action.reason_code == "external_climate_control"
     clock.now = 300
     action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
 
-    assert action.action == "stop"
-    assert action.reason_code == "external_pv_safety_cutoff"
+    assert action.action == "none"
+    assert action.reason_code == "external_climate_control"
 
 
 def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
