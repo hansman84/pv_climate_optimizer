@@ -63,6 +63,7 @@ class LivingRoomPilot:
         self._thermal_relief_since: float | None = None
         self._last_stopped_at: float | None = None
         self._owns_cooling = False
+        self._manual_override_active = False
         self._takeover_requested = False
         self._sunset_takeover_active = False
         self._observed_snapshot: tuple[str | None, float | None, str | None, str | None] | None = None
@@ -89,6 +90,7 @@ class LivingRoomPilot:
     def request_takeover(self) -> None:
         """Accept a one-shot handover from the dashboard button."""
         self._takeover_requested = True
+        self._manual_override_active = False
 
     def export_runtime_state(self) -> dict[str, object]:
         """Persist only explicit pilot ownership across an HA restart.
@@ -99,12 +101,16 @@ class LivingRoomPilot:
         """
         return {
             "owns_cooling": self._owns_cooling,
+            "manual_override_active": self._manual_override_active,
             "observed_snapshot": None if self._observed_snapshot is None else list(self._observed_snapshot),
         }
 
     def restore_runtime_state(self, state: object) -> None:
         """Restore a prior explicit handover; malformed data fails closed."""
-        if not isinstance(state, dict) or state.get("owns_cooling") is not True:
+        if not isinstance(state, dict):
+            return
+        self._manual_override_active = state.get("manual_override_active") is True
+        if state.get("owns_cooling") is not True:
             return
         snapshot = state.get("observed_snapshot")
         if not isinstance(snapshot, list) or len(snapshot) != 4 or not all(value is None or isinstance(value, (str, float, int)) for value in snapshot):
@@ -175,8 +181,10 @@ class LivingRoomPilot:
             self._sunset_takeover_active = False
         if pv_deadline_active:
             self._sunset_takeover_active = True
+            self._manual_override_active = False
         if self._owns_cooling and self._manual_change_detected(snapshot):
             self.release_ownership()
+            self._manual_override_active = True
             if not self._sunset_takeover_active:
                 return PilotAction("none", None, "manual_control_resumed", f"Manuelle Änderung erkannt; {self._display_name}-Pilot hat die Kontrolle zurückgegeben.")
         pv_available = export_power_w is not None and export_power_w >= config.min_pv_surplus_w
@@ -194,12 +202,12 @@ class LivingRoomPilot:
         needs_cooling = hard_limit or (pv_available and temperature_c > zone.comfort_temperature)
 
         if climate_mode == "cool" and not self._owns_cooling:
-            if not self._takeover_requested and not self._sunset_takeover_active:
-                # A manual adjustment deliberately ends the pilot's ownership.
-                # Never use a PV condition to override that explicit comfort
-                # choice; the dashboard's handover button is the opt-in path
-                # for returning an existing cooling run to PV control.
-                return PilotAction("none", None, "external_climate_control", "Klimagerät wird extern gesteuert; Pilot greift nicht ein.")
+            if self._manual_override_active and not self._sunset_takeover_active:
+                return PilotAction("none", None, "manual_control_resumed", f"Manuelle Änderung ist aktiv; {self._display_name}-Pilot wartet bis zur nächsten Übergabe oder PV-Abendregelung.")
+            # A running device after a restart or an integration reconnect is
+            # not automatically a manual override. Adopt it so the active
+            # house controller keeps regulating instead of displaying a
+            # permanent, unactionable 'external' state.
             self._adopt_external_cooling(now, snapshot)
         if not self._owns_cooling:
             if not needs_cooling:

@@ -1019,7 +1019,7 @@ def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> N
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
         climate_target_temperature_c=22.0,
     )
-    assert before_deadline.reason_code == "external_climate_control"
+    assert before_deadline.reason_code == "pv_wind_down"
 
     at_deadline = living_pilot.decide(
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
@@ -1077,7 +1077,7 @@ def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     assert decision(temperature=None).reason_code == "temperature_invalid"
     assert decision(mode="unavailable").reason_code == "climate_unavailable"
     assert decision(temperature=24.0, export=0).reason_code == "pv_or_thermal_need_missing"
-    assert decision(mode="cool").reason_code == "external_climate_control"
+    assert decision(mode="cool").reason_code == "pilot_soft_target_adjustment"
 
     hard_limit = decision(temperature=25.5, export=0)
     assert hard_limit.action == "start"
@@ -1093,7 +1093,7 @@ def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     assert controlled.decide(base, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=400).reason_code == "pilot_cooling_active"
 
 
-def test_living_room_pilot_never_takes_over_external_cooling() -> None:
+def test_living_room_pilot_automatically_takes_over_running_cooling() -> None:
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
@@ -1105,11 +1105,11 @@ def test_living_room_pilot_never_takes_over_external_cooling() -> None:
         runtime, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=2000,
     )
 
-    assert action.action == "none"
-    assert action.reason_code == "external_climate_control"
+    assert action.action == "adjust"
+    assert action.reason_code == "pilot_soft_target_adjustment"
 
 
-def test_external_cooling_is_never_stopped_after_pv_has_been_missing() -> None:
+def test_running_cooling_is_automatically_adopted_and_wound_down_without_pv() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -1121,13 +1121,14 @@ def test_external_cooling_is_never_stopped_after_pv_has_been_missing() -> None:
     room_pilot = pilot.LivingRoomPilot(clock)
 
     action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert action.action == "none"
-    assert action.reason_code == "external_climate_control"
+    assert action.action == "adjust"
+    assert action.reason_code == "pv_wind_down"
+    room_pilot.mark_sent(action)
     clock.now = 300
     action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
 
-    assert action.action == "none"
-    assert action.reason_code == "external_climate_control"
+    assert action.action == "stop"
+    assert action.reason_code == "pv_surplus_ended"
 
 
 def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
