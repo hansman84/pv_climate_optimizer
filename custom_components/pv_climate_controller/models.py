@@ -19,6 +19,7 @@ class ZoneConfig:
     hard_max_temperature: float = 25.5
     cooling_power_entity_id: str | None = None
     priority: int = 50
+    pilot_enabled: bool = True
     minimum_plausible_temperature_c: float = 5.0
     maximum_plausible_temperature_c: float = 50.0
     use_climate_temperature_fallback: bool = False

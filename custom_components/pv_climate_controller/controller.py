@@ -45,12 +45,17 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
         raw_facade_shades = item.get("facade_shade_entity_ids", [])
         facade_shades = tuple(tuple(entity for entity in group if isinstance(entity, str)) for group in raw_facade_shades if isinstance(group, list)) if isinstance(raw_facade_shades, list) else ()
         cutoff = item.get("overhang_cutoff_elevation")
+        normalized_name = " ".join(name.split())
+        # The existing Schlafzimmer unit is unreliable. It must never become
+        # a productive pilot only because an older configuration is upgraded.
+        default_pilot_enabled = normalized_name.casefold() != "schlafzimmer"
         result.append(ZoneConfig(
             zone_id=str(item.get("zone_id", climate)), name=name, climate_entity_id=climate,
             temperature_entity_id=temperature, comfort_temperature=float(item.get("comfort_temperature", 23.5)),
             hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
             priority=int(item.get("priority", 50)),
+            pilot_enabled=bool(item.get("pilot_enabled", default_pilot_enabled)),
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
@@ -71,6 +76,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "comfort_temperature": zone.comfort_temperature,
         "hard_max_temperature": zone.hard_max_temperature,
         "priority": zone.priority,
+        "pilot_enabled": zone.pilot_enabled,
         "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
         "shade_entity_ids": list(zone.shade_entity_ids),
         "facade_azimuths": list(zone.facade_azimuths),
@@ -528,6 +534,17 @@ class PVClimateController:
         """Set the thermal promise for both sleeping rooms without altering daytime comfort."""
         self.config = replace(self.config, bedroom_target_temperature=min(25.0, max(20.0, value)))
 
+    def set_zone_pilot_enabled(self, zone_id: str, enabled: bool) -> None:
+        """Grant or revoke productive pilot control for exactly one room."""
+        zones = tuple(
+            replace(zone, pilot_enabled=enabled) if zone.zone_id == zone_id else zone
+            for zone in self.config.house_zones
+        )
+        selected_zone = self.config.zone
+        if selected_zone is not None:
+            selected_zone = next((zone for zone in zones if zone.zone_id == selected_zone.zone_id), selected_zone)
+        self.config = replace(self.config, house_zones=zones, zone=selected_zone)
+
     def request_living_room_pilot_takeover(self) -> None:
         """Queue one explicit handover; the next manual climate change returns control."""
         self.pilot.request_takeover()
@@ -588,6 +605,10 @@ class PVClimateController:
             action = PilotAction("none", None, "bedroom_mode_disabled", "Schlafraum-Modus ist in der GUI ausgeschaltet.")
             self.last_bedroom_pilot_actions[zone.zone_id] = action
             return action
+        if not zone.pilot_enabled:
+            action = PilotAction("none", None, "zone_pilot_disabled", f"{zone.name}-Pilot ist für diesen Raum ausgeschaltet.")
+            self.last_bedroom_pilot_actions[zone.zone_id] = action
+            return action
         local_time = now or datetime.now().astimezone().time()
         start = self._schedule_time(self.config.bedroom_start_time, time(15, 30))
         cutoff = self._schedule_time(self.config.bedroom_cutoff_time, time(18, 30))
@@ -642,6 +663,9 @@ class PVClimateController:
         if not self.config.living_room_pilot_enabled:
             self.last_pilot_action = PilotAction("none", None, "pilot_disabled", "Wohnzimmer-Pilot ist in der GUI ausgeschaltet.")
             return self.last_pilot_action
+        if self.config.zone is not None and not self.config.zone.pilot_enabled:
+            self.last_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Wohnzimmer-Pilot ist für diesen Raum ausgeschaltet.")
+            return self.last_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
         forecast = None if self.config.zone is None else self.last_zone_forecasts.get(self.config.zone.zone_id)
         self.last_pilot_action = self.pilot.decide(
@@ -684,6 +708,9 @@ class PVClimateController:
         if office_zone is None:
             self.last_office_pilot_action = PilotAction("none", None, "office_zone_missing", "Arbeitszimmer ist nicht als Zone konfiguriert.")
             return self.last_office_pilot_action
+        if not office_zone.pilot_enabled:
+            self.last_office_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Arbeitszimmer-Pilot ist für diesen Raum ausgeschaltet.")
+            return self.last_office_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
         forecast = self.last_zone_forecasts.get(office_zone.zone_id)
         self.last_office_pilot_action = self.office_pilot.decide(
@@ -725,6 +752,9 @@ class PVClimateController:
             return self.last_speis_pilot_action
         if speis_zone is None:
             self.last_speis_pilot_action = PilotAction("none", None, "speis_zone_missing", "Speis ist nicht als Zone konfiguriert.")
+            return self.last_speis_pilot_action
+        if not speis_zone.pilot_enabled:
+            self.last_speis_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Speis-Pilot ist für diesen Raum ausgeschaltet.")
             return self.last_speis_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
         forecast = self.last_zone_forecasts.get(speis_zone.zone_id)

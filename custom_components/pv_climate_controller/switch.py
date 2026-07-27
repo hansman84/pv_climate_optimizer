@@ -26,6 +26,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ClimateTemperatureFallbackSwitch(controller, entry.entry_id, f"temperature_fallback_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
+    entities.extend(
+        ZonePilotSwitch(controller, entry.entry_id, f"zone_pilot_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
     async_add_entities(entities)
 
 
@@ -108,6 +112,44 @@ class BedroomCutoffSwitch(ControllerEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs) -> None:
         self.controller.set_bedroom_cutoff_enabled(False)
         await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, False)
+        self.controller.notify_state_listeners()
+
+
+class ZonePilotSwitch(ControllerEntity, SwitchEntity):
+    """Explicit per-room permission for productive pilot commands."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        return next((zone for zone in self.controller.config.house_zones if zone.zone_id == self._zone_id), None)
+
+    @property
+    def name(self) -> str:
+        zone = self._zone
+        return f"{zone.name if zone else self._zone_id} – Pilot aktiv"
+
+    @property
+    def is_on(self) -> bool:
+        zone = self._zone
+        return bool(zone and zone.pilot_enabled)
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._async_set(False)
+
+    async def _async_set(self, enabled: bool) -> None:
+        self.controller.set_zone_pilot_enabled(self._zone_id, enabled)
+        await self.async_persist_option(
+            CONF_HOUSE_ZONES,
+            [serialize_zone_config(zone) for zone in self.controller.config.house_zones],
+        )
         self.controller.notify_state_listeners()
 
 class ExportPowerPositiveSwitch(ControllerEntity, SwitchEntity):

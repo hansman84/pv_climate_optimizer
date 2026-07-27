@@ -393,6 +393,26 @@ def test_bedroom_mode_waits_for_late_afternoon_and_enforces_quiet_time() -> None
     assert quiet.reason_code == "bedroom_quiet_time"
 
 
+def test_existing_schlafzimmer_mapping_is_disabled_until_explicitly_enabled() -> None:
+    bedroom = controller._house_zones([{
+        "zone_id": "bedroom", "name": "Schlafzimmer",
+        "climate_entity_id": "climate.bedroom", "temperature_entity_id": "sensor.bedroom",
+    }])[0]
+    runtime = controller.PVClimateController(
+        config=models.ControllerConfig(
+            shadow_mode=False, energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            living_room_pilot_enabled=True, house_zones=(bedroom,), min_pv_surplus_w=100,
+        ),
+        command_adapter=adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=500)
+
+    action = runtime.decide_bedroom_pilot(bedroom, temperature_c=24.0, climate_mode="off", now=time(16, 0))
+
+    assert not bedroom.pilot_enabled
+    assert action.reason_code == "zone_pilot_disabled"
+
+
 def test_bedroom_pilot_uses_22_then_23_for_a_22_5_degree_promise() -> None:
     room_pilot = pilot.LivingRoomPilot(
         expected_zone_name="Kinderzimmer",
