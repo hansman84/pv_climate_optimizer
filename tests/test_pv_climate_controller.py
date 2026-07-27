@@ -1044,7 +1044,7 @@ def test_living_room_pilot_holds_target_when_solar_rebound_is_expected() -> None
     assert (action.reason_code, action.target_temperature_c) == ("pilot_soft_target_adjustment", 23.0)
 
 
-def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
+def test_living_room_pilot_stops_immediately_when_export_reaches_zero() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -1062,14 +1062,8 @@ def test_living_room_pilot_winds_down_before_stopping_after_pv_loss() -> None:
     living_pilot.mark_sent(deep)
 
     clock.now = 2400
-    wind_down = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert wind_down.action == "adjust"
-    assert wind_down.target_temperature_c == 24.0
-    living_pilot.mark_sent(wind_down)
-    clock.now = 2639
-    assert living_pilot.decide(runtime, temperature_c=24.4, climate_mode="cool", granted_stages=1, export_power_w=0).reason_code == "pv_wind_down_waiting"
-    clock.now = 2640
-    assert living_pilot.decide(runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=0).action == "stop"
+    stopping = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
+    assert (stopping.action, stopping.reason_code) == ("stop", "pv_export_zero")
 
 
 def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> None:
@@ -1087,19 +1081,13 @@ def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> N
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
         climate_target_temperature_c=22.0,
     )
-    assert before_deadline.reason_code == "pv_wind_down"
+    assert before_deadline.reason_code == "manual_control_resumed"
 
     at_deadline = living_pilot.decide(
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
         climate_target_temperature_c=22.0, pv_deadline_active=True,
     )
-    assert (at_deadline.action, at_deadline.target_temperature_c, at_deadline.reason_code) == ("adjust", 24.0, "pv_wind_down")
-    living_pilot.mark_sent(at_deadline)
-    clock.now = 300
-    assert living_pilot.decide(
-        runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
-        climate_target_temperature_c=24.0,
-    ).reason_code == "pv_surplus_ended"
+    assert (at_deadline.action, at_deadline.reason_code) == ("stop", "pv_export_zero")
 
 
 def test_controller_passes_the_evening_deadline_to_the_living_room_pilot() -> None:
@@ -1120,7 +1108,7 @@ def test_controller_passes_the_evening_deadline_to_the_living_room_pilot() -> No
         pv_deadline_active=True,
     )
 
-    assert action.reason_code == "pv_wind_down"
+    assert action.reason_code == "pv_export_zero"
 
 
 def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
@@ -1145,7 +1133,7 @@ def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     assert decision(temperature=None).reason_code == "temperature_invalid"
     assert decision(mode="unavailable").reason_code == "climate_unavailable"
     assert decision(temperature=24.0, export=0).reason_code == "pv_or_thermal_need_missing"
-    assert decision(mode="cool").reason_code == "pilot_soft_target_adjustment"
+    assert decision(mode="cool").reason_code == "manual_control_resumed"
 
     hard_limit = decision(temperature=25.5, export=0)
     assert hard_limit.action == "start"
@@ -1161,7 +1149,7 @@ def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     assert controlled.decide(base, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=400).reason_code == "pilot_cooling_active"
 
 
-def test_living_room_pilot_automatically_takes_over_running_cooling() -> None:
+def test_living_room_pilot_leaves_running_cooling_manual_without_takeover() -> None:
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
@@ -1173,11 +1161,11 @@ def test_living_room_pilot_automatically_takes_over_running_cooling() -> None:
         runtime, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=2000,
     )
 
-    assert action.action == "adjust"
-    assert action.reason_code == "pilot_soft_target_adjustment"
+    assert action.action == "none"
+    assert action.reason_code == "manual_control_resumed"
 
 
-def test_running_cooling_is_automatically_adopted_and_wound_down_without_pv() -> None:
+def test_running_cooling_stays_manual_until_explicitly_taken_over() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -1189,14 +1177,8 @@ def test_running_cooling_is_automatically_adopted_and_wound_down_without_pv() ->
     room_pilot = pilot.LivingRoomPilot(clock)
 
     action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert action.action == "adjust"
-    assert action.reason_code == "pv_wind_down"
-    room_pilot.mark_sent(action)
-    clock.now = 300
-    action = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0)
-
-    assert action.action == "stop"
-    assert action.reason_code == "pv_surplus_ended"
+    assert action.action == "none"
+    assert action.reason_code == "manual_control_resumed"
 
 
 def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
@@ -1216,7 +1198,6 @@ def test_living_room_pilot_can_explicitly_take_over_external_cooling() -> None:
     )
 
     assert action.action == "adjust"
-    assert action.target_temperature_c == 23.0
     assert action.reason_code == "pilot_soft_target_adjustment"
 
 

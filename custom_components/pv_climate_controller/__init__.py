@@ -41,7 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(async_track_time_interval(
         hass,
         lambda _: _async_refresh_controller(hass, controller, store),
-        timedelta(minutes=5),
+        timedelta(minutes=1),
     ))
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await _async_refresh_controller(hass, controller, store)

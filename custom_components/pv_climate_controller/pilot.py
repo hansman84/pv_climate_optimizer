@@ -35,7 +35,7 @@ class LivingRoomPilot:
     # Evaluations normally run every five minutes. Keep this deliberately
     # shorter so the *next* scheduled pass reaches the stop decision instead
     # of spending a second full interval in a stale wind-down state.
-    _PV_WIND_DOWN_S = 4 * 60
+    _PV_WIND_DOWN_S = 60
     _MIN_OFF_TIME_S = 30 * 60
     _SETTLE_STOP_DELAY_S = 10 * 60
     _OVERSHOOT_MARGIN_C = 0.4
@@ -219,10 +219,12 @@ class LivingRoomPilot:
         if climate_mode == "cool" and not self._owns_cooling:
             if self._manual_override_active and not self._sunset_takeover_active:
                 return PilotAction("none", None, "manual_control_resumed", f"Manuelle Änderung ist aktiv; {self._display_name}-Pilot wartet bis zur nächsten Übergabe oder PV-Abendregelung.")
-            # A running device after a restart or an integration reconnect is
-            # not automatically a manual override. Adopt it so the active
-            # house controller keeps regulating instead of displaying a
-            # permanent, unactionable 'external' state.
+            # A running room is manual by default. Only a dashboard handover
+            # or the defined PV-evening deadline transfers it to the pilot.
+            # Persisted pilot ownership already survives an HA restart.
+            if not self._takeover_requested and not self._sunset_takeover_active:
+                self._manual_override_active = True
+                return PilotAction("none", None, "manual_control_resumed", f"{self._display_name} läuft manuell; Pilot greift erst nach Übergabe ein.")
             self._adopt_external_cooling(now, snapshot)
         if not self._owns_cooling:
             if not needs_cooling:
@@ -303,6 +305,12 @@ class LivingRoomPilot:
 
         if not pv_available and not hard_limit:
             self._settled_since = None
+            # A true zero export is not a "gentle" PV decline.  Continuing
+            # then only buys grid power, especially after the afternoon
+            # production cliff.  Stop immediately instead of waiting for a
+            # second polling cycle.
+            if export_power_w is not None and export_power_w <= 0:
+                return PilotAction("stop", None, "pv_export_zero", "PV-Überschuss ist auf 0 W gefallen; das Klimagerät wird sofort ausgeschaltet.")
             if self._pv_missing_since is None:
                 self._pv_missing_since = now
             if self._active_target_temperature_c != hold_target:
