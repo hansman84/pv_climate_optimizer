@@ -558,6 +558,24 @@ def test_storage_rejects_unknown_schema() -> None:
     assert storage.unpack({"version": 99, "runtime": {"unsafe": True}}) == {}
 
 
+def test_pilot_handover_persists_across_restart_and_keeps_manual_exit() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": False, "living_room_pilot_enabled": True},
+        {"house_zones": [{"zone_id": "living", "name": "Wohnzimmer", "climate_entity_id": "climate.living", "temperature_entity_id": "sensor.living"}]},
+    )
+    runtime.pilot.request_takeover()
+    runtime.pilot._adopt_external_cooling(0.0, ("cool", 24.0, "auto", "off"))
+    restored = controller.PVClimateController.from_config(
+        {"shadow_mode": False, "living_room_pilot_enabled": True},
+        {"house_zones": [{"zone_id": "living", "name": "Wohnzimmer", "climate_entity_id": "climate.living", "temperature_entity_id": "sensor.living"}]},
+    )
+    restored.restore_learning_state(runtime.export_learning_state())
+
+    assert restored.pilot.owns_cooling
+    assert not restored.pilot._manual_change_detected(("cool", 24.0, "auto", "off"))
+    assert restored.pilot._manual_change_detected(("cool", 25.0, "auto", "off"))
+
+
 def test_house_plan_uses_verified_outdoor_nominal_capacity() -> None:
     decision = models.ZoneDecision("living", const.ZoneState.REQUESTED, True, 100, True, "demand", "Kühlbedarf")
     plan = house.build_house_plan(

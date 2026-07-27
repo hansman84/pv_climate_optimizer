@@ -310,6 +310,11 @@ class PVClimateController:
             },
             "outdoor_power_samples": self.power_learner.export_state(),
             "house_power_observations": self.house_learning.export_state(now),
+            "pilot_runtime": {
+                "wohnzimmer": self.pilot.export_runtime_state(),
+                "arbeitszimmer": self.office_pilot.export_runtime_state(),
+                "speis": self.speis_pilot.export_runtime_state(),
+            },
         }
 
     def restore_learning_state(self, state: object) -> None:
@@ -358,6 +363,11 @@ class PVClimateController:
         self._thermal_context_samples = restored_context
         self.power_learner.restore_state(state.get("outdoor_power_samples"))
         self.house_learning.restore_state(state.get("house_power_observations"), now)
+        pilot_runtime = state.get("pilot_runtime")
+        if isinstance(pilot_runtime, dict):
+            self.pilot.restore_runtime_state(pilot_runtime.get("wohnzimmer"))
+            self.office_pilot.restore_runtime_state(pilot_runtime.get("arbeitszimmer"))
+            self.speis_pilot.restore_runtime_state(pilot_runtime.get("speis"))
 
     @property
     def state(self) -> ControllerState:

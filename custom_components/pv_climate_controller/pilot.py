@@ -90,6 +90,29 @@ class LivingRoomPilot:
         """Accept a one-shot handover from the dashboard button."""
         self._takeover_requested = True
 
+    def export_runtime_state(self) -> dict[str, object]:
+        """Persist only explicit pilot ownership across an HA restart.
+
+        The observed device snapshot is retained so the first post-restart
+        refresh can still distinguish the handed-over state from a manual
+        change. Timers deliberately remain process-local and start fresh.
+        """
+        return {
+            "owns_cooling": self._owns_cooling,
+            "observed_snapshot": None if self._observed_snapshot is None else list(self._observed_snapshot),
+        }
+
+    def restore_runtime_state(self, state: object) -> None:
+        """Restore a prior explicit handover; malformed data fails closed."""
+        if not isinstance(state, dict) or state.get("owns_cooling") is not True:
+            return
+        snapshot = state.get("observed_snapshot")
+        if not isinstance(snapshot, list) or len(snapshot) != 4 or not all(value is None or isinstance(value, (str, float, int)) for value in snapshot):
+            return
+        self._owns_cooling = True
+        self._observed_snapshot = (snapshot[0], snapshot[1], snapshot[2], snapshot[3])
+        self._expected_snapshot = None
+
     def mark_sent(self, action: PilotAction) -> None:
         """Record only a command accepted by the guarded write boundary."""
         now = self._clock()

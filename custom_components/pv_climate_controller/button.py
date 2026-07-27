@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .entity import ControllerEntity
+from .storage import pack
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
@@ -34,6 +35,8 @@ class EvaluateNowButton(ControllerEntity, ButtonEntity):
 
         store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
         await _async_refresh_controller(self.hass, self.controller, store)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
 
 
 class LivingRoomPilotTakeoverButton(ControllerEntity, ButtonEntity):
@@ -48,6 +51,8 @@ class LivingRoomPilotTakeoverButton(ControllerEntity, ButtonEntity):
 
         store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
         await _async_refresh_controller(self.hass, self.controller, store)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
 
 
 class OfficePilotTakeoverButton(ControllerEntity, ButtonEntity):
@@ -62,6 +67,8 @@ class OfficePilotTakeoverButton(ControllerEntity, ButtonEntity):
 
         store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
         await _async_refresh_controller(self.hass, self.controller, store)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
 
 
 class SpeisPilotTakeoverButton(ControllerEntity, ButtonEntity):
