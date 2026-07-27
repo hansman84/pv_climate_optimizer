@@ -867,6 +867,36 @@ def test_pilot_stops_after_confirmed_thermal_overshoot_even_with_pv() -> None:
     assert (stopping.action, stopping.reason_code) == ("stop", "thermal_overshoot_stop")
 
 
+def test_small_speis_pilot_uses_tighter_and_faster_overshoot_guard() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.PV_PREFERRED,
+        zone=models.ZoneConfig("speis", "Speis", "climate.speis", "sensor.speis", comfort_temperature=23.5),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    speis_pilot = pilot.LivingRoomPilot(
+        clock,
+        expected_zone_name="Speis",
+        display_name="Speis",
+        overshoot_margin_c=0.2,
+        overshoot_confirmation_s=60,
+    )
+    speis_pilot.mark_sent(pilot.PilotAction("start", 24.0, "test", "test"))
+
+    assert speis_pilot.decide(
+        runtime, temperature_c=23.3, climate_mode="cool", granted_stages=1, export_power_w=800,
+        temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.8,
+    ).reason_code == "thermal_overshoot_confirming"
+    clock.now = 61
+    action = speis_pilot.decide(
+        runtime, temperature_c=23.2, climate_mode="cool", granted_stages=1, export_power_w=800,
+        temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.7,
+    )
+    assert (action.action, action.reason_code) == ("stop", "thermal_overshoot_stop")
+
+
 def test_living_room_pilot_holds_target_when_solar_rebound_is_expected() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(

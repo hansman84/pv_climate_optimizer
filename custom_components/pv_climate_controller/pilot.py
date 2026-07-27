@@ -37,10 +37,19 @@ class LivingRoomPilot:
     _RAPID_COOLING_C_PER_H = -0.35
     _OVERSHOOT_CONFIRMATION_S = 2 * 60
 
-    def __init__(self, clock=monotonic, expected_zone_name: str = "Wohnzimmer", display_name: str | None = None) -> None:
+    def __init__(
+        self,
+        clock=monotonic,
+        expected_zone_name: str = "Wohnzimmer",
+        display_name: str | None = None,
+        overshoot_margin_c: float | None = None,
+        overshoot_confirmation_s: float | None = None,
+    ) -> None:
         self._clock = clock
         self._expected_zone_name = expected_zone_name
         self._display_name = display_name or expected_zone_name
+        self._overshoot_margin_c = self._OVERSHOOT_MARGIN_C if overshoot_margin_c is None else overshoot_margin_c
+        self._overshoot_confirmation_s = self._OVERSHOOT_CONFIRMATION_S if overshoot_confirmation_s is None else overshoot_confirmation_s
         self._demand_since: float | None = None
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
@@ -184,11 +193,11 @@ class LivingRoomPilot:
         # comfort target from thermal inertia or a slow compressor.  Preserve
         # long PV runs by default, but stop once two independent observations
         # confirm a meaningful overshoot with a still-falling temperature.
-        below_comfort = temperature_c <= zone.comfort_temperature - self._OVERSHOOT_MARGIN_C
+        below_comfort = temperature_c <= zone.comfort_temperature - self._overshoot_margin_c
         cooling_fast = temperature_trend_c_per_h is not None and temperature_trend_c_per_h <= self._RAPID_COOLING_C_PER_H
         forecast_below_comfort = (
             predicted_temperature_60m_c is not None
-            and predicted_temperature_60m_c <= zone.comfort_temperature - self._OVERSHOOT_MARGIN_C
+            and predicted_temperature_60m_c <= zone.comfort_temperature - self._overshoot_margin_c
         )
         if below_comfort and (cooling_fast or forecast_below_comfort):
             if self._overcooling_since is None:
@@ -197,9 +206,9 @@ class LivingRoomPilot:
                     "none",
                     None,
                     "thermal_overshoot_confirming",
-                    f"{self._display_name} liegt bereits unter dem Komfortband und kühlt weiter; Pilot bestätigt den Auslauf zwei Minuten lang.",
+                    f"{self._display_name} liegt bereits unter dem Komfortband und kühlt weiter; Pilot bestätigt den Auslauf {self._overshoot_confirmation_s / 60:g} Minute(n) lang.",
                 )
-            if now - self._overcooling_since >= self._OVERSHOOT_CONFIRMATION_S:
+            if now - self._overcooling_since >= self._overshoot_confirmation_s:
                 return PilotAction(
                     "stop",
                     None,

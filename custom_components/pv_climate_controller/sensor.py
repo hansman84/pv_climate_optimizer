@@ -21,6 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
         PilotActionSensor(controller, entry.entry_id, "pilot_action"),
         OfficePilotActionSensor(controller, entry.entry_id, "office_pilot_action"),
+        SpeisPilotActionSensor(controller, entry.entry_id, "speis_pilot_action"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
         GrantedStagesSensor(controller, entry.entry_id, "granted_stages"),
         PVPowerSensor(controller, entry.entry_id, "pv_power"),
@@ -121,6 +122,24 @@ class OfficePilotActionSensor(PilotActionSensor):
     @property
     def extra_state_attributes(self) -> dict[str, str | float | None]:
         action = self.controller.last_office_pilot_action
+        if action is None:
+            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
+        return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}
+
+
+class SpeisPilotActionSensor(PilotActionSensor):
+    """Expose the small-room Speis pilot independently."""
+
+    _attr_name = "Speis-Pilotentscheidung"
+
+    @property
+    def native_value(self) -> str:
+        action = self.controller.last_speis_pilot_action
+        return "Pilot noch nicht ausgewertet." if action is None else action.reason_text
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        action = self.controller.last_speis_pilot_action
         if action is None:
             return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
         return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}

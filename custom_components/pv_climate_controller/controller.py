@@ -100,8 +100,15 @@ class PVClimateController:
     house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
     pilot: LivingRoomPilot = field(default_factory=LivingRoomPilot)
     office_pilot: LivingRoomPilot = field(default_factory=lambda: LivingRoomPilot(expected_zone_name="Spielzimmer", display_name="Arbeitszimmer"))
+    speis_pilot: LivingRoomPilot = field(default_factory=lambda: LivingRoomPilot(
+        expected_zone_name="Speis",
+        display_name="Speis",
+        overshoot_margin_c=0.2,
+        overshoot_confirmation_s=60,
+    ))
     last_pilot_action: PilotAction | None = None
     last_office_pilot_action: PilotAction | None = None
+    last_speis_pilot_action: PilotAction | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -483,6 +490,10 @@ class PVClimateController:
         """Queue an explicit Arbeitszimmer handover with the same safety boundary."""
         self.office_pilot.request_takeover()
 
+    def request_speis_pilot_takeover(self) -> None:
+        """Queue an explicit Speis handover with its tighter thermal guard."""
+        self.speis_pilot.request_takeover()
+
     def decide_living_room_pilot(
         self,
         *,
@@ -558,6 +569,46 @@ class PVClimateController:
             pv_deadline_active=pv_deadline_active,
         )
         return self.last_office_pilot_action
+
+    def decide_speis_pilot(
+        self,
+        *,
+        temperature_c: float | None,
+        climate_mode: str | None,
+        climate_target_temperature_c: float | None = None,
+        climate_fan_mode: str | None = None,
+        climate_swing_mode: str | None = None,
+        pv_deadline_active: bool = False,
+        direct_sun: bool = False,
+        irradiance_w_m2: float | None = None,
+    ) -> PilotAction:
+        """Evaluate the small Speis as a productive zone with a fast overshoot guard."""
+        speis_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "speis"), None)
+        if not self.config.living_room_pilot_enabled:
+            self.last_speis_pilot_action = PilotAction("none", None, "pilot_disabled", "Speis-Pilot ist in der GUI ausgeschaltet.")
+            return self.last_speis_pilot_action
+        if speis_zone is None:
+            self.last_speis_pilot_action = PilotAction("none", None, "speis_zone_missing", "Speis ist nicht als Zone konfiguriert.")
+            return self.last_speis_pilot_action
+        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        forecast = self.last_zone_forecasts.get(speis_zone.zone_id)
+        self.last_speis_pilot_action = self.speis_pilot.decide(
+            replace(self.config, zone=speis_zone),
+            temperature_c=temperature_c,
+            climate_mode=climate_mode,
+            granted_stages=grant,
+            export_power_w=self.last_energy.export_power_w,
+            thermal_profile=self.last_thermal_profiles.get(speis_zone.zone_id),
+            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
+            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+            direct_sun=direct_sun,
+            irradiance_w_m2=irradiance_w_m2,
+            climate_target_temperature_c=climate_target_temperature_c,
+            climate_fan_mode=climate_fan_mode,
+            climate_swing_mode=climate_swing_mode,
+            pv_deadline_active=pv_deadline_active,
+        )
+        return self.last_speis_pilot_action
 
     async def async_apply_pilot_action(self, action: PilotAction, executor, *, zone: ZoneConfig | None = None, room_pilot: LivingRoomPilot | None = None) -> CommandResult:
         """Send a pilot action only through the guarded, rate-limited boundary."""
