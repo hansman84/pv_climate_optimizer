@@ -832,7 +832,7 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     assert living_pilot.decide(runtime, temperature_c=22.9, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "thermal_target_reached"
 
 
-def test_pilot_stops_after_confirmed_thermal_overshoot_even_with_pv() -> None:
+def test_pilot_raises_target_then_stops_only_if_thermal_relief_fails() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -855,7 +855,7 @@ def test_pilot_stops_after_confirmed_thermal_overshoot_even_with_pv() -> None:
     )
     assert confirming.reason_code == "thermal_overshoot_confirming"
     clock.now = 121
-    stopping = room_pilot.decide(
+    relief = room_pilot.decide(
         runtime,
         temperature_c=22.5,
         climate_mode="cool",
@@ -864,7 +864,19 @@ def test_pilot_stops_after_confirmed_thermal_overshoot_even_with_pv() -> None:
         temperature_trend_c_per_h=-0.65,
         predicted_temperature_60m_c=21.85,
     )
-    assert (stopping.action, stopping.reason_code) == ("stop", "thermal_overshoot_stop")
+    assert (relief.action, relief.target_temperature_c, relief.reason_code) == ("adjust", 25.0, "thermal_relief_adjustment")
+    room_pilot.mark_sent(relief)
+    clock.now = 721
+    stopping = room_pilot.decide(
+        runtime,
+        temperature_c=22.4,
+        climate_mode="cool",
+        granted_stages=1,
+        export_power_w=1200,
+        temperature_trend_c_per_h=-0.65,
+        predicted_temperature_60m_c=21.75,
+    )
+    assert (stopping.action, stopping.reason_code) == ("stop", "thermal_relief_unsuccessful")
 
 
 def test_small_speis_pilot_uses_tighter_and_faster_overshoot_guard() -> None:
@@ -882,6 +894,7 @@ def test_small_speis_pilot_uses_tighter_and_faster_overshoot_guard() -> None:
         display_name="Speis",
         overshoot_margin_c=0.2,
         overshoot_confirmation_s=60,
+        thermal_relief_observation_s=5 * 60,
     )
     speis_pilot.mark_sent(pilot.PilotAction("start", 24.0, "test", "test"))
 
@@ -890,11 +903,23 @@ def test_small_speis_pilot_uses_tighter_and_faster_overshoot_guard() -> None:
         temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.8,
     ).reason_code == "thermal_overshoot_confirming"
     clock.now = 61
-    action = speis_pilot.decide(
+    relief = speis_pilot.decide(
         runtime, temperature_c=23.2, climate_mode="cool", granted_stages=1, export_power_w=800,
         temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.7,
     )
-    assert (action.action, action.reason_code) == ("stop", "thermal_overshoot_stop")
+    assert (relief.action, relief.target_temperature_c, relief.reason_code) == ("adjust", 25.0, "thermal_relief_adjustment")
+    speis_pilot.mark_sent(relief)
+    clock.now = 360
+    assert speis_pilot.decide(
+        runtime, temperature_c=23.1, climate_mode="cool", granted_stages=1, export_power_w=800,
+        temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.6,
+    ).reason_code == "thermal_relief_observing"
+    clock.now = 362
+    action = speis_pilot.decide(
+        runtime, temperature_c=23.0, climate_mode="cool", granted_stages=1, export_power_w=800,
+        temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.5,
+    )
+    assert (action.action, action.reason_code) == ("stop", "thermal_relief_unsuccessful")
 
 
 def test_living_room_pilot_holds_target_when_solar_rebound_is_expected() -> None:

@@ -28,6 +28,7 @@ class LivingRoomPilot:
 
     _MIN_START_TARGET_C = 23.0
     _MAX_START_TARGET_C = 24.0
+    _THERMAL_RELIEF_TARGET_C = 25.0
     _DEEP_PRECOOL_AFTER_S = 30 * 60
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
     _PV_WIND_DOWN_S = 5 * 60
@@ -44,12 +45,14 @@ class LivingRoomPilot:
         display_name: str | None = None,
         overshoot_margin_c: float | None = None,
         overshoot_confirmation_s: float | None = None,
+        thermal_relief_observation_s: float | None = None,
     ) -> None:
         self._clock = clock
         self._expected_zone_name = expected_zone_name
         self._display_name = display_name or expected_zone_name
         self._overshoot_margin_c = self._OVERSHOOT_MARGIN_C if overshoot_margin_c is None else overshoot_margin_c
         self._overshoot_confirmation_s = self._OVERSHOOT_CONFIRMATION_S if overshoot_confirmation_s is None else overshoot_confirmation_s
+        self._thermal_relief_observation_s = self._SETTLE_STOP_DELAY_S if thermal_relief_observation_s is None else thermal_relief_observation_s
         self._demand_since: float | None = None
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
@@ -57,6 +60,7 @@ class LivingRoomPilot:
         self._pv_missing_since: float | None = None
         self._settled_since: float | None = None
         self._overcooling_since: float | None = None
+        self._thermal_relief_since: float | None = None
         self._last_stopped_at: float | None = None
         self._owns_cooling = False
         self._takeover_requested = False
@@ -77,6 +81,7 @@ class LivingRoomPilot:
         self._pv_missing_since = None
         self._settled_since = None
         self._overcooling_since = None
+        self._thermal_relief_since = None
         self._takeover_requested = False
         self._observed_snapshot = None
         self._expected_snapshot = None
@@ -101,6 +106,9 @@ class LivingRoomPilot:
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
+            if action.reason_code == "thermal_relief_adjustment":
+                self._thermal_relief_since = now
+                self._overcooling_since = None
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -200,6 +208,21 @@ class LivingRoomPilot:
             and predicted_temperature_60m_c <= zone.comfort_temperature - self._overshoot_margin_c
         )
         if below_comfort and (cooling_fast or forecast_below_comfort):
+            if self._thermal_relief_since is not None:
+                elapsed = now - self._thermal_relief_since
+                if elapsed < self._thermal_relief_observation_s:
+                    return PilotAction(
+                        "none",
+                        None,
+                        "thermal_relief_observing",
+                        f"{self._display_name} hält bei {self._THERMAL_RELIEF_TARGET_C:.0f} °C; Pilot beobachtet noch {max(1, ceil((self._thermal_relief_observation_s - elapsed) / 60))} Minute(n), ob die Temperatur stabil wird.",
+                    )
+                return PilotAction(
+                    "stop",
+                    None,
+                    "thermal_relief_unsuccessful",
+                    f"{self._display_name} kühlt auch bei {self._THERMAL_RELIEF_TARGET_C:.0f} °C weiter unter das Komfortband; das Klimagerät wird zum Schutz vor Überkühlung ausgeschaltet.",
+                )
             if self._overcooling_since is None:
                 self._overcooling_since = now
                 return PilotAction(
@@ -209,6 +232,13 @@ class LivingRoomPilot:
                     f"{self._display_name} liegt bereits unter dem Komfortband und kühlt weiter; Pilot bestätigt den Auslauf {self._overshoot_confirmation_s / 60:g} Minute(n) lang.",
                 )
             if now - self._overcooling_since >= self._overshoot_confirmation_s:
+                if (self._active_target_temperature_c or self._MIN_START_TARGET_C) < self._THERMAL_RELIEF_TARGET_C:
+                    return PilotAction(
+                        "adjust",
+                        self._THERMAL_RELIEF_TARGET_C,
+                        "thermal_relief_adjustment",
+                        f"{self._display_name} kühlt weiter unter das Komfortband; Solltemperatur wird zuerst auf {self._THERMAL_RELIEF_TARGET_C:.0f} °C angehoben und der Raum wird beobachtet.",
+                    )
                 return PilotAction(
                     "stop",
                     None,
@@ -217,6 +247,7 @@ class LivingRoomPilot:
                 )
         else:
             self._overcooling_since = None
+            self._thermal_relief_since = None
 
         runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
         target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
@@ -277,6 +308,7 @@ class LivingRoomPilot:
         self._pv_missing_since = None
         self._settled_since = None
         self._overcooling_since = None
+        self._thermal_relief_since = None
         self._takeover_requested = False
         self._observed_snapshot = snapshot
         self._expected_snapshot = None

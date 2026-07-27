@@ -105,6 +105,7 @@ class PVClimateController:
         display_name="Speis",
         overshoot_margin_c=0.2,
         overshoot_confirmation_s=60,
+        thermal_relief_observation_s=5 * 60,
     ))
     last_pilot_action: PilotAction | None = None
     last_office_pilot_action: PilotAction | None = None
