@@ -366,6 +366,53 @@ def test_controller_office_pilot_uses_only_configured_spielzimmer_zone() -> None
     assert action.reason_code == "pilot_demand_stabilizing"
 
 
+def test_bedroom_mode_waits_for_late_afternoon_and_enforces_quiet_time() -> None:
+    bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom")
+    runtime = controller.PVClimateController(
+        config=models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            living_room_pilot_enabled=True,
+            house_zones=(bedroom,),
+            min_pv_surplus_w=100,
+            bedroom_mode_enabled=True,
+            bedroom_cutoff_enabled=True,
+            bedroom_start_time="15:30",
+            bedroom_cutoff_time="18:30",
+            bedroom_target_temperature=22.5,
+        ),
+        command_adapter=adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=500)
+
+    waiting = runtime.decide_bedroom_pilot(bedroom, temperature_c=24.0, climate_mode="off", now=time(15, 0))
+    quiet = runtime.decide_bedroom_pilot(bedroom, temperature_c=24.0, climate_mode="cool", now=time(18, 30))
+
+    assert waiting.reason_code == "bedroom_window_pending"
+    assert quiet.action == "stop"
+    assert quiet.reason_code == "bedroom_quiet_time"
+
+
+def test_bedroom_pilot_uses_22_then_23_for_a_22_5_degree_promise() -> None:
+    room_pilot = pilot.LivingRoomPilot(
+        expected_zone_name="Kinderzimmer",
+        min_start_target_c=22.0,
+        max_start_target_c=23.0,
+        thermal_relief_target_c=24.0,
+    )
+    zone = models.ZoneConfig("kids", "Kinderzimmer", "climate.kids", "sensor.kids", comfort_temperature=22.5)
+    runtime = models.ControllerConfig(
+        shadow_mode=False, energy_policy=const.EnergyPolicy.PV_PREFERRED,
+        living_room_pilot_enabled=True, zone=zone, min_pv_surplus_w=100,
+    )
+
+    room_pilot.decide(runtime, temperature_c=24.0, climate_mode="off", granted_stages=0, export_power_w=500)
+    room_pilot._demand_since = room_pilot._clock() - 601
+    start = room_pilot.decide(runtime, temperature_c=24.0, climate_mode="off", granted_stages=0, export_power_w=500)
+
+    assert (start.action, start.target_temperature_c) == ("start", 22.0)
+
+
 def test_zone_serialization_preserves_all_shade_geometry() -> None:
     zone = models.ZoneConfig(
         "living", "Wohnzimmer", "climate.living", "sensor.living",

@@ -35,6 +35,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         HousePlanSensor(controller, entry.entry_id, "house_plan"),
     ]
     entities.extend(
+        BedroomPilotActionSensor(controller, entry.entry_id, f"bedroom_pilot_action_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+        if zone.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}
+    )
+    entities.extend(
         ZonePlanSensor(controller, entry.entry_id, f"zone_plan_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
@@ -140,6 +145,35 @@ class SpeisPilotActionSensor(PilotActionSensor):
     @property
     def extra_state_attributes(self) -> dict[str, str | float | None]:
         action = self.controller.last_speis_pilot_action
+        if action is None:
+            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
+        return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}
+
+
+class BedroomPilotActionSensor(PilotActionSensor):
+    """Explain the scheduled decision for one explicitly configured sleeping room."""
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone_name(self) -> str:
+        zone = next((item for item in self.controller.config.house_zones if item.zone_id == self._zone_id), None)
+        return self._zone_id if zone is None else zone.name
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Schlafraum-Entscheidung"
+
+    @property
+    def native_value(self) -> str:
+        action = self.controller.last_bedroom_pilot_actions.get(self._zone_id)
+        return "Schlafraum-Modus noch nicht ausgewertet." if action is None else action.reason_text
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        action = self.controller.last_bedroom_pilot_actions.get(self._zone_id)
         if action is None:
             return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
         return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}

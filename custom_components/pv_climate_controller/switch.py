@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_SHADOW_MODE, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
@@ -18,6 +18,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
         LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
+        BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
+        BedroomCutoffSwitch(controller, entry.entry_id, "bedroom_cutoff"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
     entities.extend(
@@ -66,6 +68,47 @@ class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
         await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, False)
         self.controller.notify_state_listeners()
 
+
+class BedroomModeSwitch(ControllerEntity, SwitchEntity):
+    """Separate switch for the late-afternoon sleeping-room strategy."""
+
+    _attr_name = "Schlafraum-Modus aktiv"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.bedroom_mode_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_bedroom_mode_enabled(True)
+        await self.async_persist_option(CONF_BEDROOM_MODE_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_bedroom_mode_enabled(False)
+        await self.async_persist_option(CONF_BEDROOM_MODE_ENABLED, False)
+        self.controller.notify_state_listeners()
+
+
+class BedroomCutoffSwitch(ControllerEntity, SwitchEntity):
+    """Optional hard stop so no bedroom unit runs into bedtime."""
+
+    _attr_name = "Schlafraum-Ruhezeit erzwingen"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.bedroom_cutoff_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_bedroom_cutoff_enabled(True)
+        await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_bedroom_cutoff_enabled(False)
+        await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, False)
+        self.controller.notify_state_listeners()
 
 class ExportPowerPositiveSwitch(ControllerEntity, SwitchEntity):
     """Expose the selected net-meter sign convention without changing its source."""

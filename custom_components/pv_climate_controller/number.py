@@ -8,7 +8,7 @@ from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_COMFORT_TEMPERATURE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, DOMAIN
+from .const import CONF_BEDROOM_TARGET_TEMPERATURE, CONF_COMFORT_TEMPERATURE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, DOMAIN
 from .entity import ControllerEntity
 from .controller import serialize_zone_config
 
@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ComfortTemperatureNumber(controller, entry.entry_id, "comfort_temperature"),
         HardMaxTemperatureNumber(controller, entry.entry_id, "hard_max_temperature"),
         MinPVSurplusNumber(controller, entry.entry_id, "min_pv_surplus"),
+        BedroomTargetTemperatureNumber(controller, entry.entry_id, "bedroom_target_temperature"),
     ])
     zone_numbers = []
     for index, zone in enumerate(controller.config.house_zones, start=1):
@@ -84,6 +85,21 @@ class MinPVSurplusNumber(ControllerEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_min_pv_surplus_w(value)
         await self.async_persist_option(CONF_MIN_PV_SURPLUS_W, value)
+        self.controller.notify_state_listeners()
+
+
+class BedroomTargetTemperatureNumber(_TemperatureNumber):
+    """Summer target applied only during the scheduled sleeping-room mode."""
+
+    _attr_name = "Schlafraum-Abendzieltemperatur"
+
+    @property
+    def native_value(self) -> float:
+        return self.controller.config.bedroom_target_temperature
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_bedroom_target_temperature(value)
+        await self.async_persist_option(CONF_BEDROOM_TARGET_TEMPERATURE, value)
         self.controller.notify_state_listeners()
 
 

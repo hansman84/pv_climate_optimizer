@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -107,9 +107,11 @@ class PVClimateController:
         overshoot_confirmation_s=60,
         thermal_relief_observation_s=5 * 60,
     ))
+    bedroom_pilots: dict[str, LivingRoomPilot] = field(default_factory=dict)
     last_pilot_action: PilotAction | None = None
     last_office_pilot_action: PilotAction | None = None
     last_speis_pilot_action: PilotAction | None = None
+    last_bedroom_pilot_actions: dict[str, PilotAction] = field(default_factory=dict)
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -158,8 +160,15 @@ class PVClimateController:
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
             sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
+            bedroom_mode_enabled=bool(options.get(CONF_BEDROOM_MODE_ENABLED, data.get(CONF_BEDROOM_MODE_ENABLED, True))),
+            bedroom_cutoff_enabled=bool(options.get(CONF_BEDROOM_CUTOFF_ENABLED, data.get(CONF_BEDROOM_CUTOFF_ENABLED, True))),
+            bedroom_start_time=str(options.get(CONF_BEDROOM_START_TIME, data.get(CONF_BEDROOM_START_TIME, "15:30"))),
+            bedroom_cutoff_time=str(options.get(CONF_BEDROOM_CUTOFF_TIME, data.get(CONF_BEDROOM_CUTOFF_TIME, "18:30"))),
+            bedroom_target_temperature=float(options.get(CONF_BEDROOM_TARGET_TEMPERATURE, data.get(CONF_BEDROOM_TARGET_TEMPERATURE, 22.5))),
         )
-        return cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=config.living_room_pilot_enabled and not shadow_mode))
+        controller = cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=config.living_room_pilot_enabled and not shadow_mode))
+        controller._ensure_bedroom_pilots()
+        return controller
 
     def evaluate_house(self, states: Mapping[str, tuple[ZoneInput, str, object]], contexts: Mapping[str, Mapping[str, object]] | None = None) -> HousePlan:
         """Create a read-only common-outdoor-unit plan for every configured zone."""
@@ -314,6 +323,7 @@ class PVClimateController:
                 "wohnzimmer": self.pilot.export_runtime_state(),
                 "arbeitszimmer": self.office_pilot.export_runtime_state(),
                 "speis": self.speis_pilot.export_runtime_state(),
+                "schlafraeume": {zone_id: pilot.export_runtime_state() for zone_id, pilot in self.bedroom_pilots.items()},
             },
         }
 
@@ -368,6 +378,11 @@ class PVClimateController:
             self.pilot.restore_runtime_state(pilot_runtime.get("wohnzimmer"))
             self.office_pilot.restore_runtime_state(pilot_runtime.get("arbeitszimmer"))
             self.speis_pilot.restore_runtime_state(pilot_runtime.get("speis"))
+            bedrooms = pilot_runtime.get("schlafraeume")
+            if isinstance(bedrooms, dict):
+                self._ensure_bedroom_pilots()
+                for zone_id, room_pilot in self.bedroom_pilots.items():
+                    room_pilot.restore_runtime_state(bedrooms.get(zone_id))
 
     @property
     def state(self) -> ControllerState:
@@ -493,6 +508,26 @@ class PVClimateController:
         self.config = replace(self.config, living_room_pilot_enabled=enabled)
         self.command_adapter.set_operating_mode(shadow_mode=self.config.shadow_mode, productive_enabled=enabled and not self.config.shadow_mode)
 
+    def set_bedroom_mode_enabled(self, enabled: bool) -> None:
+        """Enable or pause only the scheduled sleeping-room strategy."""
+        self.config = replace(self.config, bedroom_mode_enabled=enabled)
+
+    def set_bedroom_cutoff_enabled(self, enabled: bool) -> None:
+        """Allow the user to make the evening hard stop optional."""
+        self.config = replace(self.config, bedroom_cutoff_enabled=enabled)
+
+    def set_bedroom_schedule(self, *, start_time: str | None = None, cutoff_time: str | None = None) -> None:
+        """Keep schedule changes GUI-persistent and constrained by select options."""
+        self.config = replace(
+            self.config,
+            bedroom_start_time=self.config.bedroom_start_time if start_time is None else start_time,
+            bedroom_cutoff_time=self.config.bedroom_cutoff_time if cutoff_time is None else cutoff_time,
+        )
+
+    def set_bedroom_target_temperature(self, value: float) -> None:
+        """Set the thermal promise for both sleeping rooms without altering daytime comfort."""
+        self.config = replace(self.config, bedroom_target_temperature=min(25.0, max(20.0, value)))
+
     def request_living_room_pilot_takeover(self) -> None:
         """Queue one explicit handover; the next manual climate change returns control."""
         self.pilot.request_takeover()
@@ -504,6 +539,91 @@ class PVClimateController:
     def request_speis_pilot_takeover(self) -> None:
         """Queue an explicit Speis handover with its tighter thermal guard."""
         self.speis_pilot.request_takeover()
+
+    def _ensure_bedroom_pilots(self) -> None:
+        """Create isolated pilots only for the two explicitly named sleeping rooms."""
+        for zone in self.config.house_zones:
+            if zone.name.strip().casefold() not in {"schlafzimmer", "kinderzimmer"}:
+                continue
+            self.bedroom_pilots.setdefault(
+                zone.zone_id,
+                LivingRoomPilot(
+                    expected_zone_name=zone.name,
+                    display_name=zone.name,
+                    min_start_target_c=22.0,
+                    max_start_target_c=23.0,
+                    thermal_relief_target_c=24.0,
+                ),
+            )
+
+    @staticmethod
+    def _schedule_time(value: str, fallback: time) -> time:
+        """Parse persisted HH:MM values defensively."""
+        try:
+            hour, minute = (int(part) for part in value.split(":", 1))
+            return time(hour, minute)
+        except (AttributeError, TypeError, ValueError):
+            return fallback
+
+    def decide_bedroom_pilot(
+        self,
+        zone: ZoneConfig,
+        *,
+        temperature_c: float | None,
+        climate_mode: str | None,
+        climate_target_temperature_c: float | None = None,
+        climate_fan_mode: str | None = None,
+        climate_swing_mode: str | None = None,
+        manual_change_candidate: bool = True,
+        direct_sun: bool = False,
+        irradiance_w_m2: float | None = None,
+        now: time | None = None,
+    ) -> PilotAction:
+        """Use late-afternoon PV for sleeping rooms and enforce their quiet time."""
+        self._ensure_bedroom_pilots()
+        pilot = self.bedroom_pilots.get(zone.zone_id)
+        if pilot is None:
+            return PilotAction("none", None, "bedroom_zone_missing", "Schlafraum ist nicht als Pilotzone konfiguriert.")
+        if not self.config.living_room_pilot_enabled or not self.config.bedroom_mode_enabled:
+            action = PilotAction("none", None, "bedroom_mode_disabled", "Schlafraum-Modus ist in der GUI ausgeschaltet.")
+            self.last_bedroom_pilot_actions[zone.zone_id] = action
+            return action
+        local_time = now or datetime.now().astimezone().time()
+        start = self._schedule_time(self.config.bedroom_start_time, time(15, 30))
+        cutoff = self._schedule_time(self.config.bedroom_cutoff_time, time(18, 30))
+        if self.config.bedroom_cutoff_enabled and local_time >= cutoff:
+            action = (
+                PilotAction("stop", None, "bedroom_quiet_time", f"{zone.name}: Ruhezeit ab {cutoff.strftime('%H:%M')} Uhr; Klimagerät wird ausgeschaltet.")
+                if climate_mode == "cool"
+                else PilotAction("none", None, "bedroom_quiet_time", f"{zone.name}: Ruhezeit ab {cutoff.strftime('%H:%M')} Uhr aktiv.")
+            )
+            self.last_bedroom_pilot_actions[zone.zone_id] = action
+            return action
+        if local_time < start:
+            action = PilotAction("none", None, "bedroom_window_pending", f"{zone.name}: PV-Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
+            self.last_bedroom_pilot_actions[zone.zone_id] = action
+            return action
+        forecast = self.last_zone_forecasts.get(zone.zone_id)
+        target_zone = replace(zone, comfort_temperature=self.config.bedroom_target_temperature)
+        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        action = pilot.decide(
+            replace(self.config, zone=target_zone),
+            temperature_c=temperature_c,
+            climate_mode=climate_mode,
+            granted_stages=grant,
+            export_power_w=self.last_energy.export_power_w,
+            thermal_profile=self.last_thermal_profiles.get(zone.zone_id),
+            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
+            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+            direct_sun=direct_sun,
+            irradiance_w_m2=irradiance_w_m2,
+            climate_target_temperature_c=climate_target_temperature_c,
+            climate_fan_mode=climate_fan_mode,
+            climate_swing_mode=climate_swing_mode,
+            manual_change_candidate=manual_change_candidate,
+        )
+        self.last_bedroom_pilot_actions[zone.zone_id] = action
+        return action
 
     def decide_living_room_pilot(
         self,

@@ -29,6 +29,11 @@ CONF_HOUSE_ZONES = "house_zones"
 CONF_OUTDOOR_TEMPERATURE_ENTITY_ID = "outdoor_temperature_entity_id"
 CONF_SOLAR_IRRADIANCE_ENTITY_ID = "solar_irradiance_entity_id"
 CONF_SUN_ENTITY_ID = "sun_entity_id"
+CONF_BEDROOM_MODE_ENABLED = "bedroom_mode_enabled"
+CONF_BEDROOM_CUTOFF_ENABLED = "bedroom_cutoff_enabled"
+CONF_BEDROOM_START_TIME = "bedroom_start_time"
+CONF_BEDROOM_CUTOFF_TIME = "bedroom_cutoff_time"
+CONF_BEDROOM_TARGET_TEMPERATURE = "bedroom_target_temperature"
 
 
 class EnergyPolicy(StrEnum):

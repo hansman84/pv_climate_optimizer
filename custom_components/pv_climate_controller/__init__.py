@@ -214,6 +214,26 @@ async def _async_refresh_controller(
             irradiance_w_m2=irradiance,
         )
         await controller.async_apply_pilot_action(speis_action, _pilot_service_executor(hass), zone=speis_zone, room_pilot=controller.speis_pilot)
+    for bedroom_zone in (item for item in config.house_zones if item.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}):
+        bedroom_climate = hass.states.get(bedroom_zone.climate_entity_id)
+        bedroom_sample = house_states.get(bedroom_zone.zone_id, (ZoneInput(None, False), "unavailable", None))[0]
+        bedroom_action = controller.decide_bedroom_pilot(
+            bedroom_zone,
+            temperature_c=bedroom_sample.temperature_c,
+            climate_mode=None if bedroom_climate is None else bedroom_climate.state,
+            climate_target_temperature_c=_temperature_value(None if bedroom_climate is None else bedroom_climate.attributes.get("temperature")),
+            climate_fan_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("fan_mode"),
+            climate_swing_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("swing_mode"),
+            manual_change_candidate=changed_entity_id == bedroom_zone.climate_entity_id,
+            direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
+            irradiance_w_m2=irradiance,
+        )
+        await controller.async_apply_pilot_action(
+            bedroom_action,
+            _pilot_service_executor(hass),
+            zone=bedroom_zone,
+            room_pilot=controller.bedroom_pilots[bedroom_zone.zone_id],
+        )
     if store is not None:
         store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()

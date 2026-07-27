@@ -114,6 +114,11 @@ class ControllerConfig:
     outdoor_temperature_entity_id: str | None = None
     solar_irradiance_entity_id: str | None = None
     sun_entity_id: str | None = None
+    bedroom_mode_enabled: bool = True
+    bedroom_cutoff_enabled: bool = True
+    bedroom_start_time: str = "15:30"
+    bedroom_cutoff_time: str = "18:30"
+    bedroom_target_temperature: float = 22.5
 
 
 @dataclass(frozen=True, slots=True)
