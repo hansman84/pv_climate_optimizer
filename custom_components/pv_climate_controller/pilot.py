@@ -31,7 +31,10 @@ class LivingRoomPilot:
     _THERMAL_RELIEF_TARGET_C = 25.0
     _DEEP_PRECOOL_AFTER_S = 30 * 60
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
-    _PV_WIND_DOWN_S = 5 * 60
+    # Evaluations normally run every five minutes. Keep this deliberately
+    # shorter so the *next* scheduled pass reaches the stop decision instead
+    # of spending a second full interval in a stale wind-down state.
+    _PV_WIND_DOWN_S = 4 * 60
     _MIN_OFF_TIME_S = 30 * 60
     _SETTLE_STOP_DELAY_S = 10 * 60
     _OVERSHOOT_MARGIN_C = 0.4
@@ -161,6 +164,7 @@ class LivingRoomPilot:
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
         pv_deadline_active: bool = False,
+        manual_change_candidate: bool = True,
     ) -> PilotAction | None:
         """Return a PV-first action or a visible reason for doing nothing."""
         allowed, reason = living_room_pilot_eligible(config, granted_stages, self._expected_zone_name)
@@ -182,7 +186,7 @@ class LivingRoomPilot:
         if pv_deadline_active:
             self._sunset_takeover_active = True
             self._manual_override_active = False
-        if self._owns_cooling and self._manual_change_detected(snapshot):
+        if self._owns_cooling and manual_change_candidate and self._manual_change_detected(snapshot):
             self.release_ownership()
             self._manual_override_active = True
             if not self._sunset_takeover_active:
@@ -238,7 +242,7 @@ class LivingRoomPilot:
             predicted_temperature_60m_c is not None
             and predicted_temperature_60m_c <= zone.comfort_temperature - self._overshoot_margin_c
         )
-        if below_comfort and (cooling_fast or forecast_below_comfort):
+        if (pv_available or hard_limit) and below_comfort and (cooling_fast or forecast_below_comfort):
             if self._thermal_relief_since is not None:
                 elapsed = now - self._thermal_relief_since
                 if elapsed < self._thermal_relief_observation_s:
@@ -298,7 +302,7 @@ class LivingRoomPilot:
                 "none",
                 None,
                 "pv_wind_down_waiting",
-                f"PV-Überschuss fehlt; {self._display_name} läuft bei {hold_target:.0f} °C geordnet aus und wird nach fünf stabilen Minuten ohne PV abgeschaltet.",
+                f"PV-Überschuss fehlt; {self._display_name} läuft bei {hold_target:.0f} °C geordnet aus und wird beim nächsten stabilen Prüfpunkt ohne PV abgeschaltet.",
             )
         else:
             self._pv_missing_since = None

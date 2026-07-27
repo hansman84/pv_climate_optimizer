@@ -514,6 +514,7 @@ class PVClimateController:
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
         pv_deadline_active: bool = False,
+        manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
     ) -> PilotAction:
@@ -538,6 +539,7 @@ class PVClimateController:
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
             pv_deadline_active=pv_deadline_active,
+            manual_change_candidate=manual_change_candidate,
         )
         return self.last_pilot_action
 
@@ -550,6 +552,7 @@ class PVClimateController:
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
         pv_deadline_active: bool = False,
+        manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
     ) -> PilotAction:
@@ -578,6 +581,7 @@ class PVClimateController:
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
             pv_deadline_active=pv_deadline_active,
+            manual_change_candidate=manual_change_candidate,
         )
         return self.last_office_pilot_action
 
@@ -590,6 +594,7 @@ class PVClimateController:
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
         pv_deadline_active: bool = False,
+        manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
     ) -> PilotAction:
@@ -618,6 +623,7 @@ class PVClimateController:
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
             pv_deadline_active=pv_deadline_active,
+            manual_change_candidate=manual_change_candidate,
         )
         return self.last_speis_pilot_action
 

@@ -91,13 +91,18 @@ def _handle_state_change(hass: HomeAssistant, controller: PVClimateController, s
     """Build a read-only state listener for selected inputs."""
 
     @callback
-    def _listener(_: Event) -> None:
-        hass.async_create_task(_async_refresh_controller(hass, controller, store))
+    def _listener(event: Event) -> None:
+        hass.async_create_task(_async_refresh_controller(hass, controller, store, changed_entity_id=event.data.get("entity_id")))
 
     return _listener
 
 
-async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateController, store: Store | None = None) -> None:
+async def _async_refresh_controller(
+    hass: HomeAssistant,
+    controller: PVClimateController,
+    store: Store | None = None,
+    changed_entity_id: str | None = None,
+) -> None:
     """Refresh diagnostics from HA state; no service calls are made."""
     config = controller.config
     zone = config.zone
@@ -172,6 +177,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
         climate_fan_mode=None if climate is None else climate.attributes.get("fan_mode"),
         climate_swing_mode=None if climate is None else climate.attributes.get("swing_mode"),
         pv_deadline_active=pv_deadline_active,
+        manual_change_candidate=controller.config.zone is not None and changed_entity_id == controller.config.zone.climate_entity_id,
         direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
         irradiance_w_m2=irradiance,
     )
@@ -187,6 +193,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
             climate_fan_mode=None if office_climate is None else office_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if office_climate is None else office_climate.attributes.get("swing_mode"),
             pv_deadline_active=pv_deadline_active,
+            manual_change_candidate=changed_entity_id == office_zone.climate_entity_id,
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
@@ -202,6 +209,7 @@ async def _async_refresh_controller(hass: HomeAssistant, controller: PVClimateCo
             climate_fan_mode=None if speis_climate is None else speis_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if speis_climate is None else speis_climate.attributes.get("swing_mode"),
             pv_deadline_active=pv_deadline_active,
+            manual_change_candidate=changed_entity_id == speis_zone.climate_entity_id,
             direct_sun=bool(contexts.get(speis_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
