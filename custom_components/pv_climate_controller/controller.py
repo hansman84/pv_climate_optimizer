@@ -500,6 +500,7 @@ class PVClimateController:
             self.last_pilot_action = PilotAction("none", None, "pilot_disabled", "Wohnzimmer-Pilot ist in der GUI ausgeschaltet.")
             return self.last_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        forecast = None if self.config.zone is None else self.last_zone_forecasts.get(self.config.zone.zone_id)
         self.last_pilot_action = self.pilot.decide(
             self.config,
             temperature_c=temperature_c,
@@ -507,6 +508,8 @@ class PVClimateController:
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
             thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
+            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
+            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
             climate_target_temperature_c=climate_target_temperature_c,
@@ -537,6 +540,7 @@ class PVClimateController:
             self.last_office_pilot_action = PilotAction("none", None, "office_zone_missing", "Arbeitszimmer ist nicht als Zone konfiguriert.")
             return self.last_office_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        forecast = self.last_zone_forecasts.get(office_zone.zone_id)
         self.last_office_pilot_action = self.office_pilot.decide(
             replace(self.config, zone=office_zone),
             temperature_c=temperature_c,
@@ -544,6 +548,8 @@ class PVClimateController:
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
             thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
+            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
+            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
             climate_target_temperature_c=climate_target_temperature_c,

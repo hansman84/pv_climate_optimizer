@@ -33,6 +33,9 @@ class LivingRoomPilot:
     _PV_WIND_DOWN_S = 5 * 60
     _MIN_OFF_TIME_S = 30 * 60
     _SETTLE_STOP_DELAY_S = 10 * 60
+    _OVERSHOOT_MARGIN_C = 0.4
+    _RAPID_COOLING_C_PER_H = -0.35
+    _OVERSHOOT_CONFIRMATION_S = 2 * 60
 
     def __init__(self, clock=monotonic, expected_zone_name: str = "Wohnzimmer", display_name: str | None = None) -> None:
         self._clock = clock
@@ -44,6 +47,7 @@ class LivingRoomPilot:
         self._last_target_change_at: float | None = None
         self._pv_missing_since: float | None = None
         self._settled_since: float | None = None
+        self._overcooling_since: float | None = None
         self._last_stopped_at: float | None = None
         self._owns_cooling = False
         self._takeover_requested = False
@@ -63,6 +67,7 @@ class LivingRoomPilot:
         self._last_target_change_at = None
         self._pv_missing_since = None
         self._settled_since = None
+        self._overcooling_since = None
         self._takeover_requested = False
         self._observed_snapshot = None
         self._expected_snapshot = None
@@ -81,6 +86,7 @@ class LivingRoomPilot:
             self._last_target_change_at = now
             self._pv_missing_since = None
             self._settled_since = None
+            self._overcooling_since = None
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
@@ -103,6 +109,8 @@ class LivingRoomPilot:
         thermal_profile: ThermalProfile | None = None,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
+        temperature_trend_c_per_h: float | None = None,
+        predicted_temperature_60m_c: float | None = None,
         climate_target_temperature_c: float | None = None,
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
@@ -170,6 +178,37 @@ class LivingRoomPilot:
         if climate_mode != "cool":
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
+
+        # A high setpoint is not a guarantee that the indoor unit has stopped
+        # removing heat.  Small rooms can continue cooling well below their
+        # comfort target from thermal inertia or a slow compressor.  Preserve
+        # long PV runs by default, but stop once two independent observations
+        # confirm a meaningful overshoot with a still-falling temperature.
+        below_comfort = temperature_c <= zone.comfort_temperature - self._OVERSHOOT_MARGIN_C
+        cooling_fast = temperature_trend_c_per_h is not None and temperature_trend_c_per_h <= self._RAPID_COOLING_C_PER_H
+        forecast_below_comfort = (
+            predicted_temperature_60m_c is not None
+            and predicted_temperature_60m_c <= zone.comfort_temperature - self._OVERSHOOT_MARGIN_C
+        )
+        if below_comfort and (cooling_fast or forecast_below_comfort):
+            if self._overcooling_since is None:
+                self._overcooling_since = now
+                return PilotAction(
+                    "none",
+                    None,
+                    "thermal_overshoot_confirming",
+                    f"{self._display_name} liegt bereits unter dem Komfortband und kühlt weiter; Pilot bestätigt den Auslauf zwei Minuten lang.",
+                )
+            if now - self._overcooling_since >= self._OVERSHOOT_CONFIRMATION_S:
+                return PilotAction(
+                    "stop",
+                    None,
+                    "thermal_overshoot_stop",
+                    f"{self._display_name} kühlt trotz hohem Sollwert weiter unter das Komfortband; das Klimagerät wird zum Schutz vor Überkühlung ausgeschaltet.",
+                )
+        else:
+            self._overcooling_since = None
+
         runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
         target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
         desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
@@ -228,6 +267,7 @@ class LivingRoomPilot:
         self._last_target_change_at = None
         self._pv_missing_since = None
         self._settled_since = None
+        self._overcooling_since = None
         self._takeover_requested = False
         self._observed_snapshot = snapshot
         self._expected_snapshot = None
