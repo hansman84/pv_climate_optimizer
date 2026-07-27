@@ -31,6 +31,7 @@ class LivingRoomPilot:
     _THERMAL_RELIEF_TARGET_C = 25.0
     _DEEP_PRECOOL_AFTER_S = 30 * 60
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
+    _COMMAND_ACK_GRACE_S = 2 * 60
     # Evaluations normally run every five minutes. Keep this deliberately
     # shorter so the *next* scheduled pass reaches the stop decision instead
     # of spending a second full interval in a stale wind-down state.
@@ -60,6 +61,7 @@ class LivingRoomPilot:
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
         self._last_target_change_at: float | None = None
+        self._expected_snapshot_at: float | None = None
         self._pv_missing_since: float | None = None
         self._settled_since: float | None = None
         self._overcooling_since: float | None = None
@@ -82,6 +84,7 @@ class LivingRoomPilot:
         self._cooling_started_at = None
         self._active_target_temperature_c = None
         self._last_target_change_at = None
+        self._expected_snapshot_at = None
         self._pv_missing_since = None
         self._settled_since = None
         self._overcooling_since = None
@@ -130,6 +133,7 @@ class LivingRoomPilot:
             self._cooling_started_at = now
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
+            self._expected_snapshot_at = now
             self._pv_missing_since = None
             self._settled_since = None
             self._overcooling_since = None
@@ -137,6 +141,7 @@ class LivingRoomPilot:
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
+            self._expected_snapshot_at = now
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
             if action.reason_code == "thermal_relief_adjustment":
                 self._thermal_relief_since = now
@@ -340,6 +345,7 @@ class LivingRoomPilot:
         self._cooling_started_at = now
         self._active_target_temperature_c = None
         self._last_target_change_at = None
+        self._expected_snapshot_at = None
         self._pv_missing_since = None
         self._settled_since = None
         self._overcooling_since = None
@@ -359,6 +365,9 @@ class LivingRoomPilot:
             if self._control_signature(snapshot) == self._control_signature(self._expected_snapshot):
                 self._observed_snapshot = snapshot
                 self._expected_snapshot = None
+                self._expected_snapshot_at = None
+                return False
+            if self._expected_snapshot_at is not None and self._clock() - self._expected_snapshot_at < self._COMMAND_ACK_GRACE_S:
                 return False
             if self._observed_snapshot is not None and self._control_signature(snapshot) != self._control_signature(self._observed_snapshot):
                 return True
