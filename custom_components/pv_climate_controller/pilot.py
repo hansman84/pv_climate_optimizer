@@ -345,17 +345,33 @@ class LivingRoomPilot:
         self._expected_snapshot = None
 
     def _manual_change_detected(self, snapshot: tuple[str | None, float | None, str | None, str | None]) -> bool:
-        """Differentiate acknowledged pilot setpoints from the next user change."""
+        """Differentiate a real user setpoint/mode change from device churn.
+
+        ConnectLife can refresh fan and swing attributes independently of a
+        command to another indoor unit. Those incidental updates must never
+        release another room's pilot ownership.
+        """
         if self._expected_snapshot is not None:
-            if snapshot == self._expected_snapshot:
+            if self._control_signature(snapshot) == self._control_signature(self._expected_snapshot):
                 self._observed_snapshot = snapshot
                 self._expected_snapshot = None
                 return False
-            return self._observed_snapshot is not None and snapshot != self._observed_snapshot
+            if self._observed_snapshot is not None and self._control_signature(snapshot) != self._control_signature(self._observed_snapshot):
+                return True
+            self._observed_snapshot = snapshot
+            return False
         if self._observed_snapshot is None:
             self._observed_snapshot = snapshot
             return False
-        return snapshot != self._observed_snapshot
+        if self._control_signature(snapshot) == self._control_signature(self._observed_snapshot):
+            self._observed_snapshot = snapshot
+            return False
+        return True
+
+    @staticmethod
+    def _control_signature(snapshot: tuple[str | None, float | None, str | None, str | None]) -> tuple[str | None, float | None]:
+        """Use only the pilot-owned climate fields for ownership detection."""
+        return snapshot[0], snapshot[1]
 
     @staticmethod
     def _rebound_expected(

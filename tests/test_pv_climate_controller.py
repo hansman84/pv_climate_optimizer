@@ -573,6 +573,7 @@ def test_pilot_handover_persists_across_restart_and_keeps_manual_exit() -> None:
 
     assert restored.pilot.owns_cooling
     assert not restored.pilot._manual_change_detected(("cool", 24.0, "auto", "off"))
+    assert not restored.pilot._manual_change_detected(("cool", 24.0, "high", "auto"))
     assert restored.pilot._manual_change_detected(("cool", 25.0, "auto", "off"))
 
 
@@ -1203,7 +1204,7 @@ def test_office_pilot_can_explicitly_take_over_external_cooling() -> None:
     assert action.reason_code == "pilot_soft_target_adjustment"
 
 
-def test_living_room_pilot_returns_control_after_next_manual_change() -> None:
+def test_living_room_pilot_ignores_unrelated_fan_attribute_churn() -> None:
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
@@ -1229,4 +1230,4 @@ def test_living_room_pilot_returns_control_after_next_manual_change() -> None:
         runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1200,
         climate_target_temperature_c=23.0, climate_fan_mode="high", climate_swing_mode="auto",
     )
-    assert action.reason_code == "manual_control_resumed"
+    assert action.reason_code == "pilot_cooling_active"
