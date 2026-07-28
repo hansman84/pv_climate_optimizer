@@ -1279,3 +1279,31 @@ def test_living_room_pilot_ignores_unrelated_fan_attribute_churn() -> None:
         climate_target_temperature_c=23.0, climate_fan_mode="high", climate_swing_mode="auto",
     )
     assert action.reason_code == "pilot_cooling_active"
+
+
+def test_pilot_keeps_ownership_for_unattributed_climate_state_refresh() -> None:
+    """Cloud/device sync must not look like a dashboard manual takeover."""
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    living_pilot = pilot.LivingRoomPilot(clock)
+    living_pilot.request_takeover()
+    action = living_pilot.decide(
+        runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1500,
+        climate_target_temperature_c=23.0,
+    )
+    living_pilot.mark_sent(action)
+
+    clock.now = 180
+    action = living_pilot.decide(
+        runtime, temperature_c=24.2, climate_mode="cool", granted_stages=1, export_power_w=1500,
+        climate_target_temperature_c=25.0, manual_change_candidate=False,
+    )
+
+    assert living_pilot.owns_cooling
+    assert action.reason_code == "pilot_cooling_active"

@@ -92,7 +92,19 @@ def _handle_state_change(hass: HomeAssistant, controller: PVClimateController, s
 
     @callback
     def _listener(event: Event) -> None:
-        hass.async_create_task(_async_refresh_controller(hass, controller, store, changed_entity_id=event.data.get("entity_id")))
+        # ConnectLife reports attribute refreshes and delayed cloud confirmations
+        # as regular state events.  They must never be mistaken for a person
+        # taking over a pilot-owned room.  An HA user context is the only
+        # trustworthy signal that a control change came from the dashboard.
+        hass.async_create_task(
+            _async_refresh_controller(
+                hass,
+                controller,
+                store,
+                changed_entity_id=event.data.get("entity_id"),
+                user_initiated_change=bool(getattr(event.context, "user_id", None)),
+            )
+        )
 
     return _listener
 
@@ -102,6 +114,7 @@ async def _async_refresh_controller(
     controller: PVClimateController,
     store: Store | None = None,
     changed_entity_id: str | None = None,
+    user_initiated_change: bool = False,
 ) -> None:
     """Refresh diagnostics from HA state; no service calls are made."""
     config = controller.config
@@ -177,7 +190,11 @@ async def _async_refresh_controller(
         climate_fan_mode=None if climate is None else climate.attributes.get("fan_mode"),
         climate_swing_mode=None if climate is None else climate.attributes.get("swing_mode"),
         pv_deadline_active=pv_deadline_active,
-        manual_change_candidate=controller.config.zone is not None and changed_entity_id == controller.config.zone.climate_entity_id,
+        manual_change_candidate=(
+            user_initiated_change
+            and controller.config.zone is not None
+            and changed_entity_id == controller.config.zone.climate_entity_id
+        ),
         direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
         irradiance_w_m2=irradiance,
     )
@@ -193,7 +210,7 @@ async def _async_refresh_controller(
             climate_fan_mode=None if office_climate is None else office_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if office_climate is None else office_climate.attributes.get("swing_mode"),
             pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=changed_entity_id == office_zone.climate_entity_id,
+            manual_change_candidate=user_initiated_change and changed_entity_id == office_zone.climate_entity_id,
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
@@ -209,7 +226,7 @@ async def _async_refresh_controller(
             climate_fan_mode=None if speis_climate is None else speis_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if speis_climate is None else speis_climate.attributes.get("swing_mode"),
             pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=changed_entity_id == speis_zone.climate_entity_id,
+            manual_change_candidate=user_initiated_change and changed_entity_id == speis_zone.climate_entity_id,
             direct_sun=bool(contexts.get(speis_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
@@ -224,7 +241,7 @@ async def _async_refresh_controller(
             climate_target_temperature_c=_temperature_value(None if bedroom_climate is None else bedroom_climate.attributes.get("temperature")),
             climate_fan_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("swing_mode"),
-            manual_change_candidate=changed_entity_id == bedroom_zone.climate_entity_id,
+            manual_change_candidate=user_initiated_change and changed_entity_id == bedroom_zone.climate_entity_id,
             direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
