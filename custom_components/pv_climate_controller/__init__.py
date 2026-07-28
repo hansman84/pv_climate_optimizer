@@ -191,7 +191,8 @@ async def _async_refresh_controller(
         climate_swing_mode=None if climate is None else climate.attributes.get("swing_mode"),
         pv_deadline_active=pv_deadline_active,
         manual_change_candidate=(
-            user_initiated_change
+            controller.config.manual_override_enabled
+            and user_initiated_change
             and controller.config.zone is not None
             and changed_entity_id == controller.config.zone.climate_entity_id
         ),
@@ -210,7 +211,7 @@ async def _async_refresh_controller(
             climate_fan_mode=None if office_climate is None else office_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if office_climate is None else office_climate.attributes.get("swing_mode"),
             pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=user_initiated_change and changed_entity_id == office_zone.climate_entity_id,
+            manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == office_zone.climate_entity_id,
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
@@ -226,7 +227,7 @@ async def _async_refresh_controller(
             climate_fan_mode=None if speis_climate is None else speis_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if speis_climate is None else speis_climate.attributes.get("swing_mode"),
             pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=user_initiated_change and changed_entity_id == speis_zone.climate_entity_id,
+            manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == speis_zone.climate_entity_id,
             direct_sun=bool(contexts.get(speis_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )
@@ -241,7 +242,7 @@ async def _async_refresh_controller(
             climate_target_temperature_c=_temperature_value(None if bedroom_climate is None else bedroom_climate.attributes.get("temperature")),
             climate_fan_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("fan_mode"),
             climate_swing_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("swing_mode"),
-            manual_change_candidate=user_initiated_change and changed_entity_id == bedroom_zone.climate_entity_id,
+            manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == bedroom_zone.climate_entity_id,
             direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
         )

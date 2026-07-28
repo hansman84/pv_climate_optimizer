@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
@@ -18,6 +18,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
         LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
+        ManualOverrideSwitch(controller, entry.entry_id, "manual_override"),
         BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
         BedroomCutoffSwitch(controller, entry.entry_id, "bedroom_cutoff"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
@@ -72,6 +73,26 @@ class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
         await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, False)
         self.controller.notify_state_listeners()
 
+
+class ManualOverrideSwitch(ControllerEntity, SwitchEntity):
+    """Allow a user to opt out of manual release while the pilot is enabled."""
+
+    _attr_name = "Manuelle Übernahme erlaubt"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.manual_override_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_manual_override_enabled(True)
+        await self.async_persist_option(CONF_MANUAL_OVERRIDE_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_manual_override_enabled(False)
+        await self.async_persist_option(CONF_MANUAL_OVERRIDE_ENABLED, False)
+        self.controller.notify_state_listeners()
 
 class BedroomModeSwitch(ControllerEntity, SwitchEntity):
     """Separate switch for the late-afternoon sleeping-room strategy."""

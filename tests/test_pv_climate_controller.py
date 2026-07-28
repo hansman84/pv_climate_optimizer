@@ -331,6 +331,20 @@ def test_living_room_pilot_gate_updates_the_command_boundary() -> None:
     assert runtime.state is const.ControllerState.SHADOW
 
 
+def test_manual_override_gate_is_configurable_and_defaults_to_allowed() -> None:
+    runtime = controller.PVClimateController.from_config({
+        "shadow_mode": False,
+        "living_room_pilot_enabled": True,
+        "climate_entity_id": "climate.living",
+        "temperature_entity_id": "sensor.living",
+        "zone_name": "Wohnzimmer",
+    }, {})
+
+    assert runtime.config.manual_override_enabled
+    runtime.set_manual_override_enabled(False)
+    assert not runtime.config.manual_override_enabled
+
+
 def test_controller_reports_disabled_pilot_action() -> None:
     runtime = controller.PVClimateController.from_config({
         "shadow_mode": False,
