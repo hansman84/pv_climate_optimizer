@@ -205,13 +205,20 @@ class LivingRoomPilot:
         pv_available = export_power_w is not None and export_power_w >= config.min_pv_surplus_w
         hard_limit = temperature_c >= zone.hard_max_temperature
         # The configured comfort value is the thermal promise, even when the
-        # indoor unit accepts whole degrees only.  For a 23.5 °C comfort
-        # threshold, cool at 23 °C until the room reaches the threshold, then
-        # lift to 24 °C for quiet holding instead of silently treating 24 °C
-        # as the threshold.
+        # indoor unit accepts whole degrees only.  A 23.5 °C comfort target is
+        # therefore held at 24 °C: starting at 23 °C makes this inverter cool
+        # unnecessarily hard and produces an avoidable 23/24 °C saw-tooth.
+        # Deeper pre-cooling remains a separate, deliberately rare strong-PV
+        # decision below.
         hold_target = min(self._max_start_target_c, max(self._min_start_target_c, float(ceil(zone.comfort_temperature))))
-        fractional_comfort = abs(zone.comfort_temperature - round(zone.comfort_temperature)) > 0.01
-        cool_target = max(self._min_start_target_c, hold_target - 1.0) if fractional_comfort else hold_target
+        living_room_band = self._expected_zone_name.casefold() == "wohnzimmer"
+        cool_target = (
+            hold_target
+            if living_room_band
+            else max(self._min_start_target_c, hold_target - 1.0)
+            if abs(zone.comfort_temperature - round(zone.comfort_temperature)) > 0.01
+            else hold_target
+        )
         deep_precool_target = hold_target - 1.0
         strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
         needs_cooling = hard_limit or (pv_available and temperature_c > zone.comfort_temperature)
@@ -300,7 +307,7 @@ class LivingRoomPilot:
         runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
         target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
         desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
-        if strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
+        if not living_room_band and strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
             desired_target = deep_precool_target
 
         if not pv_available and not hard_limit:
