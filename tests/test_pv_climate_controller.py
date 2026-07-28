@@ -345,6 +345,24 @@ def test_manual_override_gate_is_configurable_and_defaults_to_allowed() -> None:
     assert not runtime.config.manual_override_enabled
 
 
+def test_disabled_manual_override_clears_restored_manual_pilot_state() -> None:
+    runtime = controller.PVClimateController.from_config({
+        "shadow_mode": False,
+        "living_room_pilot_enabled": True,
+        "manual_override_enabled": False,
+        "climate_entity_id": "climate.living",
+        "temperature_entity_id": "sensor.living",
+        "zone_name": "Wohnzimmer",
+    }, {})
+
+    runtime.restore_learning_state({
+        "pilot_runtime": {"wohnzimmer": {"owns_cooling": False, "manual_override_active": True}}
+    })
+
+    assert not runtime.pilot._manual_override_active
+    assert runtime.pilot._takeover_requested
+
+
 def test_controller_reports_disabled_pilot_action() -> None:
     runtime = controller.PVClimateController.from_config({
         "shadow_mode": False,

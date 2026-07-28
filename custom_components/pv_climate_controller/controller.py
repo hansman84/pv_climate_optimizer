@@ -390,6 +390,8 @@ class PVClimateController:
                 self._ensure_bedroom_pilots()
                 for zone_id, room_pilot in self.bedroom_pilots.items():
                     room_pilot.restore_runtime_state(bedrooms.get(zone_id))
+        if not self.config.manual_override_enabled:
+            self._clear_manual_override_state()
 
     @property
     def state(self) -> ControllerState:
@@ -518,6 +520,14 @@ class PVClimateController:
     def set_manual_override_enabled(self, enabled: bool) -> None:
         """Choose whether a HA user's climate change may release a pilot."""
         self.config = replace(self.config, manual_override_enabled=enabled)
+        if not enabled:
+            self._clear_manual_override_state()
+
+    def _clear_manual_override_state(self) -> None:
+        """Return every permitted room to pilot ownership immediately."""
+        self._ensure_bedroom_pilots()
+        for room_pilot in (self.pilot, self.office_pilot, self.speis_pilot, *self.bedroom_pilots.values()):
+            room_pilot.request_takeover()
 
     def set_bedroom_mode_enabled(self, enabled: bool) -> None:
         """Enable or pause only the scheduled sleeping-room strategy."""
