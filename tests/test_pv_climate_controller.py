@@ -912,13 +912,11 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     assert adjustment.reason_code == "pilot_cooling_active"
     clock.now = 2400
     adjustment = living_pilot.decide(runtime, temperature_c=24.6, climate_mode="cool", granted_stages=1, export_power_w=2500)
-    assert adjustment.action == "none"
-    assert adjustment.reason_code == "pilot_cooling_active"
+    assert (adjustment.action, adjustment.target_temperature_c, adjustment.reason_code) == ("adjust", 23.0, "pilot_soft_target_adjustment")
     living_pilot.mark_sent(adjustment)
     clock.now = 3300
     adjustment = living_pilot.decide(runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=1200)
-    assert adjustment.action == "none"
-    assert adjustment.reason_code == "pilot_cooling_active"
+    assert (adjustment.action, adjustment.target_temperature_c, adjustment.reason_code) == ("adjust", 24.0, "pilot_soft_target_adjustment")
     living_pilot.mark_sent(adjustment)
     clock.now = 4200
     settling = living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200)
@@ -1071,8 +1069,7 @@ def test_living_room_pilot_stops_immediately_when_export_reaches_zero() -> None:
     living_pilot.mark_sent(pilot.PilotAction("start", 24.0, "test", "test"))
     clock.now = 1800
     deep = living_pilot.decide(runtime, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=2200)
-    assert deep.action == "none"
-    assert deep.target_temperature_c is None
+    assert (deep.action, deep.target_temperature_c) == ("adjust", 23.0)
     living_pilot.mark_sent(deep)
 
     clock.now = 2400

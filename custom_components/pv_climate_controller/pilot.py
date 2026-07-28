@@ -306,7 +306,14 @@ class LivingRoomPilot:
 
         runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
         target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
-        desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
+        if living_room_band:
+            # Use hysteresis around the 23.5/24 °C promise: an overheated
+            # living room needs a brief, decisive pull-down, while a room
+            # already inside the band stays on the calm 24 °C setpoint.
+            pull_down_threshold = zone.comfort_temperature + 0.75
+            desired_target = deep_precool_target if temperature_c > pull_down_threshold else hold_target
+        else:
+            desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
         if not living_room_band and strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
             desired_target = deep_precool_target
 
