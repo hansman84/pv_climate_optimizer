@@ -144,11 +144,12 @@ class PVClimateController:
         zones = _house_zones(options.get(CONF_HOUSE_ZONES))
         if not zones and zone is not None:
             zones = (zone,)
-        # A room added through the GUI is already an explicit mapping.  Reuse
-        # only an exactly named Wohnzimmer mapping for the one-room pilot;
-        # never select an arbitrary first zone.
-        if zone is None:
-            zone = next((item for item in zones if item.name.strip().casefold() == "wohnzimmer"), None)
+        # The room profile is the single source of truth for the pilot.  It
+        # contains the GUI-visible comfort and hard-limit values; retaining
+        # the legacy top-level mapping here would silently apply stale limits.
+        living_room_profile = next((item for item in zones if item.name.strip().casefold() == "wohnzimmer"), None)
+        if living_room_profile is not None:
+            zone = living_room_profile
         config = ControllerConfig(
             shadow_mode=shadow_mode,
             energy_policy=policy,

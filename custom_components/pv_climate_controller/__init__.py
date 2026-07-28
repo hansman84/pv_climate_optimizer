@@ -259,11 +259,11 @@ async def _async_refresh_controller(
 
 
 def _pv_deadline_active(sun_state) -> bool:
-    """Start evening PV ownership 45 minutes before sunset and keep it overnight."""
+    """Start evening PV ownership only during the final 45 minutes of sun."""
     if sun_state is None:
         return False
     if sun_state.state == "below_horizon":
-        return True
+        return False
     next_setting = sun_state.attributes.get("next_setting")
     if not isinstance(next_setting, str):
         return False

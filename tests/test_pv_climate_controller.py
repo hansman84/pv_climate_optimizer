@@ -345,6 +345,31 @@ def test_manual_override_gate_is_configurable_and_defaults_to_allowed() -> None:
     assert not runtime.config.manual_override_enabled
 
 
+def test_living_room_profile_overrides_legacy_top_level_temperature_limits() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {
+            "shadow_mode": False,
+            "climate_entity_id": "climate.living",
+            "temperature_entity_id": "sensor.living",
+            "zone_name": "Wohnzimmer",
+            "hard_max_temperature": 25.5,
+        },
+        {
+            "house_zones": [{
+                "zone_id": "living",
+                "name": "Wohnzimmer",
+                "climate_entity_id": "climate.living",
+                "temperature_entity_id": "sensor.living",
+                "comfort_temperature": 23.5,
+                "hard_max_temperature": 26.0,
+            }],
+        },
+    )
+
+    assert runtime.config.zone is not None
+    assert runtime.config.zone.hard_max_temperature == 26.0
+
+
 def test_disabled_manual_override_clears_restored_manual_pilot_state() -> None:
     runtime = controller.PVClimateController.from_config({
         "shadow_mode": False,
