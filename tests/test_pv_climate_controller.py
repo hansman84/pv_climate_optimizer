@@ -1120,6 +1120,40 @@ def test_living_room_pilot_stops_immediately_when_export_reaches_zero() -> None:
     assert (stopping.action, stopping.reason_code) == ("stop", "pv_export_zero")
 
 
+def test_pilot_uses_per_room_gui_target_limits() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        living_room_pilot_enabled=True,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=26.0,
+        ),
+        min_pv_surplus_w=1000,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+
+    room_pilot.decide(runtime, temperature_c=26.0, climate_mode="off", granted_stages=1, export_power_w=1200)
+    clock.now = 600
+    start = room_pilot.decide(runtime, temperature_c=26.0, climate_mode="off", granted_stages=1, export_power_w=1200)
+    assert start.target_temperature_c == 24.0
+    room_pilot.mark_sent(start)
+
+    clock.now = 1800
+    deep = room_pilot.decide(runtime, temperature_c=26.0, climate_mode="cool", granted_stages=1, export_power_w=2200)
+    assert deep.target_temperature_c == 20.0
+    room_pilot.mark_sent(deep)
+
+    clock.now = 1920
+    room_pilot.decide(runtime, temperature_c=22.0, climate_mode="cool", granted_stages=1, export_power_w=2200, temperature_trend_c_per_h=-1.0)
+    clock.now = 2040
+    relief = room_pilot.decide(runtime, temperature_c=22.0, climate_mode="cool", granted_stages=1, export_power_w=2200, temperature_trend_c_per_h=-1.0)
+    assert relief.target_temperature_c == 26.0
+
+
 def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(

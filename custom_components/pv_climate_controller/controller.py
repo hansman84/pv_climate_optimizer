@@ -53,6 +53,8 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             zone_id=str(item.get("zone_id", climate)), name=name, climate_entity_id=climate,
             temperature_entity_id=temperature, comfort_temperature=float(item.get("comfort_temperature", 23.5)),
             hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
+            pilot_min_target_temperature=float(item["pilot_min_target_temperature"]) if isinstance(item.get("pilot_min_target_temperature"), (int, float)) else None,
+            pilot_max_target_temperature=float(item["pilot_max_target_temperature"]) if isinstance(item.get("pilot_max_target_temperature"), (int, float)) else None,
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
             priority=int(item.get("priority", 50)),
             pilot_enabled=bool(item.get("pilot_enabled", default_pilot_enabled)),
@@ -75,6 +77,8 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "cooling_power_entity_id": zone.cooling_power_entity_id,
         "comfort_temperature": zone.comfort_temperature,
         "hard_max_temperature": zone.hard_max_temperature,
+        "pilot_min_target_temperature": zone.pilot_min_target_temperature,
+        "pilot_max_target_temperature": zone.pilot_max_target_temperature,
         "priority": zone.priority,
         "pilot_enabled": zone.pilot_enabled,
         "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
@@ -845,6 +849,8 @@ class PVClimateController:
         *,
         comfort_temperature: float | None = None,
         hard_max_temperature: float | None = None,
+        pilot_min_target_temperature: float | None = None,
+        pilot_max_target_temperature: float | None = None,
         priority: int | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
@@ -856,13 +862,23 @@ class PVClimateController:
             comfort = zone.comfort_temperature if comfort_temperature is None else float(comfort_temperature)
             hard_max = zone.hard_max_temperature if hard_max_temperature is None else float(hard_max_temperature)
             hard_max = max(comfort, hard_max)
+            pilot_min = zone.pilot_min_target_temperature if pilot_min_target_temperature is None else max(16.0, min(32.0, float(pilot_min_target_temperature)))
+            pilot_max = zone.pilot_max_target_temperature if pilot_max_target_temperature is None else max(16.0, min(32.0, float(pilot_max_target_temperature)))
+            if pilot_min is not None and pilot_max is not None:
+                pilot_max = max(pilot_min, pilot_max)
             updated.append(replace(
                 zone,
                 comfort_temperature=comfort,
                 hard_max_temperature=hard_max,
+                pilot_min_target_temperature=pilot_min,
+                pilot_max_target_temperature=pilot_max,
                 priority=zone.priority if priority is None else max(1, min(100, int(priority))),
             ))
-        self.config = replace(self.config, house_zones=tuple(updated))
+        zones = tuple(updated)
+        selected_zone = self.config.zone
+        if selected_zone is not None:
+            selected_zone = next((zone for zone in zones if zone.zone_id == selected_zone.zone_id), selected_zone)
+        self.config = replace(self.config, house_zones=zones, zone=selected_zone)
 
     async def async_apply_last_decision(self) -> CommandResult:
         """Demonstrate the sole write boundary; Gate C always blocks it."""

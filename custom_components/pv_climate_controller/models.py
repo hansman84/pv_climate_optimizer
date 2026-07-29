@@ -17,6 +17,8 @@ class ZoneConfig:
     temperature_entity_id: str
     comfort_temperature: float = 23.5
     hard_max_temperature: float = 25.5
+    pilot_min_target_temperature: float | None = None
+    pilot_max_target_temperature: float | None = None
     cooling_power_entity_id: str | None = None
     priority: int = 50
     pilot_enabled: bool = True

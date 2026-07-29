@@ -133,7 +133,7 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
         schema = _zone_tuning_schema(self._draft_zone)
         if user_input is None:
             return self.async_show_form(step_id="add_zone_tuning", data_schema=schema)
-        if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
+        if user_input["hard_max_temperature"] < user_input["comfort_temperature"] or user_input["pilot_max_target_temperature"] < user_input["pilot_min_target_temperature"]:
             return self.async_show_form(step_id="add_zone_tuning", data_schema=schema, errors={"base": "invalid_temperature_limits"})
         zones = self._zones(self._options())
         zones.append({**self._draft_zone, **_normalize_zone_tuning(user_input)})
@@ -181,7 +181,7 @@ class PVClimateControllerOptionsFlow(config_entries.OptionsFlow):
         schema = _zone_tuning_schema(existing)
         if user_input is None:
             return self.async_show_form(step_id="edit_zone_tuning", data_schema=schema)
-        if user_input["hard_max_temperature"] < user_input["comfort_temperature"]:
+        if user_input["hard_max_temperature"] < user_input["comfort_temperature"] or user_input["pilot_max_target_temperature"] < user_input["pilot_min_target_temperature"]:
             return self.async_show_form(step_id="edit_zone_tuning", data_schema=schema, errors={"base": "invalid_temperature_limits"})
         options = self._options()
         zones = self._zones(options)
@@ -277,6 +277,8 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Optional("cooling_power_entity_id", default=values.get("cooling_power_entity_id")): EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
         vol.Required("comfort_temperature", default=values.get("comfort_temperature", 23.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=30)),
         vol.Required("hard_max_temperature", default=values.get("hard_max_temperature", 25.5)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
+        vol.Required("pilot_min_target_temperature", default=values.get("pilot_min_target_temperature", 23.0)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
+        vol.Required("pilot_max_target_temperature", default=values.get("pilot_max_target_temperature", 25.0)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
         vol.Optional("shade_entity_ids", default=values.get("shade_entity_ids", [])): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),

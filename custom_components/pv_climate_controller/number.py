@@ -27,6 +27,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         zone_numbers.extend((
             ZoneComfortTemperatureNumber(controller, entry.entry_id, f"zone_comfort_temperature_{index}", zone.zone_id),
             ZoneHardMaxTemperatureNumber(controller, entry.entry_id, f"zone_hard_max_temperature_{index}", zone.zone_id),
+            ZonePilotMinTargetTemperatureNumber(controller, entry.entry_id, f"zone_pilot_min_target_temperature_{index}", zone.zone_id),
+            ZonePilotMaxTargetTemperatureNumber(controller, entry.entry_id, f"zone_pilot_max_target_temperature_{index}", zone.zone_id),
             ZonePriorityNumber(controller, entry.entry_id, f"zone_priority_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
@@ -159,6 +161,50 @@ class ZoneHardMaxTemperatureNumber(ZoneComfortTemperatureNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_zone_thermal_settings(self._zone_id, hard_max_temperature=value)
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class _ZonePilotTargetTemperatureNumber(_ZoneSettingNumber):
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 16.0
+    _attr_native_max_value = 32.0
+    _attr_native_step = 1.0
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
+
+    def _default_minimum(self) -> float:
+        return 22.0 if self._zone_name.casefold() in {"schlafzimmer", "kinderzimmer"} else 23.0
+
+
+class ZonePilotMinTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Minimale Pilot-Zieltemperatur"
+
+    @property
+    def native_value(self) -> float:
+        return self._default_minimum() if self._zone is None or self._zone.pilot_min_target_temperature is None else self._zone.pilot_min_target_temperature
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(self._zone_id, pilot_min_target_temperature=value)
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZonePilotMaxTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Maximale Pilot-Zieltemperatur"
+
+    @property
+    def native_value(self) -> float:
+        if self._zone is not None and self._zone.pilot_max_target_temperature is not None:
+            return self._zone.pilot_max_target_temperature
+        return 24.0 if self._zone_name.casefold() in {"schlafzimmer", "kinderzimmer"} else 25.0
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(self._zone_id, pilot_max_target_temperature=value)
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 

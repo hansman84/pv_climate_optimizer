@@ -210,16 +210,19 @@ class LivingRoomPilot:
         # unnecessarily hard and produces an avoidable 23/24 °C saw-tooth.
         # Deeper pre-cooling remains a separate, deliberately rare strong-PV
         # decision below.
-        hold_target = min(self._max_start_target_c, max(self._min_start_target_c, float(ceil(zone.comfort_temperature))))
+        min_target = self._min_start_target_c if zone.pilot_min_target_temperature is None else zone.pilot_min_target_temperature
+        max_target = self._thermal_relief_target_c if zone.pilot_max_target_temperature is None else zone.pilot_max_target_temperature
+        max_target = max(min_target, max_target)
+        hold_target = min(max(min_target, max_target - 1.0), max(min_target, float(ceil(zone.comfort_temperature))))
         living_room_band = self._expected_zone_name.casefold() == "wohnzimmer"
         cool_target = (
             hold_target
             if living_room_band
-            else max(self._min_start_target_c, hold_target - 1.0)
+            else max(min_target, hold_target - 1.0)
             if abs(zone.comfort_temperature - round(zone.comfort_temperature)) > 0.01
             else hold_target
         )
-        deep_precool_target = hold_target - 1.0
+        deep_precool_target = min_target
         strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
         needs_cooling = hard_limit or (pv_available and temperature_c > zone.comfort_temperature)
 
@@ -270,13 +273,13 @@ class LivingRoomPilot:
                         "none",
                         None,
                         "thermal_relief_observing",
-                        f"{self._display_name} hält bei {self._thermal_relief_target_c:.0f} °C; Pilot beobachtet noch {max(1, ceil((self._thermal_relief_observation_s - elapsed) / 60))} Minute(n), ob die Temperatur stabil wird.",
+                        f"{self._display_name} hält bei {max_target:.0f} °C; Pilot beobachtet noch {max(1, ceil((self._thermal_relief_observation_s - elapsed) / 60))} Minute(n), ob die Temperatur stabil wird.",
                     )
                 return PilotAction(
                     "stop",
                     None,
                     "thermal_relief_unsuccessful",
-                    f"{self._display_name} kühlt auch bei {self._thermal_relief_target_c:.0f} °C weiter unter das Komfortband; das Klimagerät wird zum Schutz vor Überkühlung ausgeschaltet.",
+                    f"{self._display_name} kühlt auch bei {max_target:.0f} °C weiter unter das Komfortband; das Klimagerät wird zum Schutz vor Überkühlung ausgeschaltet.",
                 )
             if self._overcooling_since is None:
                 self._overcooling_since = now
@@ -287,12 +290,12 @@ class LivingRoomPilot:
                     f"{self._display_name} liegt bereits unter dem Komfortband und kühlt weiter; Pilot bestätigt den Auslauf {self._overshoot_confirmation_s / 60:g} Minute(n) lang.",
                 )
             if now - self._overcooling_since >= self._overshoot_confirmation_s:
-                if (self._active_target_temperature_c or self._min_start_target_c) < self._thermal_relief_target_c:
+                if (self._active_target_temperature_c or min_target) < max_target:
                     return PilotAction(
                         "adjust",
-                        self._thermal_relief_target_c,
+                        max_target,
                         "thermal_relief_adjustment",
-                        f"{self._display_name} kühlt weiter unter das Komfortband; Solltemperatur wird zuerst auf {self._thermal_relief_target_c:.0f} °C angehoben und der Raum wird beobachtet.",
+                        f"{self._display_name} kühlt weiter unter das Komfortband; Solltemperatur wird zuerst auf {max_target:.0f} °C angehoben und der Raum wird beobachtet.",
                     )
                 return PilotAction(
                     "stop",
