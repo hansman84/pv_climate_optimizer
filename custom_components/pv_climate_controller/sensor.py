@@ -107,10 +107,19 @@ class PilotActionSensor(ControllerEntity, SensorEntity):
         action = self.controller.last_pilot_action
         if action is None:
             return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
+        zone = self.controller.config.zone
+        export_power_w = self.controller.last_energy.export_power_w
+        minimum_surplus_w = self.controller.config.min_pv_surplus_w
         return {
             "action": action.action,
             "reason_code": action.reason_code,
             "target_temperature_c": action.target_temperature_c,
+            "planned_target_temperature_c": action.planned_target_temperature_c,
+            "export_power_w": export_power_w,
+            "minimum_surplus_w": minimum_surplus_w,
+            "pv_surplus_available": export_power_w is not None and export_power_w >= minimum_surplus_w,
+            "comfort_temperature_c": None if zone is None else zone.comfort_temperature,
+            "hard_temperature_limit_c": None if zone is None else zone.hard_max_temperature,
         }
 
 

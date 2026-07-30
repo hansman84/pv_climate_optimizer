@@ -73,7 +73,9 @@ class MinPVSurplusNumber(ControllerEntity, NumberEntity):
     """Minimum normalized export power required for the PV diagnostic."""
 
     _attr_name = "PV-Mindestüberschuss"
-    _attr_native_min_value = 0.0
+    # Zero turns an idle meter into a permanent PV approval.  A positive
+    # threshold is a safety invariant for productive climate control.
+    _attr_native_min_value = 100.0
     _attr_native_max_value = 20000.0
     _attr_native_step = 100.0
     _attr_native_unit_of_measurement = UnitOfPower.WATT

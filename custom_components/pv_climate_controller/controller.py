@@ -167,7 +167,7 @@ class PVClimateController:
             export_power_positive=bool(options.get(CONF_EXPORT_POWER_POSITIVE, data.get(CONF_EXPORT_POWER_POSITIVE, True))),
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
             outdoor_unit_power_entity_id=_optional_entity(options, data, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID),
-            min_pv_surplus_w=float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 1000.0))),
+            min_pv_surplus_w=max(100.0, float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 400.0)))),
             house_zones=zones,
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
@@ -829,7 +829,7 @@ class PVClimateController:
 
     def set_min_pv_surplus_w(self, watts: float) -> None:
         """Update the diagnostic PV threshold without enabling control."""
-        self.config = replace(self.config, min_pv_surplus_w=max(0.0, watts))
+        self.config = replace(self.config, min_pv_surplus_w=max(100.0, watts))
 
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:
         """Set only the display normalization convention for the selected source."""

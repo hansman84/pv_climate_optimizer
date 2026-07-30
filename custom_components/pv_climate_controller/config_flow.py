@@ -45,7 +45,7 @@ def _schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             selector_key = vol.Optional(key, default=values[key])
         schema[selector_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
     schema[vol.Required(CONF_EXPORT_POWER_POSITIVE, default=values.get(CONF_EXPORT_POWER_POSITIVE, True))] = bool
-    schema[vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 1000.0))] = vol.All(vol.Coerce(float), vol.Range(min=0, max=20000))
+    schema[vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 400.0))] = vol.All(vol.Coerce(float), vol.Range(min=100, max=20000))
     return vol.Schema(schema)
 
 
@@ -231,7 +231,7 @@ def _energy_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     schema: dict[Any, Any] = {
         vol.Required(CONF_ENERGY_POLICY, default=values.get(CONF_ENERGY_POLICY, EnergyPolicy.PV_PREFERRED)): vol.In([item.value for item in EnergyPolicy]),
         vol.Required(CONF_EXPORT_POWER_POSITIVE, default=values.get(CONF_EXPORT_POWER_POSITIVE, True)): bool,
-        vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 1000.0)): vol.All(vol.Coerce(float), vol.Range(min=0, max=20000)),
+        vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 400.0)): vol.All(vol.Coerce(float), vol.Range(min=100, max=20000)),
     }
     for key in (CONF_PV_POWER_ENTITY_ID, CONF_EXPORT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID):
         selector_key = vol.Optional(key, default=values[key]) if values.get(key) else vol.Optional(key)

@@ -21,6 +21,7 @@ class PilotAction:
     target_temperature_c: float | None
     reason_code: str
     reason_text: str
+    planned_target_temperature_c: float | None = None
 
 
 class LivingRoomPilot:
@@ -326,24 +327,24 @@ class LivingRoomPilot:
             self._settled_since = None
             if self._pv_missing_since is None:
                 self._pv_missing_since = now
-            # Reduce compressor demand gradually instead of jumping straight
-            # to the upper target.  A small remaining export slows the next
-            # step; a full deficit moves it every five minutes.  If PV
-            # returns, the normal PV path below takes control again.
+            # A missing PV surplus must be visible at the device immediately.
+            # Raising the target to the configured gentle ceiling lets the
+            # inverter throttle and the indoor unit run out, without spending
+            # several five-minute steps at an unnecessarily cold target.
+            # If PV returns, the normal PV path below retakes control.
             current_target = self._active_target_temperature_c
             if current_target is None:
                 current_target = climate_target_temperature_c if climate_target_temperature_c is not None else min_target
-            step_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._pv_wind_down_step_interval_s(export_power_w, config.min_pv_surplus_w)
-            if current_target < max_target and step_due:
-                next_target = min(max_target, current_target + 1.0)
-                return PilotAction("adjust", next_target, "pv_wind_down", f"PV-Überschuss sinkt; Solltemperatur wird schrittweise auf {next_target:.0f} °C angehoben.")
+            if current_target < max_target:
+                return PilotAction("adjust", max_target, "pv_wind_down", f"PV-Überschuss fehlt; Solltemperatur wird sofort auf {max_target:.0f} °C angehoben. Das Innengerät darf sparsam auslaufen.", max_target)
             if now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
                 return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; der sparsame Auslauf ist beendet.")
             return PilotAction(
                 "none",
                 None,
                 "pv_wind_down_waiting",
-                f"PV-Überschuss fehlt; {self._display_name} regelt schrittweise aus und wird nach dem Auslauffenster ohne PV abgeschaltet.",
+                f"PV-Überschuss fehlt; {self._display_name} läuft bei {max_target:.0f} °C sparsam aus und wird nach dem Auslauffenster ohne PV abgeschaltet.",
+                max_target,
             )
         else:
             self._pv_missing_since = None
@@ -373,7 +374,7 @@ class LivingRoomPilot:
 
         if self._sunset_takeover_active:
             return PilotAction("none", None, "sunset_pv_control_active", "PV-Abendregelung ist aktiv; die Kühlung wird bis zum geordneten Auslauf geführt.")
-        return PilotAction("none", None, "pilot_cooling_active", f"{self._display_name} wird mit PV ruhig und langlaufend moduliert.")
+        return PilotAction("none", None, "pilot_cooling_active", f"{self._display_name} wird mit PV bei {desired_target:.0f} °C ruhig und langlaufend moduliert.", desired_target)
 
     def _adopt_external_cooling(self, now: float, snapshot: tuple[str | None, float | None, str | None, str | None]) -> None:
         """Treat an explicitly handed-over cooling run as pilot-owned from now on."""

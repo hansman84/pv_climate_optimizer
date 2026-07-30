@@ -1117,13 +1117,12 @@ def test_living_room_pilot_relaxes_before_stopping_when_export_reaches_zero() ->
 
     clock.now = 2400
     wind_down = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert (wind_down.action, wind_down.target_temperature_c, wind_down.reason_code) == ("adjust", 24.0, "pv_wind_down")
+    assert (wind_down.action, wind_down.target_temperature_c, wind_down.reason_code) == ("adjust", 25.0, "pv_wind_down")
     living_pilot.mark_sent(wind_down)
 
     clock.now += living_pilot._PV_WIND_DOWN_FAST_STEP_S
     final_relief = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert (final_relief.action, final_relief.target_temperature_c, final_relief.reason_code) == ("adjust", 25.0, "pv_wind_down")
-    living_pilot.mark_sent(final_relief)
+    assert (final_relief.action, final_relief.planned_target_temperature_c, final_relief.reason_code) == ("none", 25.0, "pv_wind_down_waiting")
 
     clock.now = 2400 + living_pilot._PV_WIND_DOWN_S
     stopping = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
@@ -1153,7 +1152,7 @@ def test_every_productive_room_pilot_relaxes_to_its_own_upper_target_before_stop
             runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0,
         )
 
-        assert (wind_down.action, wind_down.target_temperature_c, wind_down.reason_code) == ("adjust", 24.0, "pv_wind_down")
+        assert (wind_down.action, wind_down.target_temperature_c, wind_down.reason_code) == ("adjust", 26.0, "pv_wind_down")
 
 
 def test_wind_down_ramps_slower_when_some_pv_remains() -> None:
@@ -1170,7 +1169,7 @@ def test_wind_down_ramps_slower_when_some_pv_remains() -> None:
 
     clock.now = 10 * 60
     first = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=500)
-    assert (first.action, first.target_temperature_c) == ("adjust", 24.0)
+    assert (first.action, first.target_temperature_c) == ("adjust", 25.0)
     living_pilot.mark_sent(first)
 
     clock.now += living_pilot._PV_WIND_DOWN_FAST_STEP_S
@@ -1179,7 +1178,7 @@ def test_wind_down_ramps_slower_when_some_pv_remains() -> None:
 
     clock.now += living_pilot._PV_WIND_DOWN_FAST_STEP_S
     second = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=500)
-    assert (second.action, second.target_temperature_c) == ("adjust", 25.0)
+    assert (second.action, second.planned_target_temperature_c) == ("none", 25.0)
 
 
 def test_pilot_uses_per_room_gui_target_limits() -> None:
@@ -1237,7 +1236,7 @@ def test_living_room_pilot_reclaims_manual_cooling_at_pv_evening_deadline() -> N
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1, export_power_w=0,
         climate_target_temperature_c=22.0, pv_deadline_active=True,
     )
-    assert (at_deadline.action, at_deadline.target_temperature_c, at_deadline.reason_code) == ("adjust", 23.0, "pv_wind_down")
+    assert (at_deadline.action, at_deadline.target_temperature_c, at_deadline.reason_code) == ("adjust", 25.0, "pv_wind_down")
 
 
 def test_controller_passes_the_evening_deadline_to_the_living_room_pilot() -> None:
@@ -1258,7 +1257,7 @@ def test_controller_passes_the_evening_deadline_to_the_living_room_pilot() -> No
         pv_deadline_active=True,
     )
 
-    assert (action.action, action.target_temperature_c, action.reason_code) == ("adjust", 23.0, "pv_wind_down")
+    assert (action.action, action.target_temperature_c, action.reason_code) == ("adjust", 25.0, "pv_wind_down")
 
 
 def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
