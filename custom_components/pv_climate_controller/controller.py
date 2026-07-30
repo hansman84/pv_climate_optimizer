@@ -154,6 +154,11 @@ class PVClimateController:
         living_room_profile = next((item for item in zones if item.name.strip().casefold() == "wohnzimmer"), None)
         if living_room_profile is not None:
             zone = living_room_profile
+        configured_minimum_surplus_w = float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 400.0)))
+        # Older builds allowed 0 W, which turns an idle meter into a permanent
+        # PV approval. Treat that legacy value as invalid configuration rather
+        # than silently downgrading the safe default to 100 W after restart.
+        minimum_surplus_w = 400.0 if configured_minimum_surplus_w < 100.0 else configured_minimum_surplus_w
         config = ControllerConfig(
             shadow_mode=shadow_mode,
             energy_policy=policy,
@@ -167,7 +172,7 @@ class PVClimateController:
             export_power_positive=bool(options.get(CONF_EXPORT_POWER_POSITIVE, data.get(CONF_EXPORT_POWER_POSITIVE, True))),
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
             outdoor_unit_power_entity_id=_optional_entity(options, data, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID),
-            min_pv_surplus_w=max(100.0, float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 400.0)))),
+            min_pv_surplus_w=minimum_surplus_w,
             no_pv_hold_max_power_w=max(0.0, float(options.get(CONF_NO_PV_HOLD_MAX_POWER_W, data.get(CONF_NO_PV_HOLD_MAX_POWER_W, 350.0)))),
             house_zones=zones,
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),

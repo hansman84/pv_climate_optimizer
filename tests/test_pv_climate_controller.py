@@ -45,6 +45,15 @@ def test_clearing_optional_ems_source_overrides_legacy_config_data() -> None:
     assert updated["ems_granted_stages_entity_id"] is None
 
 
+def test_legacy_zero_pv_minimum_restores_safe_default_after_restart() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": False, "min_pv_surplus_w": 0},
+        {},
+    )
+
+    assert runtime.config.min_pv_surplus_w == 400.0
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"
