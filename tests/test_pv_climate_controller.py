@@ -1129,6 +1129,32 @@ def test_living_room_pilot_relaxes_before_stopping_when_export_reaches_zero() ->
     assert (stopping.action, stopping.reason_code) == ("stop", "pv_surplus_ended")
 
 
+def test_low_power_hold_keeps_a_relaxed_room_running_without_pv() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=400,
+        no_pv_hold_max_power_w=350,
+    )
+    living_pilot = pilot.LivingRoomPilot(clock)
+    living_pilot.mark_sent(pilot.PilotAction("start", 25.0, "test", "test"))
+    clock.now = living_pilot._PV_WIND_DOWN_S + 60
+
+    action = living_pilot.decide(
+        runtime,
+        temperature_c=25.0,
+        climate_mode="cool",
+        granted_stages=1,
+        export_power_w=0,
+        outdoor_unit_power_w=280,
+    )
+
+    assert (action.action, action.reason_code, action.planned_target_temperature_c) == ("none", "low_power_hold", 25.0)
+
+
 def test_every_productive_room_pilot_relaxes_to_its_own_upper_target_before_stopping() -> None:
     """The shared wind-down must cover office, pantry, and sleeping rooms too."""
     for zone_name in ("Spielzimmer", "Speis", "Schlafzimmer", "Kinderzimmer"):

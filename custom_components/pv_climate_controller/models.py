@@ -113,6 +113,7 @@ class ControllerConfig:
     pv_forecast_power_entity_id: str | None = None
     outdoor_unit_power_entity_id: str | None = None
     min_pv_surplus_w: float = 1000.0
+    no_pv_hold_max_power_w: float = 350.0
     house_zones: tuple[ZoneConfig, ...] = ()
     outdoor_temperature_entity_id: str | None = None
     solar_irradiance_entity_id: str | None = None

@@ -169,6 +169,7 @@ class LivingRoomPilot:
         climate_mode: str | None,
         granted_stages: int,
         export_power_w: float | None,
+        outdoor_unit_power_w: float | None = None,
         thermal_profile: ThermalProfile | None = None,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
@@ -337,6 +338,14 @@ class LivingRoomPilot:
                 current_target = climate_target_temperature_c if climate_target_temperature_c is not None else min_target
             if current_target < max_target:
                 return PilotAction("adjust", max_target, "pv_wind_down", f"PV-Überschuss fehlt; Solltemperatur wird sofort auf {max_target:.0f} °C angehoben. Das Innengerät darf sparsam auslaufen.", max_target)
+            if outdoor_unit_power_w is not None and outdoor_unit_power_w <= config.no_pv_hold_max_power_w:
+                return PilotAction(
+                    "none",
+                    None,
+                    "low_power_hold",
+                    f"PV-Überschuss fehlt, aber die Außeneinheit benötigt nur {outdoor_unit_power_w:.0f} W (Grenze {config.no_pv_hold_max_power_w:.0f} W); {self._display_name} hält bei {max_target:.0f} °C bewusst weiter.",
+                    max_target,
+                )
             if now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
                 return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; der sparsame Auslauf ist beendet.")
             return PilotAction(

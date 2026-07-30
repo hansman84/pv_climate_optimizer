@@ -117,6 +117,8 @@ class PilotActionSensor(ControllerEntity, SensorEntity):
             "planned_target_temperature_c": action.planned_target_temperature_c,
             "export_power_w": export_power_w,
             "minimum_surplus_w": minimum_surplus_w,
+            "outdoor_unit_power_w": self.controller.last_energy.outdoor_unit_power_w,
+            "no_pv_hold_max_power_w": self.controller.config.no_pv_hold_max_power_w,
             "pv_surplus_available": export_power_w is not None and export_power_w >= minimum_surplus_w,
             "comfort_temperature_c": None if zone is None else zone.comfort_temperature,
             "hard_temperature_limit_c": None if zone is None else zone.hard_max_temperature,

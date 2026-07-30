@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -168,6 +168,7 @@ class PVClimateController:
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
             outdoor_unit_power_entity_id=_optional_entity(options, data, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID),
             min_pv_surplus_w=max(100.0, float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 400.0)))),
+            no_pv_hold_max_power_w=max(0.0, float(options.get(CONF_NO_PV_HOLD_MAX_POWER_W, data.get(CONF_NO_PV_HOLD_MAX_POWER_W, 350.0)))),
             house_zones=zones,
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
@@ -653,6 +654,7 @@ class PVClimateController:
             climate_mode=climate_mode,
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
+            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             thermal_profile=self.last_thermal_profiles.get(zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -694,6 +696,7 @@ class PVClimateController:
             climate_mode=climate_mode,
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
+            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -739,6 +742,7 @@ class PVClimateController:
             climate_mode=climate_mode,
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
+            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -784,6 +788,7 @@ class PVClimateController:
             climate_mode=climate_mode,
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
+            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             thermal_profile=self.last_thermal_profiles.get(speis_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -830,6 +835,10 @@ class PVClimateController:
     def set_min_pv_surplus_w(self, watts: float) -> None:
         """Update the diagnostic PV threshold without enabling control."""
         self.config = replace(self.config, min_pv_surplus_w=max(100.0, watts))
+
+    def set_no_pv_hold_max_power_w(self, watts: float) -> None:
+        """Set the measured-power ceiling for a deliberate no-PV hold."""
+        self.config = replace(self.config, no_pv_hold_max_power_w=max(0.0, watts))
 
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:
         """Set only the display normalization convention for the selected source."""

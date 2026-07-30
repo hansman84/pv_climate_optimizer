@@ -8,7 +8,7 @@ from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_TARGET_TEMPERATURE, CONF_COMFORT_TEMPERATURE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, DOMAIN
+from .const import CONF_BEDROOM_TARGET_TEMPERATURE, CONF_COMFORT_TEMPERATURE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, DOMAIN
 from .entity import ControllerEntity
 from .controller import serialize_zone_config
 
@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ComfortTemperatureNumber(controller, entry.entry_id, "comfort_temperature"),
         HardMaxTemperatureNumber(controller, entry.entry_id, "hard_max_temperature"),
         MinPVSurplusNumber(controller, entry.entry_id, "min_pv_surplus"),
+        NoPVHoldMaxPowerNumber(controller, entry.entry_id, "no_pv_hold_max_power"),
         BedroomTargetTemperatureNumber(controller, entry.entry_id, "bedroom_target_temperature"),
     ])
     zone_numbers = []
@@ -89,6 +90,27 @@ class MinPVSurplusNumber(ControllerEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_min_pv_surplus_w(value)
         await self.async_persist_option(CONF_MIN_PV_SURPLUS_W, value)
+        self.controller.notify_state_listeners()
+
+
+class NoPVHoldMaxPowerNumber(ControllerEntity, NumberEntity):
+    """Maximum shared outdoor-unit power for a deliberate no-PV hold."""
+
+    _attr_name = "Auslauf-Leistungsgrenze ohne PV"
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 3000.0
+    _attr_native_step = 50.0
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = NumberDeviceClass.POWER
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def native_value(self) -> float:
+        return self.controller.config.no_pv_hold_max_power_w
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_no_pv_hold_max_power_w(value)
+        await self.async_persist_option(CONF_NO_PV_HOLD_MAX_POWER_W, value)
         self.controller.notify_state_listeners()
 
 
