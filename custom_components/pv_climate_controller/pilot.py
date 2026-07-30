@@ -352,7 +352,7 @@ class LivingRoomPilot:
                 "none",
                 None,
                 "pv_wind_down_waiting",
-                f"PV-Überschuss fehlt; {self._display_name} läuft bei {max_target:.0f} °C sparsam aus und wird nach dem Auslauffenster ohne PV abgeschaltet.",
+                f"PV-Überschuss fehlt; {self._display_name} läuft bei {max_target:.0f} °C sparsam aus und wird nach dem Auslauf-Fenster ohne PV abgeschaltet.",
                 max_target,
             )
         else:
