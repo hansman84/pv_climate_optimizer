@@ -32,10 +32,12 @@ class LivingRoomPilot:
     _DEEP_PRECOOL_AFTER_S = 30 * 60
     _TARGET_CHANGE_INTERVAL_S = 15 * 60
     _COMMAND_ACK_GRACE_S = 2 * 60
-    # Evaluations normally run every five minutes. Keep this deliberately
-    # shorter so the *next* scheduled pass reaches the stop decision instead
-    # of spending a second full interval in a stale wind-down state.
-    _PV_WIND_DOWN_S = 60
+    # Let an already-running inverter settle at its relaxed target before
+    # stopping after PV disappears.  This retains the cool room with only low
+    # compressor demand, but does not turn a PV run into indefinite grid use.
+    _PV_WIND_DOWN_S = 30 * 60
+    _PV_WIND_DOWN_FAST_STEP_S = 5 * 60
+    _PV_WIND_DOWN_SLOW_STEP_S = 15 * 60
     _MIN_OFF_TIME_S = 30 * 60
     _SETTLE_STOP_DELAY_S = 10 * 60
     _OVERSHOOT_MARGIN_C = 0.4
@@ -322,23 +324,26 @@ class LivingRoomPilot:
 
         if not pv_available and not hard_limit:
             self._settled_since = None
-            # A true zero export is not a "gentle" PV decline.  Continuing
-            # then only buys grid power, especially after the afternoon
-            # production cliff.  Stop immediately instead of waiting for a
-            # second polling cycle.
-            if export_power_w is not None and export_power_w <= 0:
-                return PilotAction("stop", None, "pv_export_zero", "PV-Überschuss ist auf 0 W gefallen; das Klimagerät wird sofort ausgeschaltet.")
             if self._pv_missing_since is None:
                 self._pv_missing_since = now
-            if self._active_target_temperature_c != hold_target:
-                return PilotAction("adjust", hold_target, "pv_wind_down", f"PV-Überschuss endet; Solltemperatur wird sanft auf {hold_target:.0f} °C angehoben.")
+            # Reduce compressor demand gradually instead of jumping straight
+            # to the upper target.  A small remaining export slows the next
+            # step; a full deficit moves it every five minutes.  If PV
+            # returns, the normal PV path below takes control again.
+            current_target = self._active_target_temperature_c
+            if current_target is None:
+                current_target = climate_target_temperature_c if climate_target_temperature_c is not None else min_target
+            step_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._pv_wind_down_step_interval_s(export_power_w, config.min_pv_surplus_w)
+            if current_target < max_target and step_due:
+                next_target = min(max_target, current_target + 1.0)
+                return PilotAction("adjust", next_target, "pv_wind_down", f"PV-Überschuss sinkt; Solltemperatur wird schrittweise auf {next_target:.0f} °C angehoben.")
             if now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
-                return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; sanfter Auslauf ist beendet.")
+                return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; der sparsame Auslauf ist beendet.")
             return PilotAction(
                 "none",
                 None,
                 "pv_wind_down_waiting",
-                f"PV-Überschuss fehlt; {self._display_name} läuft bei {hold_target:.0f} °C geordnet aus und wird beim nächsten stabilen Prüfpunkt ohne PV abgeschaltet.",
+                f"PV-Überschuss fehlt; {self._display_name} regelt schrittweise aus und wird nach dem Auslauffenster ohne PV abgeschaltet.",
             )
         else:
             self._pv_missing_since = None
@@ -432,6 +437,15 @@ class LivingRoomPilot:
             return False
         trends = (profile.passive_sun_trend_c_per_h, profile.passive_shaded_trend_c_per_h)
         return any(trend is not None and trend >= 0.3 for trend in trends)
+
+    def _pv_wind_down_step_interval_s(self, export_power_w: float | None, required_surplus_w: float) -> float:
+        """Return a slower target-ramp interval when some PV is still available."""
+        if export_power_w is None or required_surplus_w <= 0:
+            return self._PV_WIND_DOWN_FAST_STEP_S
+        retained_ratio = max(0.0, min(1.0, export_power_w / required_surplus_w))
+        return self._PV_WIND_DOWN_FAST_STEP_S + (
+            self._PV_WIND_DOWN_SLOW_STEP_S - self._PV_WIND_DOWN_FAST_STEP_S
+        ) * retained_ratio
 
 
 def living_room_pilot_eligible(config: ControllerConfig, granted_stages: int, expected_zone_name: str = "Wohnzimmer") -> tuple[bool, str]:
