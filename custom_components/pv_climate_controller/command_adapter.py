@@ -18,6 +18,7 @@ class Command:
     entity_id: str
     action: str
     value: str | float | None = None
+    urgent: bool = False
 
     @property
     def signature(self) -> tuple[str, str, str | float | None]:
@@ -133,7 +134,7 @@ class ClimateCommandAdapter:
             return CommandResult("noop", "Identischer bestätigter Befehl wird nicht wiederholt.")
         if self._last_global_at is not None and now - self._last_global_at < self._global_interval_s:
             return CommandResult("deferred", "Globales Befehlsintervall noch nicht erreicht.")
-        if now - self._last_entity_at.get(command.entity_id, float("-inf")) < self._per_entity_interval_s:
+        if not command.urgent and now - self._last_entity_at.get(command.entity_id, float("-inf")) < self._per_entity_interval_s:
             return CommandResult("deferred", "Gerätebezogenes Befehlsintervall noch nicht erreicht.")
 
         for attempt in (1, 2):

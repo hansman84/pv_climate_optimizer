@@ -170,6 +170,8 @@ class LivingRoomPilot:
         granted_stages: int,
         export_power_w: float | None,
         outdoor_unit_power_w: float | None = None,
+        heat_pump_priority_active: bool = False,
+        heat_pump_power_w: float | None = None,
         thermal_profile: ThermalProfile | None = None,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
@@ -257,6 +259,15 @@ class LivingRoomPilot:
         if climate_mode != "cool":
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
+
+        # The Loxone energy manager has granted the heat pump.  Grid export is
+        # already net of that measured load, so never subtract it a second
+        # time.  A missing net reserve triggers an immediate, one-way relief.
+        if heat_pump_priority_active and not pv_available and not hard_limit:
+            current_target = self._active_target_temperature_c if self._active_target_temperature_c is not None else climate_target_temperature_c
+            if current_target is None or current_target < max_target:
+                power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
+                return PilotAction("adjust", max_target, "heat_pump_priority_relief", f"Wärmepumpen-Priorität aktiv ({power_text}); Solltemperatur wird sofort auf {max_target:.0f} °C angehoben.", max_target)
 
         # A high setpoint is not a guarantee that the indoor unit has stopped
         # removing heat.  Small rooms can continue cooling well below their

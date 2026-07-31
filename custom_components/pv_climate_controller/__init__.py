@@ -73,6 +73,8 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.export_power_entity_id,
             config.pv_forecast_power_entity_id,
             config.outdoor_unit_power_entity_id,
+            config.heat_pump_priority_entity_id,
+            config.heat_pump_power_entity_id,
             config.outdoor_temperature_entity_id,
             config.solar_irradiance_entity_id,
             config.sun_entity_id,
@@ -127,6 +129,8 @@ async def _async_refresh_controller(
     export_power = None if config.export_power_entity_id is None else hass.states.get(config.export_power_entity_id)
     forecast = None if config.pv_forecast_power_entity_id is None else hass.states.get(config.pv_forecast_power_entity_id)
     outdoor_power = None if config.outdoor_unit_power_entity_id is None else hass.states.get(config.outdoor_unit_power_entity_id)
+    heat_pump_power = None if config.heat_pump_power_entity_id is None else hass.states.get(config.heat_pump_power_entity_id)
+    heat_pump_priority = None if config.heat_pump_priority_entity_id is None else hass.states.get(config.heat_pump_priority_entity_id)
     controller.evaluate_from_states(
         temperature_state=None if temperature is None else temperature.state,
         climate_state=None if climate is None else climate.state,
@@ -140,6 +144,9 @@ async def _async_refresh_controller(
         pv_forecast_power_unit=None if forecast is None else forecast.attributes.get("unit_of_measurement"),
         outdoor_unit_power_state=None if outdoor_power is None else outdoor_power.state,
         outdoor_unit_power_unit=None if outdoor_power is None else outdoor_power.attributes.get("unit_of_measurement"),
+        heat_pump_power_state=None if heat_pump_power is None else heat_pump_power.state,
+        heat_pump_power_unit=None if heat_pump_power is None else heat_pump_power.attributes.get("unit_of_measurement"),
+        heat_pump_priority_state=None if heat_pump_priority is None else heat_pump_priority.state,
     )
     outside_state = None if config.outdoor_temperature_entity_id is None else hass.states.get(config.outdoor_temperature_entity_id)
     irradiance_state = None if config.solar_irradiance_entity_id is None else hass.states.get(config.solar_irradiance_entity_id)

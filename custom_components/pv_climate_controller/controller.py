@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -122,6 +122,7 @@ class PVClimateController:
     last_office_pilot_action: PilotAction | None = None
     last_speis_pilot_action: PilotAction | None = None
     last_bedroom_pilot_actions: dict[str, PilotAction] = field(default_factory=dict)
+    heat_pump_priority_active: bool = False
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -172,6 +173,8 @@ class PVClimateController:
             export_power_positive=bool(options.get(CONF_EXPORT_POWER_POSITIVE, data.get(CONF_EXPORT_POWER_POSITIVE, True))),
             pv_forecast_power_entity_id=_optional_entity(options, data, CONF_PV_FORECAST_POWER_ENTITY_ID),
             outdoor_unit_power_entity_id=_optional_entity(options, data, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID),
+            heat_pump_priority_entity_id=_optional_entity(options, data, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID),
+            heat_pump_power_entity_id=_optional_entity(options, data, CONF_HEAT_PUMP_POWER_ENTITY_ID),
             min_pv_surplus_w=minimum_surplus_w,
             no_pv_hold_max_power_w=max(0.0, float(options.get(CONF_NO_PV_HOLD_MAX_POWER_W, data.get(CONF_NO_PV_HOLD_MAX_POWER_W, 350.0)))),
             house_zones=zones,
@@ -452,6 +455,9 @@ class PVClimateController:
         pv_forecast_power_unit: object = None,
         outdoor_unit_power_state: object = None,
         outdoor_unit_power_unit: object = None,
+        heat_pump_power_state: object = None,
+        heat_pump_power_unit: object = None,
+        heat_pump_priority_state: object = None,
     ) -> EnergySnapshot:
         """Read configured PV values only; this does not affect a climate device."""
         pv_power = self._power_w(pv_power_state, pv_power_unit) if self.config.pv_power_entity_id else None
@@ -460,7 +466,8 @@ class PVClimateController:
             export_power *= -1
         forecast = self._power_w(pv_forecast_power_state, pv_forecast_power_unit) if self.config.pv_forecast_power_entity_id else None
         outdoor_power = self._power_w(outdoor_unit_power_state, outdoor_unit_power_unit) if self.config.outdoor_unit_power_entity_id else None
-        self.last_energy = EnergySnapshot(pv_power, export_power, forecast, outdoor_power)
+        heat_pump_power = self._power_w(heat_pump_power_state, heat_pump_power_unit) if self.config.heat_pump_power_entity_id else None
+        self.last_energy = EnergySnapshot(pv_power, export_power, forecast, outdoor_power, heat_pump_power)
         return self.last_energy
 
     def evaluate_from_states(
@@ -478,6 +485,9 @@ class PVClimateController:
         pv_forecast_power_unit: object = None,
         outdoor_unit_power_state: object = None,
         outdoor_unit_power_unit: object = None,
+        heat_pump_power_state: object = None,
+        heat_pump_power_unit: object = None,
+        heat_pump_priority_state: object = None,
     ) -> ZoneDecision | None:
         """Evaluate raw HA state values without importing or writing to HA."""
         try:
@@ -501,7 +511,10 @@ class PVClimateController:
             pv_forecast_power_unit=pv_forecast_power_unit,
             outdoor_unit_power_state=outdoor_unit_power_state,
             outdoor_unit_power_unit=outdoor_unit_power_unit,
+            heat_pump_power_state=heat_pump_power_state,
+            heat_pump_power_unit=heat_pump_power_unit,
         )
+        self.heat_pump_priority_active = bool(self.config.heat_pump_priority_entity_id and str(heat_pump_priority_state).lower() in {"on", "true", "1"})
         return decision
 
     def add_state_listener(self, listener: Callable[[], None]) -> None:
@@ -660,6 +673,8 @@ class PVClimateController:
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
+            heat_pump_priority_active=self.heat_pump_priority_active,
+            heat_pump_power_w=self.last_energy.heat_pump_power_w,
             thermal_profile=self.last_thermal_profiles.get(zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -702,6 +717,8 @@ class PVClimateController:
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
+            heat_pump_priority_active=self.heat_pump_priority_active,
+            heat_pump_power_w=self.last_energy.heat_pump_power_w,
             thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -748,6 +765,8 @@ class PVClimateController:
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
+            heat_pump_priority_active=self.heat_pump_priority_active,
+            heat_pump_power_w=self.last_energy.heat_pump_power_w,
             thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -794,6 +813,8 @@ class PVClimateController:
             granted_stages=grant,
             export_power_w=self.last_energy.export_power_w,
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
+            heat_pump_priority_active=self.heat_pump_priority_active,
+            heat_pump_power_w=self.last_energy.heat_pump_power_w,
             thermal_profile=self.last_thermal_profiles.get(speis_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -813,7 +834,7 @@ class PVClimateController:
         active_pilot = room_pilot or self.pilot
         if action.action not in {"start", "adjust", "stop"} or target_zone is None:
             return CommandResult("noop", action.reason_text)
-        command = Command(target_zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c)
+        command = Command(target_zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c, urgent=action.reason_code == "heat_pump_priority_relief")
         if action.reason_code == "pilot_target_drift":
             # This path is reached only after the pilot compared the desired
             # target with the reported device target beyond its ack grace.
