@@ -834,7 +834,17 @@ class PVClimateController:
         active_pilot = room_pilot or self.pilot
         if action.action not in {"start", "adjust", "stop"} or target_zone is None:
             return CommandResult("noop", action.reason_text)
-        command = Command(target_zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c, urgent=action.reason_code == "heat_pump_priority_relief")
+        # A disappearing reserve must be able to release the compressor right
+        # away.  Do not let the calm five-minute per-device cadence keep a
+        # stale low target in place; the global guard still limits this to one
+        # command per 30 seconds across all rooms.
+        urgent_reasons = {"heat_pump_priority_relief", "pv_wind_down"}
+        command = Command(
+            target_zone.climate_entity_id,
+            f"pilot_{action.action}",
+            action.target_temperature_c,
+            urgent=action.reason_code in urgent_reasons,
+        )
         if action.reason_code == "pilot_target_drift":
             # This path is reached only after the pilot compared the desired
             # target with the reported device target beyond its ack grace.

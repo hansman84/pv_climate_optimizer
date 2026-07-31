@@ -243,6 +243,27 @@ def test_deduplicates_confirmed_command_and_enforces_global_rate_limit() -> None
     assert len(calls) == 1
 
 
+def test_urgent_command_bypasses_only_the_per_device_interval() -> None:
+    clock = Clock()
+    calls = []
+
+    async def fake_executor(command):
+        calls.append(command)
+        return True
+
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock,
+        global_interval_s=0, per_entity_interval_s=300,
+    )
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.confirmed", "pilot_adjust", 21.0), fake_executor,
+    )).status == "sent"
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.confirmed", "pilot_adjust", 25.0, urgent=True), fake_executor,
+    )).status == "sent"
+    assert len(calls) == 2
+
+
 def test_confirmed_command_can_be_resent_after_a_verified_device_drift() -> None:
     clock = Clock()
     calls = []
