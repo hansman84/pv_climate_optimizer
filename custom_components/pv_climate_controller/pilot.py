@@ -260,14 +260,19 @@ class LivingRoomPilot:
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
 
-        # The Loxone energy manager has granted the heat pump.  Grid export is
+        # The Loxone energy manager has granted the heat pump. Grid export is
         # already net of that measured load, so never subtract it a second
-        # time.  A missing net reserve triggers an immediate, one-way relief.
-        if heat_pump_priority_active and not pv_available and not hard_limit:
+        # time. While the compressor is running, however, a bare 100 W export
+        # is not enough reserve: require its currently measured draw on top of
+        # the configured minimum before allowing normal climate modulation.
+        priority_reserve_w = required_surplus_w + max(0.0, outdoor_unit_power_w or 0.0)
+        priority_reserve_available = export_power_w is not None and export_power_w >= priority_reserve_w
+        if heat_pump_priority_active and not priority_reserve_available and not hard_limit:
             current_target = self._active_target_temperature_c if self._active_target_temperature_c is not None else climate_target_temperature_c
+            power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
             if current_target is None or current_target < max_target:
-                power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
                 return PilotAction("adjust", max_target, "heat_pump_priority_relief", f"Wärmepumpen-Priorität aktiv ({power_text}); Solltemperatur wird sofort auf {max_target:.0f} °C angehoben.", max_target)
+            return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {priority_reserve_w:.0f} W Leistungsreserve werden für die Klimamodulation benötigt.", max_target)
 
         # A high setpoint is not a guarantee that the indoor unit has stopped
         # removing heat.  Small rooms can continue cooling well below their
