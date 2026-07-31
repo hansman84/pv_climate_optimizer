@@ -265,7 +265,7 @@ class LivingRoomPilot:
         # time. While the compressor is running, however, a bare 100 W export
         # is not enough reserve: require its currently measured draw on top of
         # the configured minimum before allowing normal climate modulation.
-        priority_reserve_w = required_surplus_w + max(0.0, outdoor_unit_power_w or 0.0)
+        priority_reserve_w = config.min_pv_surplus_w + max(0.0, outdoor_unit_power_w or 0.0)
         priority_reserve_available = export_power_w is not None and export_power_w >= priority_reserve_w
         if heat_pump_priority_active and not priority_reserve_available and not hard_limit:
             current_target = self._active_target_temperature_c if self._active_target_temperature_c is not None else climate_target_temperature_c
