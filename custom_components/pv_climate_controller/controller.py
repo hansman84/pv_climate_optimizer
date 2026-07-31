@@ -814,6 +814,12 @@ class PVClimateController:
         if action.action not in {"start", "adjust", "stop"} or target_zone is None:
             return CommandResult("noop", action.reason_text)
         command = Command(target_zone.climate_entity_id, f"pilot_{action.action}", action.target_temperature_c)
+        if action.reason_code == "pilot_target_drift":
+            # This path is reached only after the pilot compared the desired
+            # target with the reported device target beyond its ack grace.
+            # Let every room re-send that exact command through the normal
+            # rate-limited boundary instead of treating an old send as proof.
+            self.command_adapter.invalidate_confirmed_signature(command)
         result = await self.command_adapter.async_request(command, executor)
         if result.status == "sent":
             active_pilot.mark_sent(action)

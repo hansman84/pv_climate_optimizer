@@ -85,6 +85,19 @@ class ClimateCommandAdapter:
         self._manual_override_until[command.entity_id] = now + override_duration_s
         return True
 
+    def invalidate_confirmed_signature(self, command: Command) -> None:
+        """Allow a re-send when the device has demonstrably drifted from it.
+
+        A remembered command is not proof that a cloud-controlled climate unit
+        still has that value.  Callers may clear only the exact signature after
+        comparing the reported device state with the intended setpoint.
+        """
+        if self._last_signature.get(command.entity_id) == command.signature:
+            self._last_signature.pop(command.entity_id, None)
+        pending = self._pending.get(command.entity_id)
+        if pending is not None and pending[0] == command.signature:
+            self._pending.pop(command.entity_id, None)
+
     def export_state(self) -> dict[str, Any]:
         """Return a serializable, secret-free restart snapshot."""
         return {

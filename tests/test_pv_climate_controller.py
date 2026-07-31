@@ -243,6 +243,24 @@ def test_deduplicates_confirmed_command_and_enforces_global_rate_limit() -> None
     assert len(calls) == 1
 
 
+def test_confirmed_command_can_be_resent_after_a_verified_device_drift() -> None:
+    clock = Clock()
+    calls = []
+
+    async def fake_executor(command):
+        calls.append(command)
+        return True
+
+    command_adapter = adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True, clock=clock)
+    command = adapter.Command("climate.confirmed", "pilot_adjust", 23.0)
+    assert asyncio.run(command_adapter.async_request(command, fake_executor)).status == "sent"
+    clock.now = 300
+    command_adapter.invalidate_confirmed_signature(command)
+
+    assert asyncio.run(command_adapter.async_request(command, fake_executor)).status == "sent"
+    assert len(calls) == 2
+
+
 def test_retry_once_then_backoff() -> None:
     clock = Clock()
     calls = []
@@ -1138,6 +1156,37 @@ def test_living_room_pilot_relaxes_before_stopping_when_export_reaches_zero() ->
     assert (stopping.action, stopping.reason_code) == ("stop", "pv_surplus_ended")
 
 
+def test_pilot_reasserts_cooling_target_after_confirmed_device_drift() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            pilot_min_target_temperature=23.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=400,
+    )
+    living_pilot = pilot.LivingRoomPilot(clock)
+    living_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+    clock.now = living_pilot._COMMAND_ACK_GRACE_S + 1
+
+    action = living_pilot.decide(
+        runtime,
+        temperature_c=24.7,
+        climate_mode="cool",
+        climate_target_temperature_c=25.0,
+        granted_stages=1,
+        export_power_w=800,
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "adjust", 23.0, "pilot_target_drift",
+    )
+
+
 def test_low_power_hold_keeps_a_relaxed_room_running_without_pv() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
@@ -1490,4 +1539,4 @@ def test_pilot_keeps_ownership_for_unattributed_climate_state_refresh() -> None:
     )
 
     assert living_pilot.owns_cooling
-    assert action.reason_code == "pilot_cooling_active"
+    assert action.reason_code == "pilot_target_drift"

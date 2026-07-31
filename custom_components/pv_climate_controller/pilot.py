@@ -357,6 +357,30 @@ class LivingRoomPilot:
             )
         else:
             self._pv_missing_since = None
+            # The desired target is only useful when it is also confirmed by
+            # the device.  ConnectLife can overwrite or report a different
+            # whole-degree target after an earlier command.  Do not wait for
+            # the calm 15-minute modulation interval in that case: after the
+            # acknowledgement grace period, re-assert the already planned
+            # target.  The command boundary still enforces its five-minute
+            # per-device safety interval.
+            target_drifted = (
+                self._active_target_temperature_c == desired_target
+                and
+                climate_target_temperature_c is not None
+                and abs(climate_target_temperature_c - desired_target) > 0.01
+            )
+            acknowledgement_complete = (
+                self._expected_snapshot_at is None
+                or now - self._expected_snapshot_at >= self._COMMAND_ACK_GRACE_S
+            )
+            if target_drifted and acknowledgement_complete:
+                return PilotAction(
+                    "adjust",
+                    desired_target,
+                    "pilot_target_drift",
+                    f"{self._display_name} meldet {climate_target_temperature_c:.0f} °C statt des geplanten Sollwerts {desired_target:.0f} °C; Pilot stellt den wirksamen Kühl-Sollwert wieder her.",
+                )
             if self._active_target_temperature_c != desired_target and target_change_due:
                 return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", "Stabiler PV-Überschuss erlaubt eine einzelne, ruhige Sollwertstufe.")
 
