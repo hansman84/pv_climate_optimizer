@@ -234,7 +234,10 @@ def _energy_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required(CONF_MIN_PV_SURPLUS_W, default=values.get(CONF_MIN_PV_SURPLUS_W, 400.0)): vol.All(vol.Coerce(float), vol.Range(min=100, max=20000)),
         vol.Required(CONF_NO_PV_HOLD_MAX_POWER_W, default=values.get(CONF_NO_PV_HOLD_MAX_POWER_W, 350.0)): vol.All(vol.Coerce(float), vol.Range(min=0, max=3000)),
     }
-    for key in (CONF_PV_POWER_ENTITY_ID, CONF_EXPORT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID):
+    for key in (CONF_PV_POWER_ENTITY_ID, CONF_EXPORT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_HEAT_PUMP_POWER_ENTITY_ID):
+        if key == CONF_HEAT_PUMP_POWER_ENTITY_ID:
+            schema[vol.Required(key, default=values.get(key, "sensor.warmepumpe_leistung"))] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+            continue
         selector_key = vol.Optional(key, default=values[key]) if values.get(key) else vol.Optional(key)
         schema[selector_key] = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
     return vol.Schema(schema)
@@ -251,7 +254,7 @@ def _safety_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
         vol.Required(CONF_USE_EMS_GRANT, default=bool(values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID))): bool,
         ems_key: EntitySelector(EntitySelectorConfig(domain=["sensor", "input_number"], multiple=False)),
-        vol.Optional(CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, default=values.get(CONF_HEAT_PUMP_PRIORITY_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain=["binary_sensor", "input_boolean", "switch"], multiple=False)),
+        vol.Required(CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, default=values.get(CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, "binary_sensor.warmepumpe_einschalten")): EntitySelector(EntitySelectorConfig(domain=["binary_sensor", "input_boolean", "switch"], multiple=False)),
     })
 
 
