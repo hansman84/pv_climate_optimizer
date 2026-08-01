@@ -44,6 +44,7 @@ class LivingRoomPilot:
     _OVERSHOOT_MARGIN_C = 0.4
     _RAPID_COOLING_C_PER_H = -0.35
     _OVERSHOOT_CONFIRMATION_S = 2 * 60
+    _PV_CAPACITY_TARGET_INTERVAL_S = 5 * 60
 
     def __init__(
         self,
@@ -130,6 +131,28 @@ class LivingRoomPilot:
             quiet_hold_target = min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c))))
             whole_degree_target = min(whole_degree_target, quiet_hold_target)
         return min(max_target_c, max(min_target_c, whole_degree_target))
+
+    @staticmethod
+    def _pv_capacity_target(
+        *,
+        export_power_w: float | None,
+        minimum_surplus_w: float,
+        outdoor_unit_power_w: float | None,
+        min_target_c: float,
+        max_target_c: float,
+    ) -> float | None:
+        """Map usable net export across the configured device target range."""
+        if export_power_w is None or export_power_w <= minimum_surplus_w:
+            return None
+        # The measured outdoor-unit draw is the best available scale for the
+        # additional compressor work a lower target can request.  Without it,
+        # do not invent an aggressive PV capacity target.
+        if outdoor_unit_power_w is None or outdoor_unit_power_w <= 0:
+            return None
+        usable_headroom_w = export_power_w - minimum_surplus_w
+        utilization = min(1.0, max(0.0, usable_headroom_w / outdoor_unit_power_w))
+        continuous_target = max_target_c - utilization * (max_target_c - min_target_c)
+        return min(max_target_c, max(min_target_c, float(floor(continuous_target + 0.5))))
 
     @staticmethod
     def _model_adjusted_target(
@@ -359,6 +382,13 @@ class LivingRoomPilot:
             min_target,
             max_target,
         )
+        pv_capacity_target = self._pv_capacity_target(
+            export_power_w=export_power_w,
+            minimum_surplus_w=config.min_pv_surplus_w,
+            outdoor_unit_power_w=outdoor_unit_power_w,
+            min_target_c=min_target,
+            max_target_c=max_target,
+        )
         strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
         needs_cooling = hard_limit or (pv_available and temperature_c > zone.comfort_temperature)
 
@@ -379,6 +409,8 @@ class LivingRoomPilot:
             if not hard_limit and self._last_stopped_at is not None and now - self._last_stopped_at < self._MIN_OFF_TIME_S:
                 return PilotAction("none", None, "pilot_resting", f"{self._display_name}-Pilot hält die Kompressor-Ruhezeit ein.")
             start_target = dynamic_room_target if living_room_band else cool_target
+            if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None:
+                start_target = min(start_target, pv_capacity_target)
             if hard_limit:
                 return PilotAction("start", start_target, "hard_temperature_limit", f"Harte Temperaturgrenze erreicht; Kühlung startet temperaturgeführt bei {start_target:.0f} °C.")
             if self._demand_since is None:
@@ -537,6 +569,19 @@ class LivingRoomPilot:
         if not living_room_band and strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
             desired_target = deep_precool_target
 
+        # While the room is still warm, use genuinely available net export to
+        # spread the target over the entire configured range.  This makes the
+        # inverter absorb surplus PV until the external room sensor reaches
+        # comfort, rather than treating PV as a simple on/off permission.
+        pv_capacity_active = False
+        if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None and pv_capacity_target < desired_target:
+            desired_target = pv_capacity_target
+            pv_capacity_active = True
+            target_change_due = target_change_due or (
+                self._last_target_change_at is None
+                or now - self._last_target_change_at >= self._PV_CAPACITY_TARGET_INTERVAL_S
+            )
+
         # Return from heat-pump relief just as smoothly as we entered it.  A
         # recovered reserve must not leave a warm room parked at the relaxed
         # maximum until the normal 15-minute modulation window expires.
@@ -655,6 +700,13 @@ class LivingRoomPilot:
                     f"{self._display_name} meldet {climate_target_temperature_c:.0f} °C statt des geplanten Sollwerts {desired_target:.0f} °C; Pilot stellt den wirksamen Kühl-Sollwert wieder her.",
                 )
             if self._active_target_temperature_c != desired_target and target_change_due:
+                if pv_capacity_active:
+                    return PilotAction(
+                        "adjust",
+                        desired_target,
+                        "pv_capacity_preconditioning",
+                        f"PV-Reserve wird genutzt; {self._display_name} regelt für das Raumziel auf {desired_target:.0f} °C vor.",
+                    )
                 if model_factors:
                     self._pending_model_target_offset_c = proposed_model_offset
                     return PilotAction(

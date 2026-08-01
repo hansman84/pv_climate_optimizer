@@ -1318,6 +1318,68 @@ def test_heat_pump_priority_does_not_relax_a_warm_room_beyond_one_comfort_step()
     )
 
 
+def test_available_pv_uses_the_full_configured_target_range_until_room_is_comfortable() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.0,
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+    clock.now = room_pilot._PV_CAPACITY_TARGET_INTERVAL_S
+
+    action = room_pilot.decide(
+        runtime, temperature_c=24.8, climate_mode="cool", granted_stages=1,
+        export_power_w=2500, outdoor_unit_power_w=1200,
+        climate_target_temperature_c=23.0,
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "adjust", 20.0, "pv_capacity_preconditioning",
+    )
+
+
+def test_pv_capacity_target_is_also_used_when_starting_a_warm_room() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.0,
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.decide(
+        runtime, temperature_c=24.8, climate_mode="off", granted_stages=1,
+        export_power_w=2500, outdoor_unit_power_w=1200,
+    )
+    clock.now = 600
+
+    start = room_pilot.decide(
+        runtime, temperature_c=24.8, climate_mode="off", granted_stages=1,
+        export_power_w=2500, outdoor_unit_power_w=1200,
+    )
+
+    assert (start.action, start.target_temperature_c, start.reason_code) == (
+        "start", 20.0, "pv_preconditioning",
+    )
+
+
 def test_heat_pump_priority_step_applies_to_every_indoor_unit() -> None:
     for zone_name in ("Wohnzimmer", "Spielzimmer", "Speis", "Schlafzimmer", "Kinderzimmer"):
         runtime = models.ControllerConfig(
