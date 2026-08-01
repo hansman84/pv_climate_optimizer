@@ -1875,8 +1875,9 @@ def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     assert decision(mode="cool").reason_code == "manual_control_resumed"
 
     hard_limit = decision(temperature=25.5, export=0)
-    assert hard_limit.action == "start"
-    assert hard_limit.reason_code == "hard_temperature_limit"
+    assert (hard_limit.action, hard_limit.target_temperature_c, hard_limit.reason_code) == (
+        "start", 25.0, "hard_temperature_limit_failsafe",
+    )
 
     controlled = pilot.LivingRoomPilot(clock)
     assert controlled.decide(base, temperature_c=25.0, climate_mode="off", granted_stages=1, export_power_w=200).reason_code == "pilot_demand_stabilizing"
@@ -1887,6 +1888,44 @@ def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
     clock.now = 900
     assert controlled.decide(base, temperature_c=25.0, climate_mode="cool", granted_stages=1, export_power_w=400).reason_code == "pilot_cooling_active"
 
+
+def test_hard_limit_without_pv_holds_a_gentle_failsafe_target_until_comfort() -> None:
+    clock = Clock()
+    zone = models.ZoneConfig(
+        "living",
+        "Wohnzimmer",
+        "climate.living",
+        "sensor.living",
+        comfort_temperature=23.5,
+        hard_max_temperature=26.0,
+        pilot_min_target_temperature=20.0,
+        pilot_max_target_temperature=25.0,
+    )
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.PV_PREFERRED,
+        living_room_pilot_enabled=True,
+        zone=zone,
+        min_pv_surplus_w=400,
+    )
+    controlled = pilot.LivingRoomPilot(clock)
+
+    start = controlled.decide(
+        runtime, temperature_c=26.0, climate_mode="off", granted_stages=1, export_power_w=0,
+    )
+    # The device accepts only whole degrees: 23.5 + 1.0 therefore becomes 25.
+    assert (start.action, start.target_temperature_c, start.reason_code) == (
+        "start", 25.0, "hard_temperature_limit_failsafe",
+    )
+    controlled.mark_sent(start)
+
+    holding = controlled.decide(
+        runtime, temperature_c=25.8, climate_mode="cool", granted_stages=1,
+        export_power_w=0, climate_target_temperature_c=25.0,
+    )
+    assert (holding.action, holding.planned_target_temperature_c, holding.reason_code) == (
+        "none", 25.0, "hard_temperature_limit_failsafe_holding",
+    )
 
 def test_living_room_pilot_leaves_running_cooling_manual_without_takeover() -> None:
     runtime = models.ControllerConfig(

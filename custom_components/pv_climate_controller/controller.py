@@ -859,6 +859,7 @@ class PVClimateController:
             "heat_pump_priority_relief_step",
             "heat_pump_priority_recovery_step",
             "heat_pump_priority_comfort_guard",
+            "hard_temperature_limit_failsafe",
             "pv_wind_down",
         }
         command = Command(

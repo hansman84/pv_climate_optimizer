@@ -73,6 +73,7 @@ class LivingRoomPilot:
         self._last_target_change_at: float | None = None
         self._last_heat_pump_relief_at: float | None = None
         self._pv_capacity_active = False
+        self._hard_limit_failsafe_active = False
         self._model_target_offset_c = 0.0
         self._pending_model_target_offset_c: float | None = None
         self._expected_snapshot_at: float | None = None
@@ -100,6 +101,7 @@ class LivingRoomPilot:
         self._last_target_change_at = None
         self._last_heat_pump_relief_at = None
         self._pv_capacity_active = False
+        self._hard_limit_failsafe_active = False
         self._model_target_offset_c = 0.0
         self._pending_model_target_offset_c = None
         self._expected_snapshot_at = None
@@ -133,6 +135,21 @@ class LivingRoomPilot:
             quiet_hold_target = min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c))))
             whole_degree_target = min(whole_degree_target, quiet_hold_target)
         return min(max_target_c, max(min_target_c, whole_degree_target))
+
+    @staticmethod
+    def _hard_limit_failsafe_target(
+        comfort_temperature_c: float,
+        min_target_c: float,
+        max_target_c: float,
+    ) -> float:
+        """Return a gentle, device-valid target for cooling without PV.
+
+        The room limit is a thermal safety net, not permission to demand the
+        minimum inverter target from the grid.  Indoor units in this setup use
+        whole-degree targets, so round comfort + 1 °C upward rather than
+        silently sending an unsupported half-degree value.
+        """
+        return min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c + 1.0))))
 
     @staticmethod
     def _pv_capacity_target(
@@ -253,6 +270,7 @@ class LivingRoomPilot:
             "owns_cooling": self._owns_cooling,
             "manual_override_active": self._manual_override_active,
             "pv_capacity_active": self._pv_capacity_active,
+            "hard_limit_failsafe_active": self._hard_limit_failsafe_active,
             "model_target_offset_c": self._model_target_offset_c,
             "observed_snapshot": None if self._observed_snapshot is None else list(self._observed_snapshot),
         }
@@ -263,6 +281,7 @@ class LivingRoomPilot:
             return
         self._manual_override_active = state.get("manual_override_active") is True
         self._pv_capacity_active = state.get("pv_capacity_active") is True
+        self._hard_limit_failsafe_active = state.get("hard_limit_failsafe_active") is True
         offset = state.get("model_target_offset_c")
         if isinstance(offset, (int, float)):
             self._model_target_offset_c = min(5.0, max(-5.0, float(offset)))
@@ -291,6 +310,7 @@ class LivingRoomPilot:
             self._overcooling_since = None
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
             self._pv_capacity_active = action.reason_code == "pv_capacity_preconditioning"
+            self._hard_limit_failsafe_active = action.reason_code == "hard_temperature_limit_failsafe"
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
@@ -307,6 +327,8 @@ class LivingRoomPilot:
                 self._pv_capacity_active = True
             elif action.reason_code == "pv_capacity_target_reached":
                 self._pv_capacity_active = False
+            if action.reason_code == "hard_temperature_limit_failsafe":
+                self._hard_limit_failsafe_active = True
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -391,6 +413,11 @@ class LivingRoomPilot:
             min_target,
             max_target,
         )
+        hard_limit_failsafe_target = self._hard_limit_failsafe_target(
+            zone.comfort_temperature,
+            min_target,
+            max_target,
+        )
         pv_capacity_target = self._pv_capacity_target(
             export_power_w=export_power_w,
             minimum_surplus_w=config.min_pv_surplus_w,
@@ -421,6 +448,13 @@ class LivingRoomPilot:
             if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None:
                 start_target = min(start_target, pv_capacity_target)
             if hard_limit:
+                if not pv_available:
+                    return PilotAction(
+                        "start",
+                        hard_limit_failsafe_target,
+                        "hard_temperature_limit_failsafe",
+                        f"Harte Temperaturgrenze ohne PV erreicht; {self._display_name} startet im Fail-safe bei {hard_limit_failsafe_target:.0f} °C.",
+                    )
                 return PilotAction("start", start_target, "hard_temperature_limit", f"Harte Temperaturgrenze erreicht; Kühlung startet temperaturgeführt bei {start_target:.0f} °C.")
             if self._demand_since is None:
                 self._demand_since = now
@@ -432,6 +466,34 @@ class LivingRoomPilot:
         if climate_mode != "cool":
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
+
+        # Keep the same gentle target after the first fail-safe command until
+        # the external room sensor has returned to the comfort band.  Without
+        # this latch, crossing the hard threshold by 0.1 °C would immediately
+        # fall through to the normal no-PV logic and undo the safe target.
+        hard_limit_failsafe = not pv_available and (
+            hard_limit or self._hard_limit_failsafe_active
+        )
+        if self._hard_limit_failsafe_active and temperature_c <= zone.comfort_temperature + 0.25:
+            self._hard_limit_failsafe_active = False
+            hard_limit_failsafe = False
+        if hard_limit_failsafe:
+            current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
+            if current_target is None or abs(current_target - hard_limit_failsafe_target) > 0.01:
+                return PilotAction(
+                    "adjust",
+                    hard_limit_failsafe_target,
+                    "hard_temperature_limit_failsafe",
+                    f"Harte Temperaturgrenze ohne PV; {self._display_name} hält den Fail-safe-Sollwert bei {hard_limit_failsafe_target:.0f} °C.",
+                    hard_limit_failsafe_target,
+                )
+            return PilotAction(
+                "none",
+                None,
+                "hard_temperature_limit_failsafe_holding",
+                f"Harte Temperaturgrenze ohne PV; {self._display_name} kühlt im Fail-safe bei {hard_limit_failsafe_target:.0f} °C weiter.",
+                hard_limit_failsafe_target,
+            )
 
         # The Loxone energy manager has granted the heat pump. Grid export is
         # already net of that measured load, so never subtract it a second
