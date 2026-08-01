@@ -1931,6 +1931,26 @@ def test_hard_limit_without_pv_holds_a_gentle_failsafe_target_until_comfort() ->
         "none", 24.0, "hard_temperature_limit_failsafe_holding",
     )
 
+    wind_down = controlled.decide(
+        runtime, temperature_c=23.7, climate_mode="cool", granted_stages=1,
+        export_power_w=0, climate_target_temperature_c=24.0,
+    )
+    assert (wind_down.action, wind_down.target_temperature_c, wind_down.reason_code) == (
+        "adjust", 25.0, "hard_temperature_limit_failsafe_wind_down",
+    )
+    controlled.mark_sent(wind_down)
+    clock.now = 901
+    assert controlled.decide(
+        runtime, temperature_c=23.7, climate_mode="cool", granted_stages=1,
+        export_power_w=0, climate_target_temperature_c=25.0,
+    ).reason_code == "hard_temperature_limit_failsafe_wind_down"
+    clock.now = 1802
+    complete = controlled.decide(
+        runtime, temperature_c=23.7, climate_mode="cool", granted_stages=1,
+        export_power_w=0, climate_target_temperature_c=25.0,
+    )
+    assert (complete.action, complete.reason_code) == ("stop", "hard_temperature_limit_failsafe_complete")
+
 def test_living_room_pilot_leaves_running_cooling_manual_without_takeover() -> None:
     runtime = models.ControllerConfig(
         shadow_mode=False,

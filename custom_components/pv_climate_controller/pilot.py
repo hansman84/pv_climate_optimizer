@@ -45,6 +45,7 @@ class LivingRoomPilot:
     _RAPID_COOLING_C_PER_H = -0.35
     _OVERSHOOT_CONFIRMATION_S = 2 * 60
     _PV_CAPACITY_TARGET_INTERVAL_S = 5 * 60
+    _HARD_LIMIT_FAILSAFE_WIND_DOWN_S = 15 * 60
 
     def __init__(
         self,
@@ -74,6 +75,7 @@ class LivingRoomPilot:
         self._last_heat_pump_relief_at: float | None = None
         self._pv_capacity_active = False
         self._hard_limit_failsafe_active = False
+        self._hard_limit_failsafe_recovered_since: float | None = None
         self._model_target_offset_c = 0.0
         self._pending_model_target_offset_c: float | None = None
         self._expected_snapshot_at: float | None = None
@@ -102,6 +104,7 @@ class LivingRoomPilot:
         self._last_heat_pump_relief_at = None
         self._pv_capacity_active = False
         self._hard_limit_failsafe_active = False
+        self._hard_limit_failsafe_recovered_since = None
         self._model_target_offset_c = 0.0
         self._pending_model_target_offset_c = None
         self._expected_snapshot_at = None
@@ -312,6 +315,7 @@ class LivingRoomPilot:
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
             self._pv_capacity_active = action.reason_code == "pv_capacity_preconditioning"
             self._hard_limit_failsafe_active = action.reason_code == "hard_temperature_limit_failsafe"
+            self._hard_limit_failsafe_recovered_since = None
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
@@ -330,6 +334,7 @@ class LivingRoomPilot:
                 self._pv_capacity_active = False
             if action.reason_code == "hard_temperature_limit_failsafe":
                 self._hard_limit_failsafe_active = True
+                self._hard_limit_failsafe_recovered_since = None
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -469,6 +474,49 @@ class LivingRoomPilot:
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
 
+        # A recovered hard-limit fail-safe must always end its grid-powered
+        # run.  The normal no-PV low-power hold intentionally allows a PV run
+        # to coast, but it must never turn a thermal safety intervention into
+        # all-night cooling.  Once the external sensor reaches comfort, relax
+        # to the maximum target for a short, bounded run-out, then stop.
+        if pv_available and self._hard_limit_failsafe_active:
+            self._hard_limit_failsafe_active = False
+            self._hard_limit_failsafe_recovered_since = None
+        failsafe_recovered = (
+            not pv_available
+            and self._hard_limit_failsafe_active
+            and not hard_limit
+            and temperature_c <= zone.comfort_temperature + 0.25
+        )
+        if failsafe_recovered:
+            current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
+            if current_target is None or abs(current_target - max_target) > 0.01:
+                return PilotAction(
+                    "adjust",
+                    max_target,
+                    "hard_temperature_limit_failsafe_wind_down",
+                    f"{self._display_name} hat das Komfortziel nach Fail-safe-Kühlung erreicht; Solltemperatur wird auf {max_target:.0f} °C angehoben und der Auslauf begrenzt.",
+                    max_target,
+                )
+            if self._hard_limit_failsafe_recovered_since is None:
+                self._hard_limit_failsafe_recovered_since = now
+            elapsed = now - self._hard_limit_failsafe_recovered_since
+            if elapsed >= self._HARD_LIMIT_FAILSAFE_WIND_DOWN_S:
+                return PilotAction(
+                    "stop",
+                    None,
+                    "hard_temperature_limit_failsafe_complete",
+                    f"{self._display_name} hat nach der harten Temperaturgrenze das Komfortziel gehalten; der auf {self._HARD_LIMIT_FAILSAFE_WIND_DOWN_S / 60:g} Minuten begrenzte Auslauf endet ohne PV.",
+                )
+            remaining_s = self._HARD_LIMIT_FAILSAFE_WIND_DOWN_S - elapsed
+            return PilotAction(
+                "none",
+                None,
+                "hard_temperature_limit_failsafe_wind_down",
+                f"{self._display_name} ist nach Fail-safe-Kühlung im begrenzten Auslauf und wird ohne PV in {max(1, ceil(remaining_s / 60))} Minute(n) ausgeschaltet.",
+                max_target,
+            )
+
         # Keep the same gentle target after the first fail-safe command until
         # the external room sensor has returned to the comfort band.  Without
         # this latch, crossing the hard threshold by 0.1 °C would immediately
@@ -476,10 +524,8 @@ class LivingRoomPilot:
         hard_limit_failsafe = not pv_available and (
             hard_limit or self._hard_limit_failsafe_active
         )
-        if self._hard_limit_failsafe_active and temperature_c <= zone.comfort_temperature + 0.25:
-            self._hard_limit_failsafe_active = False
-            hard_limit_failsafe = False
         if hard_limit_failsafe:
+            self._hard_limit_failsafe_recovered_since = None
             current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
             if current_target is None or abs(current_target - hard_limit_failsafe_target) > 0.01:
                 return PilotAction(
