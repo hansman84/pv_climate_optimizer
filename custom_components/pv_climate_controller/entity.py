@@ -21,7 +21,7 @@ class ControllerEntity(Entity):
             "name": "PV Klimaregler",
             "manufacturer": "PV Klimaregler",
             "model": "PV-orientierte Hauskühlung",
-            "sw_version": "0.4.29",
+            "sw_version": "0.4.30",
         }
 
     async def async_added_to_hass(self) -> None:

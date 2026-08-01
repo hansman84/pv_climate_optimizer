@@ -1376,7 +1376,37 @@ def test_pv_capacity_target_is_also_used_when_starting_a_warm_room() -> None:
     )
 
     assert (start.action, start.target_temperature_c, start.reason_code) == (
-        "start", 20.0, "pv_preconditioning",
+        "start", 20.0, "pv_capacity_preconditioning",
+    )
+
+
+def test_pv_capacity_target_relaxes_promptly_when_the_room_reaches_comfort() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.0,
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.mark_sent(pilot.PilotAction("start", 20.0, "pv_capacity_preconditioning", "test"))
+    clock.now = room_pilot._PV_CAPACITY_TARGET_INTERVAL_S
+
+    action = room_pilot.decide(
+        runtime, temperature_c=23.2, climate_mode="cool", granted_stages=1,
+        export_power_w=2500, outdoor_unit_power_w=1200,
+        climate_target_temperature_c=20.0,
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "adjust", 23.0, "pv_capacity_target_reached",
     )
 
 

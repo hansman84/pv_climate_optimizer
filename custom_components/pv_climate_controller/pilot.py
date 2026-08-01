@@ -72,6 +72,7 @@ class LivingRoomPilot:
         self._active_target_temperature_c: float | None = None
         self._last_target_change_at: float | None = None
         self._last_heat_pump_relief_at: float | None = None
+        self._pv_capacity_active = False
         self._model_target_offset_c = 0.0
         self._pending_model_target_offset_c: float | None = None
         self._expected_snapshot_at: float | None = None
@@ -98,6 +99,7 @@ class LivingRoomPilot:
         self._active_target_temperature_c = None
         self._last_target_change_at = None
         self._last_heat_pump_relief_at = None
+        self._pv_capacity_active = False
         self._model_target_offset_c = 0.0
         self._pending_model_target_offset_c = None
         self._expected_snapshot_at = None
@@ -250,6 +252,7 @@ class LivingRoomPilot:
         return {
             "owns_cooling": self._owns_cooling,
             "manual_override_active": self._manual_override_active,
+            "pv_capacity_active": self._pv_capacity_active,
             "model_target_offset_c": self._model_target_offset_c,
             "observed_snapshot": None if self._observed_snapshot is None else list(self._observed_snapshot),
         }
@@ -259,6 +262,7 @@ class LivingRoomPilot:
         if not isinstance(state, dict):
             return
         self._manual_override_active = state.get("manual_override_active") is True
+        self._pv_capacity_active = state.get("pv_capacity_active") is True
         offset = state.get("model_target_offset_c")
         if isinstance(offset, (int, float)):
             self._model_target_offset_c = min(5.0, max(-5.0, float(offset)))
@@ -286,6 +290,7 @@ class LivingRoomPilot:
             self._settled_since = None
             self._overcooling_since = None
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
+            self._pv_capacity_active = action.reason_code == "pv_capacity_preconditioning"
         elif action.action == "adjust":
             self._active_target_temperature_c = action.target_temperature_c
             self._last_target_change_at = now
@@ -298,6 +303,10 @@ class LivingRoomPilot:
                 self._last_heat_pump_relief_at = now
             if action.reason_code == "pilot_model_feedback_adjustment" and pending_model_offset is not None:
                 self._model_target_offset_c = pending_model_offset
+            if action.reason_code == "pv_capacity_preconditioning":
+                self._pv_capacity_active = True
+            elif action.reason_code == "pv_capacity_target_reached":
+                self._pv_capacity_active = False
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -417,7 +426,8 @@ class LivingRoomPilot:
                 self._demand_since = now
             if now - self._demand_since < 600:
                 return PilotAction("none", None, "pilot_demand_stabilizing", "PV-Kühlbedarf wird zehn Minuten auf Stabilität geprüft.")
-            return PilotAction("start", start_target, "pv_preconditioning", f"PV-Überschuss startet eine ruhige, temperaturgeführte Kühlung bei {start_target:.0f} °C.")
+            start_reason = "pv_capacity_preconditioning" if pv_capacity_target is not None and start_target == pv_capacity_target else "pv_preconditioning"
+            return PilotAction("start", start_target, start_reason, f"PV-Überschuss startet eine ruhige, temperaturgeführte Kühlung bei {start_target:.0f} °C.")
 
         if climate_mode != "cool":
             self.release_ownership()
@@ -581,6 +591,19 @@ class LivingRoomPilot:
                 self._last_target_change_at is None
                 or now - self._last_target_change_at >= self._PV_CAPACITY_TARGET_INTERVAL_S
             )
+        current_known_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
+        pv_target_recovery_due = (
+            self._pv_capacity_active
+            and
+            temperature_c <= zone.comfort_temperature + 0.25
+            and current_known_target is not None
+            and current_known_target < desired_target
+            and (
+                self._last_target_change_at is None
+                or now - self._last_target_change_at >= self._PV_CAPACITY_TARGET_INTERVAL_S
+            )
+        )
+        target_change_due = target_change_due or pv_target_recovery_due
 
         # Return from heat-pump relief just as smoothly as we entered it.  A
         # recovered reserve must not leave a warm room parked at the relaxed
@@ -706,6 +729,13 @@ class LivingRoomPilot:
                         desired_target,
                         "pv_capacity_preconditioning",
                         f"PV-Reserve wird genutzt; {self._display_name} regelt für das Raumziel auf {desired_target:.0f} °C vor.",
+                    )
+                if pv_target_recovery_due:
+                    return PilotAction(
+                        "adjust",
+                        desired_target,
+                        "pv_capacity_target_reached",
+                        f"{self._display_name} nähert sich dem Raumziel; der PV-Sollwert wird auf {desired_target:.0f} °C zum Halten zurückgenommen.",
                     )
                 if model_factors:
                     self._pending_model_target_offset_c = proposed_model_offset
