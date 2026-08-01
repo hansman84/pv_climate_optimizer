@@ -843,7 +843,11 @@ class PVClimateController:
         # Wärmepumpenentlastung advances only one indoor-unit degree per
         # minute. Urgency bypasses the five-minute per-device cadence, while
         # the shared adapter preserves the one-command-per-minute house ramp.
-        urgent_reasons = {"heat_pump_priority_relief_step", "pv_wind_down"}
+        urgent_reasons = {
+            "heat_pump_priority_relief_step",
+            "heat_pump_priority_recovery_step",
+            "pv_wind_down",
+        }
         command = Command(
             target_zone.climate_entity_id,
             f"pilot_{action.action}",

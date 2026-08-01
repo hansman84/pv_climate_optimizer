@@ -188,7 +188,7 @@ class LivingRoomPilot:
             if action.reason_code == "thermal_relief_adjustment":
                 self._thermal_relief_since = now
                 self._overcooling_since = None
-            if action.reason_code == "heat_pump_priority_relief_step":
+            if action.reason_code in {"heat_pump_priority_relief_step", "heat_pump_priority_recovery_step"}:
                 self._last_heat_pump_relief_at = now
         elif action.action == "stop":
             self.release_ownership()
@@ -403,6 +403,42 @@ class LivingRoomPilot:
             desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
         if not living_room_band and strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
             desired_target = deep_precool_target
+
+        # Return from heat-pump relief just as smoothly as we entered it.  A
+        # recovered reserve must not leave a warm room parked at the relaxed
+        # maximum until the normal 15-minute modulation window expires.
+        # Instead, lower exactly one whole device degree per room rotation;
+        # the shared command adapter still permits only one house command per
+        # minute.
+        reported_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
+        recovering_from_heat_pump_relief = (
+            self._last_heat_pump_relief_at is not None
+            and reported_target is not None
+            and reported_target > desired_target
+            and (pv_available or hard_limit)
+            and (not heat_pump_priority_active or priority_reserve_available)
+        )
+        if recovering_from_heat_pump_relief:
+            step_interval_s = max(60.0, heat_pump_relief_step_interval_s)
+            if now - self._last_heat_pump_relief_at < step_interval_s:
+                remaining_s = step_interval_s - (now - self._last_heat_pump_relief_at)
+                return PilotAction(
+                    "none",
+                    None,
+                    "heat_pump_priority_recovery_waiting",
+                    f"Wärmepumpenreserve ist wieder ausreichend; {self._display_name} hält {reported_target:.0f} °C und wartet noch {max(1, ceil(remaining_s / 60))} Minute(n) auf die nächste Rückregelstufe.",
+                    reported_target,
+                )
+            recovery_target = max(desired_target, reported_target - 1.0)
+            return PilotAction(
+                "adjust",
+                recovery_target,
+                "heat_pump_priority_recovery_step",
+                f"Wärmepumpenreserve ist wieder ausreichend; {self._display_name} wird in dieser Minutenstufe von {reported_target:.0f} auf {recovery_target:.0f} °C zurückgeregelt.",
+                recovery_target,
+            )
+        if self._last_heat_pump_relief_at is not None and reported_target is not None and reported_target <= desired_target:
+            self._last_heat_pump_relief_at = None
 
         if not pv_available and not hard_limit:
             self._settled_since = None

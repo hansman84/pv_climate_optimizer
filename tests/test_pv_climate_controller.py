@@ -1340,6 +1340,53 @@ def test_room_step_wait_scales_with_number_of_running_indoor_units() -> None:
     assert (next_step.action, next_step.target_temperature_c) == ("adjust", 23.0)
 
 
+def test_heat_pump_relief_recovers_one_degree_per_room_rotation() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.0,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+
+    relief = room_pilot.decide(
+        runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
+        heat_pump_relief_step_interval_s=120,
+    )
+    assert relief.target_temperature_c == 24.0
+    room_pilot.mark_sent(relief)
+
+    clock.now = 119
+    waiting = room_pilot.decide(
+        runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
+        export_power_w=3000, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=24.0,
+        heat_pump_relief_step_interval_s=120,
+    )
+    assert waiting.reason_code == "heat_pump_priority_recovery_waiting"
+
+    clock.now = 120
+    recovery = room_pilot.decide(
+        runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
+        export_power_w=3000, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=24.0,
+        heat_pump_relief_step_interval_s=120,
+    )
+    assert (recovery.action, recovery.target_temperature_c, recovery.reason_code) == (
+        "adjust", 23.0, "heat_pump_priority_recovery_step",
+    )
+
+
 def test_pilot_reasserts_cooling_target_after_confirmed_device_drift() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
