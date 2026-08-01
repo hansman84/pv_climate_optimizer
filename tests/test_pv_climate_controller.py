@@ -1387,6 +1387,109 @@ def test_heat_pump_relief_recovers_one_degree_per_room_rotation() -> None:
     )
 
 
+def test_room_model_countersteers_weak_cooling_for_every_indoor_unit() -> None:
+    for zone_name in ("Wohnzimmer", "Spielzimmer", "Speis", "Schlafzimmer", "Kinderzimmer"):
+        clock = Clock()
+        runtime = models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.STRICT_PV,
+            zone=models.ZoneConfig(
+                zone_name.casefold(), zone_name, f"climate.{zone_name.casefold()}", f"sensor.{zone_name.casefold()}",
+                comfort_temperature=23.0,
+                hard_max_temperature=26.0,
+                pilot_min_target_temperature=20.0,
+                pilot_max_target_temperature=25.0,
+            ),
+            living_room_pilot_enabled=True,
+            min_pv_surplus_w=100,
+        )
+        room_pilot = pilot.LivingRoomPilot(clock, expected_zone_name=zone_name, display_name=zone_name)
+        room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+        clock.now = room_pilot._TARGET_CHANGE_INTERVAL_S
+
+        action = room_pilot.decide(
+            runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1,
+            export_power_w=150, climate_target_temperature_c=23.0,
+            temperature_trend_c_per_h=0.05, predicted_temperature_60m_c=24.2,
+            thermal_profile=models.ThermalProfile(None, None, -0.05, 0, 0, 8, "learning"),
+            direct_sun=True, irradiance_w_m2=600, shade_open_percent=100,
+            active_cooling_zone_count=3,
+        )
+
+        assert (action.action, action.target_temperature_c, action.reason_code) == (
+            "adjust", 22.0, "pilot_model_feedback_adjustment",
+        )
+        assert "3 Innengeräte" in action.reason_text
+        room_pilot.mark_sent(action)
+        clock.now += room_pilot._TARGET_CHANGE_INTERVAL_S
+
+        next_step = room_pilot.decide(
+            runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1,
+            export_power_w=150, climate_target_temperature_c=22.0,
+            temperature_trend_c_per_h=0.05, predicted_temperature_60m_c=24.2,
+            thermal_profile=models.ThermalProfile(None, None, -0.05, 0, 0, 8, "learning"),
+            direct_sun=True, irradiance_w_m2=600, shade_open_percent=100,
+            active_cooling_zone_count=3,
+        )
+        assert (next_step.action, next_step.target_temperature_c) == ("adjust", 21.0)
+
+
+def test_room_model_relaxes_target_when_cooling_overshoots() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "office", "Spielzimmer", "climate.office", "sensor.office",
+            comfort_temperature=23.0,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock, expected_zone_name="Spielzimmer", display_name="Spielzimmer")
+    room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+    clock.now = room_pilot._TARGET_CHANGE_INTERVAL_S
+
+    action = room_pilot.decide(
+        runtime, temperature_c=22.7, climate_mode="cool", granted_stages=1,
+        export_power_w=1000, climate_target_temperature_c=23.0,
+        temperature_trend_c_per_h=-0.5, predicted_temperature_60m_c=22.2,
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "adjust", 24.0, "pilot_model_feedback_adjustment",
+    )
+
+
+def test_shared_outdoor_unit_load_changes_model_feedback_threshold() -> None:
+    inputs = {
+        "temperature_c": 24.0,
+        "comfort_temperature_c": 23.0,
+        "min_target_c": 20.0,
+        "max_target_c": 25.0,
+        "temperature_trend_c_per_h": -0.2,
+        "predicted_temperature_60m_c": 24.1,
+        "thermal_profile": None,
+        "direct_sun": False,
+        "irradiance_w_m2": None,
+        "shade_open_percent": None,
+        "target_offset_c": 0.0,
+    }
+
+    single_target, _, _ = pilot.LivingRoomPilot._model_adjusted_target(
+        23.0, active_cooling_zone_count=1, **inputs,
+    )
+    shared_target, factors, _ = pilot.LivingRoomPilot._model_adjusted_target(
+        23.0, active_cooling_zone_count=3, **inputs,
+    )
+
+    assert single_target == 23.0
+    assert shared_target == 22.0
+    assert "3 Innengeräte" in factors[-1]
+
+
 def test_pilot_reasserts_cooling_target_after_confirmed_device_drift() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(

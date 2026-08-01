@@ -206,6 +206,11 @@ async def _async_refresh_controller(
         ),
         direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
         irradiance_w_m2=irradiance,
+        shade_open_percent=(
+            contexts.get(controller.config.zone.zone_id, {}).get("shade_open_percent")
+            if controller.config.zone is not None
+            else None
+        ),
     )
     await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
     office_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "spielzimmer"), None)
@@ -222,6 +227,7 @@ async def _async_refresh_controller(
             manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == office_zone.climate_entity_id,
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
+            shade_open_percent=contexts.get(office_zone.zone_id, {}).get("shade_open_percent"),
         )
         await controller.async_apply_pilot_action(office_action, _pilot_service_executor(hass), zone=office_zone, room_pilot=controller.office_pilot)
     speis_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "speis"), None)
@@ -238,6 +244,7 @@ async def _async_refresh_controller(
             manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == speis_zone.climate_entity_id,
             direct_sun=bool(contexts.get(speis_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
+            shade_open_percent=contexts.get(speis_zone.zone_id, {}).get("shade_open_percent"),
         )
         await controller.async_apply_pilot_action(speis_action, _pilot_service_executor(hass), zone=speis_zone, room_pilot=controller.speis_pilot)
     for bedroom_zone in (item for item in config.house_zones if item.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}):
@@ -253,6 +260,7 @@ async def _async_refresh_controller(
             manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == bedroom_zone.climate_entity_id,
             direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
+            shade_open_percent=contexts.get(bedroom_zone.zone_id, {}).get("shade_open_percent"),
         )
         await controller.async_apply_pilot_action(
             bedroom_action,

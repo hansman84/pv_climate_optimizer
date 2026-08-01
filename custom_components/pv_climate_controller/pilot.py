@@ -71,6 +71,8 @@ class LivingRoomPilot:
         self._active_target_temperature_c: float | None = None
         self._last_target_change_at: float | None = None
         self._last_heat_pump_relief_at: float | None = None
+        self._model_target_offset_c = 0.0
+        self._pending_model_target_offset_c: float | None = None
         self._expected_snapshot_at: float | None = None
         self._pv_missing_since: float | None = None
         self._settled_since: float | None = None
@@ -95,6 +97,8 @@ class LivingRoomPilot:
         self._active_target_temperature_c = None
         self._last_target_change_at = None
         self._last_heat_pump_relief_at = None
+        self._model_target_offset_c = 0.0
+        self._pending_model_target_offset_c = None
         self._expected_snapshot_at = None
         self._pv_missing_since = None
         self._settled_since = None
@@ -128,6 +132,79 @@ class LivingRoomPilot:
         return min(max_target_c, max(min_target_c, whole_degree_target))
 
     @staticmethod
+    def _model_adjusted_target(
+        base_target_c: float,
+        *,
+        temperature_c: float,
+        comfort_temperature_c: float,
+        min_target_c: float,
+        max_target_c: float,
+        temperature_trend_c_per_h: float | None,
+        predicted_temperature_60m_c: float | None,
+        thermal_profile: ThermalProfile | None,
+        direct_sun: bool,
+        irradiance_w_m2: float | None,
+        shade_open_percent: float | None,
+        active_cooling_zone_count: int,
+        target_offset_c: float,
+    ) -> tuple[float, tuple[str, ...], float]:
+        """Apply one explainable feedback step from the observed room model."""
+        factors: list[str] = []
+        target = base_target_c + target_offset_c
+        above_comfort = temperature_c > comfort_temperature_c + 0.2
+        below_comfort = temperature_c < comfort_temperature_c - 0.2
+        forecast_too_warm = predicted_temperature_60m_c is not None and predicted_temperature_60m_c > comfort_temperature_c + 0.3
+        forecast_too_cold = predicted_temperature_60m_c is not None and predicted_temperature_60m_c < comfort_temperature_c - 0.3
+        weak_cooling_threshold = -0.15 - min(0.2, 0.05 * max(0, active_cooling_zone_count - 1))
+        cooling_too_weak = temperature_trend_c_per_h is not None and temperature_trend_c_per_h > weak_cooling_threshold
+        cooling_too_strong = temperature_trend_c_per_h is not None and temperature_trend_c_per_h < -0.35
+        learned_cooling_weak = (
+            thermal_profile is not None
+            and thermal_profile.cooling_trend_c_per_h is not None
+            and thermal_profile.cooling_trend_c_per_h > weak_cooling_threshold
+        )
+        exposed_to_sun = (
+            direct_sun
+            and irradiance_w_m2 is not None
+            and irradiance_w_m2 >= 250
+            and (shade_open_percent is None or shade_open_percent > 10)
+        )
+        shaded_and_stable = (
+            direct_sun
+            and shade_open_percent is not None
+            and shade_open_percent <= 10
+            and thermal_profile is not None
+            and thermal_profile.passive_shaded_trend_c_per_h is not None
+            and thermal_profile.passive_shaded_trend_c_per_h <= 0.1
+        )
+
+        if above_comfort and forecast_too_warm and (cooling_too_weak or learned_cooling_weak):
+            target -= 1.0
+            factors.append("Sollwertwirkung zu schwach")
+        elif above_comfort and exposed_to_sun and cooling_too_weak:
+            target -= 1.0
+            factors.append("offene Beschattung und Solarertrag")
+        elif below_comfort and (forecast_too_cold or cooling_too_strong):
+            target += 1.0
+            factors.append("Kühlwirkung zu stark")
+        elif temperature_c <= comfort_temperature_c and shaded_and_stable and temperature_trend_c_per_h is not None and temperature_trend_c_per_h <= 0:
+            target += 1.0
+            factors.append("geschützte Fassade ohne Wiederaufheizung")
+        elif target_offset_c < 0 and (temperature_c <= comfort_temperature_c + 0.2 or (temperature_trend_c_per_h is not None and temperature_trend_c_per_h <= -0.25)):
+            target += 1.0
+            factors.append("Kühlwirkung wieder ausreichend")
+        elif target_offset_c > 0 and (temperature_c >= comfort_temperature_c - 0.2 or (temperature_trend_c_per_h is not None and temperature_trend_c_per_h >= -0.1)):
+            target -= 1.0
+            factors.append("Kühlbedarf wieder gestiegen")
+        elif target_offset_c:
+            factors.append("gelernte Modellkorrektur")
+
+        if factors and active_cooling_zone_count > 1:
+            factors.append(f"{active_cooling_zone_count} Innengeräte am gemeinsamen Außengerät")
+        target = min(max_target_c, max(min_target_c, target))
+        return target, tuple(factors), target - base_target_c
+
+    @staticmethod
     def _relieved_room_target(
         dynamic_target_c: float,
         temperature_c: float,
@@ -141,7 +218,7 @@ class LivingRoomPilot:
         return min(max_target_c, hold_target_c, dynamic_target_c + 1.0)
 
     def export_runtime_state(self) -> dict[str, object]:
-        """Persist only explicit pilot ownership across an HA restart.
+        """Persist explicit ownership and the bounded learned target correction.
 
         The observed device snapshot is retained so the first post-restart
         refresh can still distinguish the handed-over state from a manual
@@ -150,6 +227,7 @@ class LivingRoomPilot:
         return {
             "owns_cooling": self._owns_cooling,
             "manual_override_active": self._manual_override_active,
+            "model_target_offset_c": self._model_target_offset_c,
             "observed_snapshot": None if self._observed_snapshot is None else list(self._observed_snapshot),
         }
 
@@ -158,6 +236,9 @@ class LivingRoomPilot:
         if not isinstance(state, dict):
             return
         self._manual_override_active = state.get("manual_override_active") is True
+        offset = state.get("model_target_offset_c")
+        if isinstance(offset, (int, float)):
+            self._model_target_offset_c = min(5.0, max(-5.0, float(offset)))
         if state.get("owns_cooling") is not True:
             return
         snapshot = state.get("observed_snapshot")
@@ -170,6 +251,8 @@ class LivingRoomPilot:
     def mark_sent(self, action: PilotAction) -> None:
         """Record only a command accepted by the guarded write boundary."""
         now = self._clock()
+        pending_model_offset = self._pending_model_target_offset_c
+        self._pending_model_target_offset_c = None
         if action.action == "start":
             self._owns_cooling = True
             self._cooling_started_at = now
@@ -190,6 +273,8 @@ class LivingRoomPilot:
                 self._overcooling_since = None
             if action.reason_code in {"heat_pump_priority_relief_step", "heat_pump_priority_recovery_step"}:
                 self._last_heat_pump_relief_at = now
+            if action.reason_code == "pilot_model_feedback_adjustment" and pending_model_offset is not None:
+                self._model_target_offset_c = pending_model_offset
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -213,6 +298,8 @@ class LivingRoomPilot:
         irradiance_w_m2: float | None = None,
         temperature_trend_c_per_h: float | None = None,
         predicted_temperature_60m_c: float | None = None,
+        shade_open_percent: float | None = None,
+        active_cooling_zone_count: int = 1,
         climate_target_temperature_c: float | None = None,
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
@@ -393,14 +480,30 @@ class LivingRoomPilot:
 
         runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
         target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
-        if living_room_band:
-            # The external room sensor is the control input.  Spread its
-            # deviation from comfort proportionally over the complete
-            # GUI-configured device range instead of toggling between a cold
-            # and a relaxed fixed setpoint.
-            desired_target = dynamic_room_target
-        else:
-            desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
+        # Every room uses its external sensor as the control input. The living
+        # room starts with its proportional full-range target; the smaller and
+        # sleeping rooms retain their quieter room-specific baseline. Observed
+        # trend, forecast, sun/shade context and shared outdoor-unit load then
+        # integrate one corrective degree at each calm control interval.
+        desired_target = dynamic_room_target if living_room_band else (cool_target if temperature_c > zone.comfort_temperature else hold_target)
+        model_factors: tuple[str, ...] = ()
+        proposed_model_offset = self._model_target_offset_c
+        if runtime_s >= self._TARGET_CHANGE_INTERVAL_S:
+            desired_target, model_factors, proposed_model_offset = self._model_adjusted_target(
+                desired_target,
+                temperature_c=temperature_c,
+                comfort_temperature_c=zone.comfort_temperature,
+                min_target_c=min_target,
+                max_target_c=max_target,
+                temperature_trend_c_per_h=temperature_trend_c_per_h,
+                predicted_temperature_60m_c=predicted_temperature_60m_c,
+                thermal_profile=thermal_profile,
+                direct_sun=direct_sun,
+                irradiance_w_m2=irradiance_w_m2,
+                shade_open_percent=shade_open_percent,
+                active_cooling_zone_count=active_cooling_zone_count,
+                target_offset_c=self._model_target_offset_c,
+            )
         if not living_room_band and strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
             desired_target = deep_precool_target
 
@@ -522,6 +625,14 @@ class LivingRoomPilot:
                     f"{self._display_name} meldet {climate_target_temperature_c:.0f} °C statt des geplanten Sollwerts {desired_target:.0f} °C; Pilot stellt den wirksamen Kühl-Sollwert wieder her.",
                 )
             if self._active_target_temperature_c != desired_target and target_change_due:
+                if model_factors:
+                    self._pending_model_target_offset_c = proposed_model_offset
+                    return PilotAction(
+                        "adjust",
+                        desired_target,
+                        "pilot_model_feedback_adjustment",
+                        f"Externer Raumsensor und Raummodell regeln auf {desired_target:.0f} °C nach ({'; '.join(model_factors)}).",
+                    )
                 return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", f"Der externe Raumsensor führt die Solltemperatur ruhig auf {desired_target:.0f} °C nach.")
 
         # PV alone is not a reason to cool indefinitely.  When the room has
@@ -547,6 +658,14 @@ class LivingRoomPilot:
 
         if self._sunset_takeover_active:
             return PilotAction("none", None, "sunset_pv_control_active", "PV-Abendregelung ist aktiv; die Kühlung wird bis zum geordneten Auslauf geführt.")
+        if model_factors:
+            return PilotAction(
+                "none",
+                None,
+                "pilot_model_feedback_holding",
+                f"{self._display_name} hält den modellkorrigierten Sollwert {desired_target:.0f} °C ({'; '.join(model_factors)}).",
+                desired_target,
+            )
         return PilotAction("none", None, "pilot_cooling_active", f"{self._display_name} wird mit PV bei {desired_target:.0f} °C ruhig und langlaufend moduliert.", desired_target)
 
     def _adopt_external_cooling(self, now: float, snapshot: tuple[str | None, float | None, str | None, str | None]) -> None:

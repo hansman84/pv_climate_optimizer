@@ -635,6 +635,7 @@ class PVClimateController:
         manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
+        shade_open_percent: float | None = None,
         now: time | None = None,
     ) -> PilotAction:
         """Use late-afternoon PV for sleeping rooms and enforce their quiet time."""
@@ -683,6 +684,8 @@ class PVClimateController:
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
+            shade_open_percent=shade_open_percent,
+            active_cooling_zone_count=self.active_cooling_zone_count,
             climate_target_temperature_c=climate_target_temperature_c,
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
@@ -703,6 +706,7 @@ class PVClimateController:
         manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
+        shade_open_percent: float | None = None,
     ) -> PilotAction:
         """Evaluate the only productive PoC route after HA state refresh."""
         if not self.config.living_room_pilot_enabled:
@@ -728,6 +732,8 @@ class PVClimateController:
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
+            shade_open_percent=shade_open_percent,
+            active_cooling_zone_count=self.active_cooling_zone_count,
             climate_target_temperature_c=climate_target_temperature_c,
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
@@ -748,6 +754,7 @@ class PVClimateController:
         manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
+        shade_open_percent: float | None = None,
     ) -> PilotAction:
         """Evaluate the productive Arbeitszimmer route only for its exact mapped zone."""
         office_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "spielzimmer"), None)
@@ -777,6 +784,8 @@ class PVClimateController:
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
+            shade_open_percent=shade_open_percent,
+            active_cooling_zone_count=self.active_cooling_zone_count,
             climate_target_temperature_c=climate_target_temperature_c,
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
@@ -797,6 +806,7 @@ class PVClimateController:
         manual_change_candidate: bool = True,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
+        shade_open_percent: float | None = None,
     ) -> PilotAction:
         """Evaluate the small Speis as a productive zone with a fast overshoot guard."""
         speis_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "speis"), None)
@@ -826,6 +836,8 @@ class PVClimateController:
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
+            shade_open_percent=shade_open_percent,
+            active_cooling_zone_count=self.active_cooling_zone_count,
             climate_target_temperature_c=climate_target_temperature_c,
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
