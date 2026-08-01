@@ -7,7 +7,7 @@ outside this module so the safety logic is testable without Home Assistant.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
+from math import ceil, floor
 from time import monotonic
 
 from .models import ControllerConfig, ThermalProfile
@@ -106,6 +106,37 @@ class LivingRoomPilot:
         """Accept a one-shot handover from the dashboard button."""
         self._takeover_requested = True
         self._manual_override_active = False
+
+    @staticmethod
+    def _dynamic_room_target(
+        temperature_c: float,
+        comfort_temperature_c: float,
+        hard_max_temperature_c: float,
+        min_target_c: float,
+        max_target_c: float,
+    ) -> float:
+        """Map room-temperature error proportionally onto the device range."""
+        control_band_c = max(0.5, hard_max_temperature_c - comfort_temperature_c)
+        demand = min(1.0, max(0.0, (temperature_c - comfort_temperature_c) / control_band_c))
+        continuous_target = max_target_c - demand * (max_target_c - min_target_c)
+        whole_degree_target = float(floor(continuous_target + 0.5))
+        if temperature_c > comfort_temperature_c:
+            quiet_hold_target = min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c))))
+            whole_degree_target = min(whole_degree_target, quiet_hold_target)
+        return min(max_target_c, max(min_target_c, whole_degree_target))
+
+    @staticmethod
+    def _relieved_room_target(
+        dynamic_target_c: float,
+        temperature_c: float,
+        comfort_temperature_c: float,
+        hold_target_c: float,
+        max_target_c: float,
+    ) -> float:
+        """Reduce demand by one step without abandoning an overheated room."""
+        if temperature_c <= comfort_temperature_c + 0.25:
+            return max_target_c
+        return min(max_target_c, hold_target_c, dynamic_target_c + 1.0)
 
     def export_runtime_state(self) -> dict[str, object]:
         """Persist only explicit pilot ownership across an HA restart.
@@ -229,6 +260,13 @@ class LivingRoomPilot:
             else hold_target
         )
         deep_precool_target = min_target
+        dynamic_room_target = self._dynamic_room_target(
+            temperature_c,
+            zone.comfort_temperature,
+            zone.hard_max_temperature,
+            min_target,
+            max_target,
+        )
         strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
         needs_cooling = hard_limit or (pv_available and temperature_c > zone.comfort_temperature)
 
@@ -248,13 +286,14 @@ class LivingRoomPilot:
                 return PilotAction("none", None, "pv_or_thermal_need_missing", "Kein PV-gestützter oder thermischer Kühlbedarf.")
             if not hard_limit and self._last_stopped_at is not None and now - self._last_stopped_at < self._MIN_OFF_TIME_S:
                 return PilotAction("none", None, "pilot_resting", f"{self._display_name}-Pilot hält die Kompressor-Ruhezeit ein.")
+            start_target = dynamic_room_target if living_room_band else cool_target
             if hard_limit:
-                return PilotAction("start", cool_target, "hard_temperature_limit", f"Harte Temperaturgrenze erreicht; Kühlung startet sanft bei {cool_target:.0f} °C.")
+                return PilotAction("start", start_target, "hard_temperature_limit", f"Harte Temperaturgrenze erreicht; Kühlung startet temperaturgeführt bei {start_target:.0f} °C.")
             if self._demand_since is None:
                 self._demand_since = now
             if now - self._demand_since < 600:
                 return PilotAction("none", None, "pilot_demand_stabilizing", "PV-Kühlbedarf wird zehn Minuten auf Stabilität geprüft.")
-            return PilotAction("start", cool_target, "pv_preconditioning", f"PV-Überschuss startet eine ruhige Vorkühlung bei {cool_target:.0f} °C.")
+            return PilotAction("start", start_target, "pv_preconditioning", f"PV-Überschuss startet eine ruhige, temperaturgeführte Kühlung bei {start_target:.0f} °C.")
 
         if climate_mode != "cool":
             self.release_ownership()
@@ -271,15 +310,19 @@ class LivingRoomPilot:
             current_target = self._active_target_temperature_c if self._active_target_temperature_c is not None else climate_target_temperature_c
             power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
             room_above_comfort_band = living_room_band and temperature_c > zone.comfort_temperature + 0.25
-            priority_target = hold_target if room_above_comfort_band else max_target
+            priority_target = (
+                self._relieved_room_target(dynamic_room_target, temperature_c, zone.comfort_temperature, hold_target, max_target)
+                if living_room_band
+                else max_target
+            )
             if current_target is None or abs(current_target - priority_target) > 0.01:
                 if room_above_comfort_band:
                     return PilotAction(
                         "adjust",
-                        hold_target,
+                        priority_target,
                         "heat_pump_priority_comfort_hold",
-                        f"Wärmepumpen-Priorität aktiv ({power_text}), aber {self._display_name} liegt noch über dem Komfortband; Solltemperatur hält bei {hold_target:.0f} °C.",
-                        hold_target,
+                        f"Wärmepumpen-Priorität aktiv ({power_text}), aber {self._display_name} liegt noch über dem Komfortband; die dynamische Solltemperatur wird nur auf {priority_target:.0f} °C entlastet.",
+                        priority_target,
                     )
                 return PilotAction("adjust", max_target, "heat_pump_priority_relief", f"Wärmepumpen-Priorität aktiv ({power_text}); Solltemperatur wird sofort auf {max_target:.0f} °C angehoben.", max_target)
             return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {priority_reserve_w:.0f} W Leistungsreserve werden für die Klimamodulation benötigt.", priority_target)
@@ -340,11 +383,11 @@ class LivingRoomPilot:
         runtime_s = 0.0 if self._cooling_started_at is None else now - self._cooling_started_at
         target_change_due = self._last_target_change_at is None or now - self._last_target_change_at >= self._TARGET_CHANGE_INTERVAL_S
         if living_room_band:
-            # Use hysteresis around the 23.5/24 °C promise: an overheated
-            # living room needs a brief, decisive pull-down, while a room
-            # already inside the band stays on the calm 24 °C setpoint.
-            pull_down_threshold = zone.comfort_temperature + 0.75
-            desired_target = deep_precool_target if temperature_c > pull_down_threshold else hold_target
+            # The external room sensor is the control input.  Spread its
+            # deviation from comfort proportionally over the complete
+            # GUI-configured device range instead of toggling between a cold
+            # and a relaxed fixed setpoint.
+            desired_target = dynamic_room_target
         else:
             desired_target = cool_target if temperature_c > zone.comfort_temperature else hold_target
         if not living_room_band and strong_pv and runtime_s >= self._DEEP_PRECOOL_AFTER_S and temperature_c > hold_target + 0.5:
@@ -362,7 +405,11 @@ class LivingRoomPilot:
             # This keeps a short PV dip from turning a warm room into an
             # avoidable 20 -> 25 °C on/off cycle.
             room_above_comfort_band = living_room_band and temperature_c > zone.comfort_temperature + 0.25
-            wind_down_target = hold_target if room_above_comfort_band else max_target
+            wind_down_target = (
+                self._relieved_room_target(dynamic_room_target, temperature_c, zone.comfort_temperature, hold_target, max_target)
+                if living_room_band
+                else max_target
+            )
             current_target = self._active_target_temperature_c
             if current_target is None:
                 current_target = climate_target_temperature_c if climate_target_temperature_c is not None else min_target
@@ -370,10 +417,10 @@ class LivingRoomPilot:
                 if room_above_comfort_band:
                     return PilotAction(
                         "adjust",
-                        hold_target,
+                        wind_down_target,
                         "pv_comfort_hold",
-                        f"PV-Überschuss fehlt, aber {self._display_name} liegt noch über dem Komfortband; Solltemperatur bleibt bei {hold_target:.0f} °C für eine ruhige, wirksame Kühlung.",
-                        hold_target,
+                        f"PV-Überschuss fehlt, aber {self._display_name} liegt noch über dem Komfortband; die dynamische Solltemperatur wird nur auf {wind_down_target:.0f} °C entlastet.",
+                        wind_down_target,
                     )
                 return PilotAction("adjust", max_target, "pv_wind_down", f"PV-Überschuss fehlt und der Raum ist im Komfortband; Solltemperatur wird auf {max_target:.0f} °C angehoben. Das Innengerät darf sparsam auslaufen.", max_target)
             if not room_above_comfort_band and outdoor_unit_power_w is not None and outdoor_unit_power_w <= config.no_pv_hold_max_power_w:
@@ -391,8 +438,8 @@ class LivingRoomPilot:
                     "none",
                     None,
                     "pv_comfort_holding",
-                    f"PV-Überschuss fehlt, aber {self._display_name} liegt noch über dem Komfortband; die Kühlung hält bei {hold_target:.0f} °C ohne Takten weiter.",
-                    hold_target,
+                    f"PV-Überschuss fehlt, aber {self._display_name} liegt noch über dem Komfortband; die Kühlung moduliert bei {wind_down_target:.0f} °C ohne Takten weiter.",
+                    wind_down_target,
                 )
             return PilotAction(
                 "none",
@@ -428,7 +475,7 @@ class LivingRoomPilot:
                     f"{self._display_name} meldet {climate_target_temperature_c:.0f} °C statt des geplanten Sollwerts {desired_target:.0f} °C; Pilot stellt den wirksamen Kühl-Sollwert wieder her.",
                 )
             if self._active_target_temperature_c != desired_target and target_change_due:
-                return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", "Stabiler PV-Überschuss erlaubt eine einzelne, ruhige Sollwertstufe.")
+                return PilotAction("adjust", desired_target, "pilot_soft_target_adjustment", f"Der externe Raumsensor führt die Solltemperatur ruhig auf {desired_target:.0f} °C nach.")
 
         # PV alone is not a reason to cool indefinitely.  When the room has
         # reached its currently planned target and no solar rebound is likely,
@@ -440,9 +487,9 @@ class LivingRoomPilot:
         rebound_expected = self._rebound_expected(thermal_profile, direct_sun, irradiance_w_m2)
         pv_holding_allowed = pv_available and temperature_c >= zone.comfort_temperature - 0.5
         if at_target and not rebound_expected and not pv_holding_allowed:
-            if self._active_target_temperature_c != hold_target and target_change_due:
+            if self._active_target_temperature_c != desired_target and target_change_due:
                 self._settled_since = now
-                return PilotAction("adjust", hold_target, "pilot_settling", f"Kühlziel erreicht; Solltemperatur wird zum ruhigen Auslaufen auf {hold_target:.0f} °C angehoben.")
+                return PilotAction("adjust", desired_target, "pilot_settling", f"Kühlziel erreicht; Solltemperatur wird zum ruhigen Auslaufen auf {desired_target:.0f} °C angehoben.")
             if self._settled_since is None:
                 self._settled_since = now
                 return PilotAction("none", None, "pilot_settling", "Kühlziel erreicht; Pilot prüft zehn Minuten lang, ob der Raum stabil bleibt.")

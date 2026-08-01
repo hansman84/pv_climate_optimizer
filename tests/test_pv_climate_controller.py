@@ -984,7 +984,12 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
-        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
         living_room_pilot_enabled=True,
         min_pv_surplus_w=1000,
     )
@@ -1011,7 +1016,7 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     living_pilot.mark_sent(adjustment)
     clock.now = 4200
     settling = living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200)
-    assert (settling.action, settling.target_temperature_c, settling.reason_code) == ("none", None, "pilot_cooling_active")
+    assert (settling.action, settling.target_temperature_c, settling.reason_code) == ("adjust", 25.0, "pilot_soft_target_adjustment")
     living_pilot.mark_sent(settling)
     clock.now = 5400
     assert living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
@@ -1152,7 +1157,12 @@ def test_living_room_pilot_relaxes_before_stopping_when_export_reaches_zero() ->
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
-        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
         living_room_pilot_enabled=True,
         min_pv_surplus_w=1000,
     )
@@ -1241,7 +1251,7 @@ def test_pilot_reasserts_cooling_target_after_confirmed_device_drift() -> None:
         min_pv_surplus_w=400,
     )
     living_pilot = pilot.LivingRoomPilot(clock)
-    living_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+    living_pilot.mark_sent(pilot.PilotAction("start", 24.0, "test", "test"))
     clock.now = living_pilot._COMMAND_ACK_GRACE_S + 1
 
     action = living_pilot.decide(
@@ -1254,7 +1264,7 @@ def test_pilot_reasserts_cooling_target_after_confirmed_device_drift() -> None:
     )
 
     assert (action.action, action.target_temperature_c, action.reason_code) == (
-        "adjust", 23.0, "pilot_target_drift",
+        "adjust", 24.0, "pilot_target_drift",
     )
 
 
@@ -1355,12 +1365,12 @@ def test_pilot_uses_per_room_gui_target_limits() -> None:
     room_pilot.decide(runtime, temperature_c=26.0, climate_mode="off", granted_stages=1, export_power_w=1200)
     clock.now = 600
     start = room_pilot.decide(runtime, temperature_c=26.0, climate_mode="off", granted_stages=1, export_power_w=1200)
-    assert start.target_temperature_c == 24.0
+    assert start.target_temperature_c == 20.0
     room_pilot.mark_sent(start)
 
     clock.now = 1800
     deep = room_pilot.decide(runtime, temperature_c=26.0, climate_mode="cool", granted_stages=1, export_power_w=2200)
-    assert deep.target_temperature_c == 20.0
+    assert (deep.action, deep.planned_target_temperature_c) == ("none", 20.0)
     room_pilot.mark_sent(deep)
 
     clock.now = 1920
