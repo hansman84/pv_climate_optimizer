@@ -139,6 +139,7 @@ class LivingRoomPilot:
     @staticmethod
     def _hard_limit_failsafe_target(
         comfort_temperature_c: float,
+        offset_c: float,
         min_target_c: float,
         max_target_c: float,
     ) -> float:
@@ -146,10 +147,10 @@ class LivingRoomPilot:
 
         The room limit is a thermal safety net, not permission to demand the
         minimum inverter target from the grid.  Indoor units in this setup use
-        whole-degree targets, so round comfort + 1 °C upward rather than
+        whole-degree targets, so round the configured comfort offset upward rather than
         silently sending an unsupported half-degree value.
         """
-        return min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c + 1.0))))
+        return min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c + offset_c))))
 
     @staticmethod
     def _pv_capacity_target(
@@ -415,6 +416,7 @@ class LivingRoomPilot:
         )
         hard_limit_failsafe_target = self._hard_limit_failsafe_target(
             zone.comfort_temperature,
+            zone.hard_limit_failsafe_offset_c,
             min_target,
             max_target,
         )

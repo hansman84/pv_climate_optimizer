@@ -55,6 +55,7 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
             pilot_min_target_temperature=float(item["pilot_min_target_temperature"]) if isinstance(item.get("pilot_min_target_temperature"), (int, float)) else None,
             pilot_max_target_temperature=float(item["pilot_max_target_temperature"]) if isinstance(item.get("pilot_max_target_temperature"), (int, float)) else None,
+            hard_limit_failsafe_offset_c=max(0.0, min(8.0, float(item.get("hard_limit_failsafe_offset_c", 1.0)))),
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
             priority=int(item.get("priority", 50)),
             pilot_enabled=bool(item.get("pilot_enabled", default_pilot_enabled)),
@@ -79,6 +80,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "hard_max_temperature": zone.hard_max_temperature,
         "pilot_min_target_temperature": zone.pilot_min_target_temperature,
         "pilot_max_target_temperature": zone.pilot_max_target_temperature,
+        "hard_limit_failsafe_offset_c": zone.hard_limit_failsafe_offset_c,
         "priority": zone.priority,
         "pilot_enabled": zone.pilot_enabled,
         "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
@@ -925,6 +927,7 @@ class PVClimateController:
         hard_max_temperature: float | None = None,
         pilot_min_target_temperature: float | None = None,
         pilot_max_target_temperature: float | None = None,
+        hard_limit_failsafe_offset_c: float | None = None,
         priority: int | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
@@ -938,6 +941,7 @@ class PVClimateController:
             hard_max = max(comfort, hard_max)
             pilot_min = zone.pilot_min_target_temperature if pilot_min_target_temperature is None else max(16.0, min(32.0, float(pilot_min_target_temperature)))
             pilot_max = zone.pilot_max_target_temperature if pilot_max_target_temperature is None else max(16.0, min(32.0, float(pilot_max_target_temperature)))
+            failsafe_offset = zone.hard_limit_failsafe_offset_c if hard_limit_failsafe_offset_c is None else max(0.0, min(8.0, float(hard_limit_failsafe_offset_c)))
             if pilot_min is not None and pilot_max is not None:
                 pilot_max = max(pilot_min, pilot_max)
             updated.append(replace(
@@ -946,6 +950,7 @@ class PVClimateController:
                 hard_max_temperature=hard_max,
                 pilot_min_target_temperature=pilot_min,
                 pilot_max_target_temperature=pilot_max,
+                hard_limit_failsafe_offset_c=failsafe_offset,
                 priority=zone.priority if priority is None else max(1, min(100, int(priority))),
             ))
         zones = tuple(updated)

@@ -570,6 +570,7 @@ def test_zone_serialization_preserves_all_shade_geometry() -> None:
         facade_azimuths=(180.0, 315.0),
         facade_shade_entity_ids=(("cover.south_left", "cover.south_right"), ("cover.flower",)),
         overhang_cutoff_elevation=42.0,
+        hard_limit_failsafe_offset_c=2.0,
     )
 
     saved = controller.serialize_zone_config(zone)
@@ -579,6 +580,7 @@ def test_zone_serialization_preserves_all_shade_geometry() -> None:
     assert restored.facade_azimuths == zone.facade_azimuths
     assert restored.facade_shade_entity_ids == zone.facade_shade_entity_ids
     assert restored.overhang_cutoff_elevation == zone.overhang_cutoff_elevation
+    assert restored.hard_limit_failsafe_offset_c == 2.0
 
 
 def test_raw_ha_states_are_evaluated_without_a_write() -> None:
@@ -935,12 +937,13 @@ def test_zone_thermal_settings_update_only_that_zone_and_keep_limits_safe() -> N
         ]},
     )
 
-    runtime.set_zone_thermal_settings("sleep", comfort_temperature=25.0, hard_max_temperature=23.0, priority=120)
+    runtime.set_zone_thermal_settings("sleep", comfort_temperature=25.0, hard_max_temperature=23.0, hard_limit_failsafe_offset_c=2.5, priority=120)
 
     assert runtime.config.house_zones[0].comfort_temperature == 23.5
     assert runtime.config.house_zones[1].comfort_temperature == 25.0
     assert runtime.config.house_zones[1].hard_max_temperature == 25.0
     assert runtime.config.house_zones[1].priority == 100
+    assert runtime.config.house_zones[1].hard_limit_failsafe_offset_c == 2.5
 
 
 def test_thermal_budget_calculates_reserve_and_time_to_hard_limit() -> None:
@@ -1900,6 +1903,7 @@ def test_hard_limit_without_pv_holds_a_gentle_failsafe_target_until_comfort() ->
         hard_max_temperature=26.0,
         pilot_min_target_temperature=20.0,
         pilot_max_target_temperature=25.0,
+        hard_limit_failsafe_offset_c=0.5,
     )
     runtime = models.ControllerConfig(
         shadow_mode=False,
@@ -1913,18 +1917,18 @@ def test_hard_limit_without_pv_holds_a_gentle_failsafe_target_until_comfort() ->
     start = controlled.decide(
         runtime, temperature_c=26.0, climate_mode="off", granted_stages=1, export_power_w=0,
     )
-    # The device accepts only whole degrees: 23.5 + 1.0 therefore becomes 25.
+    # The configurable 0.5 °C offset produces 24 °C on this whole-degree device.
     assert (start.action, start.target_temperature_c, start.reason_code) == (
-        "start", 25.0, "hard_temperature_limit_failsafe",
+        "start", 24.0, "hard_temperature_limit_failsafe",
     )
     controlled.mark_sent(start)
 
     holding = controlled.decide(
         runtime, temperature_c=25.8, climate_mode="cool", granted_stages=1,
-        export_power_w=0, climate_target_temperature_c=25.0,
+        export_power_w=0, climate_target_temperature_c=24.0,
     )
     assert (holding.action, holding.planned_target_temperature_c, holding.reason_code) == (
-        "none", 25.0, "hard_temperature_limit_failsafe_holding",
+        "none", 24.0, "hard_temperature_limit_failsafe_holding",
     )
 
 def test_living_room_pilot_leaves_running_cooling_manual_without_takeover() -> None:

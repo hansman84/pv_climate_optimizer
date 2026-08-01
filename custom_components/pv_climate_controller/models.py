@@ -19,6 +19,7 @@ class ZoneConfig:
     hard_max_temperature: float = 25.5
     pilot_min_target_temperature: float | None = None
     pilot_max_target_temperature: float | None = None
+    hard_limit_failsafe_offset_c: float = 1.0
     cooling_power_entity_id: str | None = None
     priority: int = 50
     pilot_enabled: bool = True

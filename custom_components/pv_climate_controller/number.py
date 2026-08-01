@@ -30,6 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZoneHardMaxTemperatureNumber(controller, entry.entry_id, f"zone_hard_max_temperature_{index}", zone.zone_id),
             ZonePilotMinTargetTemperatureNumber(controller, entry.entry_id, f"zone_pilot_min_target_temperature_{index}", zone.zone_id),
             ZonePilotMaxTargetTemperatureNumber(controller, entry.entry_id, f"zone_pilot_max_target_temperature_{index}", zone.zone_id),
+            ZoneHardLimitFailsafeOffsetNumber(controller, entry.entry_id, f"zone_hard_limit_failsafe_offset_{index}", zone.zone_id),
             ZonePriorityNumber(controller, entry.entry_id, f"zone_priority_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
@@ -229,6 +230,30 @@ class ZonePilotMaxTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_zone_thermal_settings(self._zone_id, pilot_max_target_temperature=value)
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZoneHardLimitFailsafeOffsetNumber(_ZoneSettingNumber):
+    """Room-specific gentle cooling offset used only above the hard limit without PV."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 8.0
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Fail-safe-Aufschlag ohne PV"
+
+    @property
+    def native_value(self) -> float:
+        return 1.0 if self._zone is None else self._zone.hard_limit_failsafe_offset_c
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(self._zone_id, hard_limit_failsafe_offset_c=value)
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 
