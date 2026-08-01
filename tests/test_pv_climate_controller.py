@@ -1298,6 +1298,38 @@ def test_heat_pump_priority_step_applies_to_every_indoor_unit() -> None:
         )
 
 
+def test_heat_pump_priority_never_treats_missing_startup_data_as_a_deficit() -> None:
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(lambda: 0)
+    room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+
+    missing_export = room_pilot.decide(
+        runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
+        export_power_w=None, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
+    )
+    missing_outdoor_power = room_pilot.decide(
+        runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=None,
+        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
+    )
+
+    assert (missing_export.action, missing_export.planned_target_temperature_c) == ("none", 23.0)
+    assert missing_export.reason_code == "heat_pump_priority_data_waiting"
+    assert (missing_outdoor_power.action, missing_outdoor_power.planned_target_temperature_c) == ("none", 23.0)
+    assert missing_outdoor_power.reason_code == "heat_pump_priority_data_waiting"
+
+
 def test_room_step_wait_scales_with_number_of_running_indoor_units() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(

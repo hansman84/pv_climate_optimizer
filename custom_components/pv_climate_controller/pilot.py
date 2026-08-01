@@ -397,7 +397,17 @@ class LivingRoomPilot:
         # is not enough reserve: require its currently measured draw on top of
         # the configured minimum before allowing normal climate modulation.
         priority_reserve_w = config.min_pv_surplus_w + max(0.0, outdoor_unit_power_w or 0.0)
-        priority_reserve_available = export_power_w is not None and export_power_w >= priority_reserve_w
+        priority_inputs_known = export_power_w is not None and outdoor_unit_power_w is not None
+        priority_reserve_available = priority_inputs_known and export_power_w >= priority_reserve_w
+        if heat_pump_priority_active and not priority_inputs_known and not hard_limit:
+            current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
+            return PilotAction(
+                "none",
+                None,
+                "heat_pump_priority_data_waiting",
+                f"Wärmepumpen-Priorität aktiv; {self._display_name} hält den bestehenden Sollwert, bis Netzeinspeisung und Außengeräteleistung gültig sind.",
+                current_target,
+            )
         if heat_pump_priority_active and not priority_reserve_available and not hard_limit:
             current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
             power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
