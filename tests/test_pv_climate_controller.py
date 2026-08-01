@@ -264,6 +264,31 @@ def test_urgent_command_bypasses_only_the_per_device_interval() -> None:
     assert len(calls) == 2
 
 
+def test_default_global_command_ramp_allows_only_one_step_per_minute() -> None:
+    clock = Clock()
+    calls = []
+
+    async def fake_executor(command):
+        calls.append(command)
+        return True
+
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock,
+    )
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.living", "pilot_adjust", 24.0, urgent=True), fake_executor,
+    )).status == "sent"
+    clock.now = 59
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.office", "pilot_adjust", 24.0, urgent=True), fake_executor,
+    )).status == "deferred"
+    clock.now = 60
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.office", "pilot_adjust", 24.0, urgent=True), fake_executor,
+    )).status == "sent"
+    assert len(calls) == 2
+
+
 def test_confirmed_command_can_be_resent_after_a_verified_device_drift() -> None:
     clock = Clock()
     calls = []
@@ -1200,12 +1225,16 @@ def test_living_room_pilot_only_relaxes_after_authoritative_room_temperature_rea
     assert (in_comfort_band.action, in_comfort_band.target_temperature_c, in_comfort_band.reason_code) == ("adjust", 25.0, "pv_wind_down")
 
 
-def test_heat_pump_priority_keeps_room_relieved_until_compressor_reserve_exists() -> None:
+def test_heat_pump_priority_raises_only_one_degree_per_minute_step() -> None:
     clock = Clock()
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
-        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living"),
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
         living_room_pilot_enabled=True,
         min_pv_surplus_w=100,
     )
@@ -1217,24 +1246,98 @@ def test_heat_pump_priority_keeps_room_relieved_until_compressor_reserve_exists(
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1,
         export_power_w=283, outdoor_unit_power_w=1059,
         heat_pump_priority_active=True, heat_pump_power_w=2900,
+        climate_target_temperature_c=21.0,
     )
-    assert (relief.action, relief.target_temperature_c, relief.reason_code) == ("adjust", 24.0, "heat_pump_priority_comfort_hold")
+    assert (relief.action, relief.target_temperature_c, relief.reason_code) == ("adjust", 22.0, "heat_pump_priority_relief_step")
     living_pilot.mark_sent(relief)
 
-    holding = living_pilot.decide(
+    clock.now += 59
+    waiting = living_pilot.decide(
         runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1,
         export_power_w=283, outdoor_unit_power_w=1059,
         heat_pump_priority_active=True, heat_pump_power_w=2900,
+        climate_target_temperature_c=22.0,
     )
-    assert (holding.action, holding.planned_target_temperature_c, holding.reason_code) == ("none", 24.0, "heat_pump_priority_holding")
+    assert (waiting.action, waiting.planned_target_temperature_c, waiting.reason_code) == ("none", 22.0, "heat_pump_priority_step_waiting")
 
-    clock.now += living_pilot._PV_WIND_DOWN_FAST_STEP_S
-    final_relief = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert (final_relief.action, final_relief.planned_target_temperature_c, final_relief.reason_code) == ("none", 24.0, "pv_comfort_holding")
+    clock.now += 1
+    next_step = living_pilot.decide(
+        runtime, temperature_c=24.0, climate_mode="cool", granted_stages=1,
+        export_power_w=283, outdoor_unit_power_w=1059,
+        heat_pump_priority_active=True, heat_pump_power_w=2900,
+        climate_target_temperature_c=22.0,
+    )
+    assert (next_step.action, next_step.target_temperature_c, next_step.reason_code) == ("adjust", 23.0, "heat_pump_priority_relief_step")
 
-    clock.now = 2400 + living_pilot._PV_WIND_DOWN_S
-    stopping = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert (stopping.action, stopping.reason_code) == ("none", "pv_comfort_holding")
+
+def test_heat_pump_priority_step_applies_to_every_indoor_unit() -> None:
+    for zone_name in ("Wohnzimmer", "Spielzimmer", "Speis", "Schlafzimmer", "Kinderzimmer"):
+        runtime = models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.STRICT_PV,
+            zone=models.ZoneConfig(
+                zone_name.casefold(), zone_name, f"climate.{zone_name.casefold()}", f"sensor.{zone_name.casefold()}",
+                pilot_min_target_temperature=20.0,
+                pilot_max_target_temperature=25.0,
+            ),
+            living_room_pilot_enabled=True,
+            min_pv_surplus_w=400,
+        )
+        room_pilot = pilot.LivingRoomPilot(lambda: 0, expected_zone_name=zone_name, display_name=zone_name)
+        room_pilot.mark_sent(pilot.PilotAction("start", 22.0, "test", "test"))
+
+        action = room_pilot.decide(
+            runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1,
+            export_power_w=0, outdoor_unit_power_w=1000,
+            heat_pump_priority_active=True, heat_pump_power_w=2500,
+            climate_target_temperature_c=22.0,
+        )
+
+        assert (action.action, action.target_temperature_c, action.reason_code) == (
+            "adjust", 23.0, "heat_pump_priority_relief_step",
+        )
+
+
+def test_room_step_wait_scales_with_number_of_running_indoor_units() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=400,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.mark_sent(pilot.PilotAction("start", 21.0, "test", "test"))
+    first = room_pilot.decide(
+        runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1000,
+        heat_pump_priority_active=True, climate_target_temperature_c=21.0,
+        heat_pump_relief_step_interval_s=180,
+    )
+    room_pilot.mark_sent(first)
+
+    clock.now = 179
+    waiting = room_pilot.decide(
+        runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1000,
+        heat_pump_priority_active=True, climate_target_temperature_c=22.0,
+        heat_pump_relief_step_interval_s=180,
+    )
+    assert waiting.reason_code == "heat_pump_priority_step_waiting"
+
+    clock.now = 180
+    next_step = room_pilot.decide(
+        runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1000,
+        heat_pump_priority_active=True, climate_target_temperature_c=22.0,
+        heat_pump_relief_step_interval_s=180,
+    )
+    assert (next_step.action, next_step.target_temperature_c) == ("adjust", 23.0)
 
 
 def test_pilot_reasserts_cooling_target_after_confirmed_device_drift() -> None:

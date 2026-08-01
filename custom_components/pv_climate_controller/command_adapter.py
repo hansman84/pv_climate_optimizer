@@ -47,7 +47,7 @@ class ClimateCommandAdapter:
         shadow_mode: bool = True,
         productive_enabled: bool = False,
         clock: Clock | None = None,
-        global_interval_s: float = 30.0,
+        global_interval_s: float = 60.0,
         per_entity_interval_s: float = 300.0,
         backoff_s: float = 900.0,
     ) -> None:

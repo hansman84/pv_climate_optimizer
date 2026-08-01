@@ -70,6 +70,7 @@ class LivingRoomPilot:
         self._cooling_started_at: float | None = None
         self._active_target_temperature_c: float | None = None
         self._last_target_change_at: float | None = None
+        self._last_heat_pump_relief_at: float | None = None
         self._expected_snapshot_at: float | None = None
         self._pv_missing_since: float | None = None
         self._settled_since: float | None = None
@@ -93,6 +94,7 @@ class LivingRoomPilot:
         self._cooling_started_at = None
         self._active_target_temperature_c = None
         self._last_target_change_at = None
+        self._last_heat_pump_relief_at = None
         self._expected_snapshot_at = None
         self._pv_missing_since = None
         self._settled_since = None
@@ -186,6 +188,8 @@ class LivingRoomPilot:
             if action.reason_code == "thermal_relief_adjustment":
                 self._thermal_relief_since = now
                 self._overcooling_since = None
+            if action.reason_code == "heat_pump_priority_relief_step":
+                self._last_heat_pump_relief_at = now
         elif action.action == "stop":
             self.release_ownership()
             self._demand_since = None
@@ -203,6 +207,7 @@ class LivingRoomPilot:
         outdoor_unit_power_w: float | None = None,
         heat_pump_priority_active: bool = False,
         heat_pump_power_w: float | None = None,
+        heat_pump_relief_step_interval_s: float = 60.0,
         thermal_profile: ThermalProfile | None = None,
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
@@ -307,25 +312,31 @@ class LivingRoomPilot:
         priority_reserve_w = config.min_pv_surplus_w + max(0.0, outdoor_unit_power_w or 0.0)
         priority_reserve_available = export_power_w is not None and export_power_w >= priority_reserve_w
         if heat_pump_priority_active and not priority_reserve_available and not hard_limit:
-            current_target = self._active_target_temperature_c if self._active_target_temperature_c is not None else climate_target_temperature_c
+            current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
             power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
-            room_above_comfort_band = living_room_band and temperature_c > zone.comfort_temperature + 0.25
-            priority_target = (
-                self._relieved_room_target(dynamic_room_target, temperature_c, zone.comfort_temperature, hold_target, max_target)
-                if living_room_band
-                else max_target
+            if current_target is None:
+                current_target = dynamic_room_target if living_room_band else cool_target
+            current_target = min(max_target, max(min_target, current_target))
+            if current_target >= max_target:
+                return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {self._display_name} ist bereits bis {max_target:.0f} °C entlastet.", max_target)
+            step_interval_s = max(60.0, heat_pump_relief_step_interval_s)
+            if self._last_heat_pump_relief_at is not None and now - self._last_heat_pump_relief_at < step_interval_s:
+                remaining_s = step_interval_s - (now - self._last_heat_pump_relief_at)
+                return PilotAction(
+                    "none",
+                    None,
+                    "heat_pump_priority_step_waiting",
+                    f"Wärmepumpen-Priorität aktiv ({power_text}); {self._display_name} hält {current_target:.0f} °C und wartet noch {max(1, ceil(remaining_s / 60))} Minute(n) auf die nächste gestaffelte Stufe.",
+                    current_target,
+                )
+            priority_target = min(max_target, current_target + 1.0)
+            return PilotAction(
+                "adjust",
+                priority_target,
+                "heat_pump_priority_relief_step",
+                f"Wärmepumpen-Priorität aktiv ({power_text}); {self._display_name} wird in dieser Minutenstufe von {current_target:.0f} auf {priority_target:.0f} °C entlastet.",
+                priority_target,
             )
-            if current_target is None or abs(current_target - priority_target) > 0.01:
-                if room_above_comfort_band:
-                    return PilotAction(
-                        "adjust",
-                        priority_target,
-                        "heat_pump_priority_comfort_hold",
-                        f"Wärmepumpen-Priorität aktiv ({power_text}), aber {self._display_name} liegt noch über dem Komfortband; die dynamische Solltemperatur wird nur auf {priority_target:.0f} °C entlastet.",
-                        priority_target,
-                    )
-                return PilotAction("adjust", max_target, "heat_pump_priority_relief", f"Wärmepumpen-Priorität aktiv ({power_text}); Solltemperatur wird sofort auf {max_target:.0f} °C angehoben.", max_target)
-            return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {priority_reserve_w:.0f} W Leistungsreserve werden für die Klimamodulation benötigt.", priority_target)
 
         # A high setpoint is not a guarantee that the indoor unit has stopped
         # removing heat.  Small rooms can continue cooling well below their

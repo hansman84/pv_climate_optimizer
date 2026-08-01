@@ -123,6 +123,7 @@ class PVClimateController:
     last_speis_pilot_action: PilotAction | None = None
     last_bedroom_pilot_actions: dict[str, PilotAction] = field(default_factory=dict)
     heat_pump_priority_active: bool = False
+    active_cooling_zone_count: int = 0
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -239,6 +240,7 @@ class PVClimateController:
 
     def observe_outdoor_power(self, active_zone_ids: tuple[str, ...], context: Mapping[str, object] | None = None) -> bool:
         """Learn shared compressor power passively from stable observed modes."""
+        self.active_cooling_zone_count = len(set(active_zone_ids))
         now = monotonic()
         captured = self.power_learner.observe(active_zone_ids, self.last_energy.outdoor_unit_power_w, now)
         if captured:
@@ -675,6 +677,7 @@ class PVClimateController:
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             heat_pump_priority_active=self.heat_pump_priority_active,
             heat_pump_power_w=self.last_energy.heat_pump_power_w,
+            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
             thermal_profile=self.last_thermal_profiles.get(zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -719,6 +722,7 @@ class PVClimateController:
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             heat_pump_priority_active=self.heat_pump_priority_active,
             heat_pump_power_w=self.last_energy.heat_pump_power_w,
+            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
             thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -767,6 +771,7 @@ class PVClimateController:
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             heat_pump_priority_active=self.heat_pump_priority_active,
             heat_pump_power_w=self.last_energy.heat_pump_power_w,
+            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
             thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -815,6 +820,7 @@ class PVClimateController:
             outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
             heat_pump_priority_active=self.heat_pump_priority_active,
             heat_pump_power_w=self.last_energy.heat_pump_power_w,
+            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
             thermal_profile=self.last_thermal_profiles.get(speis_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
@@ -834,11 +840,10 @@ class PVClimateController:
         active_pilot = room_pilot or self.pilot
         if action.action not in {"start", "adjust", "stop"} or target_zone is None:
             return CommandResult("noop", action.reason_text)
-        # A disappearing reserve must be able to release the compressor right
-        # away.  Do not let the calm five-minute per-device cadence keep a
-        # stale low target in place; the global guard still limits this to one
-        # command per 30 seconds across all rooms.
-        urgent_reasons = {"heat_pump_priority_relief", "heat_pump_priority_comfort_hold", "pv_wind_down"}
+        # Wärmepumpenentlastung advances only one indoor-unit degree per
+        # minute. Urgency bypasses the five-minute per-device cadence, while
+        # the shared adapter preserves the one-command-per-minute house ramp.
+        urgent_reasons = {"heat_pump_priority_relief_step", "pv_wind_down"}
         command = Command(
             target_zone.climate_entity_id,
             f"pilot_{action.action}",

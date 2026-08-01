@@ -11,5 +11,5 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class RateLimitConfig:
-    global_interval_s: float = 30.0
+    global_interval_s: float = 60.0
     per_entity_interval_s: float = 300.0
