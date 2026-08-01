@@ -344,17 +344,29 @@ class LivingRoomPilot:
             self._settled_since = None
             if self._pv_missing_since is None:
                 self._pv_missing_since = now
-            # A missing PV surplus must be visible at the device immediately.
-            # Raising the target to the configured gentle ceiling lets the
-            # inverter throttle and the indoor unit run out, without spending
-            # several five-minute steps at an unnecessarily cold target.
-            # If PV returns, the normal PV path below retakes control.
+            # PV loss must not abruptly surrender comfort.  While the
+            # authoritative room sensor is still meaningfully above comfort,
+            # retain the quiet whole-degree hold target so the inverter can
+            # reduce the excess heat continuously.  Only inside the comfort
+            # band may the device relax to its upper target and run out.
+            # This keeps a short PV dip from turning a warm room into an
+            # avoidable 20 -> 25 °C on/off cycle.
+            room_above_comfort_band = living_room_band and temperature_c > zone.comfort_temperature + 0.25
+            wind_down_target = hold_target if room_above_comfort_band else max_target
             current_target = self._active_target_temperature_c
             if current_target is None:
                 current_target = climate_target_temperature_c if climate_target_temperature_c is not None else min_target
-            if current_target < max_target:
-                return PilotAction("adjust", max_target, "pv_wind_down", f"PV-Überschuss fehlt; Solltemperatur wird sofort auf {max_target:.0f} °C angehoben. Das Innengerät darf sparsam auslaufen.", max_target)
-            if outdoor_unit_power_w is not None and outdoor_unit_power_w <= config.no_pv_hold_max_power_w:
+            if abs(current_target - wind_down_target) > 0.01:
+                if room_above_comfort_band:
+                    return PilotAction(
+                        "adjust",
+                        hold_target,
+                        "pv_comfort_hold",
+                        f"PV-Überschuss fehlt, aber {self._display_name} liegt noch über dem Komfortband; Solltemperatur bleibt bei {hold_target:.0f} °C für eine ruhige, wirksame Kühlung.",
+                        hold_target,
+                    )
+                return PilotAction("adjust", max_target, "pv_wind_down", f"PV-Überschuss fehlt und der Raum ist im Komfortband; Solltemperatur wird auf {max_target:.0f} °C angehoben. Das Innengerät darf sparsam auslaufen.", max_target)
+            if not room_above_comfort_band and outdoor_unit_power_w is not None and outdoor_unit_power_w <= config.no_pv_hold_max_power_w:
                 return PilotAction(
                     "none",
                     None,
@@ -362,8 +374,16 @@ class LivingRoomPilot:
                     f"PV-Überschuss fehlt, aber die Außeneinheit benötigt nur {outdoor_unit_power_w:.0f} W (Grenze {config.no_pv_hold_max_power_w:.0f} W); {self._display_name} hält bei {max_target:.0f} °C bewusst weiter.",
                     max_target,
                 )
-            if now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
+            if not room_above_comfort_band and now - self._pv_missing_since >= self._PV_WIND_DOWN_S:
                 return PilotAction("stop", None, "pv_surplus_ended", "PV-Überschuss bleibt aus; der sparsame Auslauf ist beendet.")
+            if room_above_comfort_band:
+                return PilotAction(
+                    "none",
+                    None,
+                    "pv_comfort_holding",
+                    f"PV-Überschuss fehlt, aber {self._display_name} liegt noch über dem Komfortband; die Kühlung hält bei {hold_target:.0f} °C ohne Takten weiter.",
+                    hold_target,
+                )
             return PilotAction(
                 "none",
                 None,
