@@ -1041,7 +1041,7 @@ def test_living_room_pilot_preconditions_from_pv_then_keeps_running_with_export(
     living_pilot.mark_sent(adjustment)
     clock.now = 4200
     settling = living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200)
-    assert (settling.action, settling.target_temperature_c, settling.reason_code) == ("adjust", 25.0, "pilot_soft_target_adjustment")
+    assert (settling.action, settling.reason_code) == ("none", "pilot_cooling_active")
     living_pilot.mark_sent(settling)
     clock.now = 5400
     assert living_pilot.decide(runtime, temperature_c=23.5, climate_mode="cool", granted_stages=1, export_power_w=1200).reason_code == "pilot_cooling_active"
@@ -1270,6 +1270,54 @@ def test_heat_pump_priority_raises_only_one_degree_per_minute_step() -> None:
     assert (next_step.action, next_step.target_temperature_c, next_step.reason_code) == ("adjust", 23.0, "heat_pump_priority_relief_step")
 
 
+def test_heat_pump_priority_does_not_relax_a_warm_room_beyond_one_comfort_step() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.0,
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=20.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.mark_sent(pilot.PilotAction("start", 22.0, "test", "test"))
+    clock.now = 1800
+
+    first_relief = room_pilot.decide(
+        runtime, temperature_c=24.8, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=22.0,
+    )
+    assert (first_relief.action, first_relief.target_temperature_c) == ("adjust", 23.0)
+    room_pilot.mark_sent(first_relief)
+
+    clock.now += 60
+    holding = room_pilot.decide(
+        runtime, temperature_c=24.8, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
+    )
+    assert (holding.action, holding.planned_target_temperature_c, holding.reason_code) == (
+        "none", 23.0, "heat_pump_priority_comfort_holding",
+    )
+
+    guard = room_pilot.decide(
+        runtime, temperature_c=24.8, climate_mode="cool", granted_stages=1,
+        export_power_w=0, outdoor_unit_power_w=1400,
+        heat_pump_priority_active=True, climate_target_temperature_c=25.0,
+        manual_change_candidate=False,
+    )
+    assert (guard.action, guard.target_temperature_c, guard.reason_code) == (
+        "adjust", 24.0, "heat_pump_priority_comfort_guard",
+    )
+
+
 def test_heat_pump_priority_step_applies_to_every_indoor_unit() -> None:
     for zone_name in ("Wohnzimmer", "Spielzimmer", "Speis", "Schlafzimmer", "Kinderzimmer"):
         runtime = models.ControllerConfig(
@@ -1387,22 +1435,22 @@ def test_heat_pump_relief_recovers_one_degree_per_room_rotation() -> None:
         min_pv_surplus_w=100,
     )
     room_pilot = pilot.LivingRoomPilot(clock)
-    room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+    room_pilot.mark_sent(pilot.PilotAction("start", 22.0, "test", "test"))
 
     relief = room_pilot.decide(
         runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
         export_power_w=0, outdoor_unit_power_w=1400,
-        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
+        heat_pump_priority_active=True, climate_target_temperature_c=22.0,
         heat_pump_relief_step_interval_s=120,
     )
-    assert relief.target_temperature_c == 24.0
+    assert relief.target_temperature_c == 23.0
     room_pilot.mark_sent(relief)
 
     clock.now = 119
     waiting = room_pilot.decide(
         runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
         export_power_w=3000, outdoor_unit_power_w=1400,
-        heat_pump_priority_active=True, climate_target_temperature_c=24.0,
+        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
         heat_pump_relief_step_interval_s=120,
     )
     assert waiting.reason_code == "heat_pump_priority_recovery_waiting"
@@ -1411,11 +1459,11 @@ def test_heat_pump_relief_recovers_one_degree_per_room_rotation() -> None:
     recovery = room_pilot.decide(
         runtime, temperature_c=24.7, climate_mode="cool", granted_stages=1,
         export_power_w=3000, outdoor_unit_power_w=1400,
-        heat_pump_priority_active=True, climate_target_temperature_c=24.0,
+        heat_pump_priority_active=True, climate_target_temperature_c=23.0,
         heat_pump_relief_step_interval_s=120,
     )
     assert (recovery.action, recovery.target_temperature_c, recovery.reason_code) == (
-        "adjust", 23.0, "heat_pump_priority_recovery_step",
+        "adjust", 22.0, "heat_pump_priority_recovery_step",
     )
 
 

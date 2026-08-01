@@ -126,7 +126,7 @@ class LivingRoomPilot:
         demand = min(1.0, max(0.0, (temperature_c - comfort_temperature_c) / control_band_c))
         continuous_target = max_target_c - demand * (max_target_c - min_target_c)
         whole_degree_target = float(floor(continuous_target + 0.5))
-        if temperature_c > comfort_temperature_c:
+        if temperature_c >= comfort_temperature_c - 0.75:
             quiet_hold_target = min(max_target_c, max(min_target_c, float(ceil(comfort_temperature_c))))
             whole_degree_target = min(whole_degree_target, quiet_hold_target)
         return min(max_target_c, max(min_target_c, whole_degree_target))
@@ -411,11 +411,31 @@ class LivingRoomPilot:
         if heat_pump_priority_active and not priority_reserve_available and not hard_limit:
             current_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
             power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
+            comfort_target = dynamic_room_target if living_room_band else cool_target
+            comfort_relief_cap = min(
+                max_target,
+                comfort_target + (1.0 if temperature_c > zone.comfort_temperature + 0.25 else 0.0),
+            )
             if current_target is None:
-                current_target = dynamic_room_target if living_room_band else cool_target
+                current_target = comfort_target
             current_target = min(max_target, max(min_target, current_target))
-            if current_target >= max_target:
-                return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {self._display_name} ist bereits bis {max_target:.0f} °C entlastet.", max_target)
+            if current_target > comfort_relief_cap:
+                guard_target = max(comfort_relief_cap, current_target - 1.0)
+                return PilotAction(
+                    "adjust",
+                    guard_target,
+                    "heat_pump_priority_comfort_guard",
+                    f"Wärmepumpen-Priorität aktiv ({power_text}), aber {self._display_name} liegt noch über dem Komfortziel; Solltemperatur wird schrittweise von {current_target:.0f} auf {guard_target:.0f} °C zurückgeführt.",
+                    guard_target,
+                )
+            if current_target >= comfort_relief_cap:
+                return PilotAction(
+                    "none",
+                    None,
+                    "heat_pump_priority_comfort_holding",
+                    f"Wärmepumpen-Priorität aktiv ({power_text}); {self._display_name} hält bei {comfort_relief_cap:.0f} °C, damit das Raum-Komfortziel erreichbar bleibt.",
+                    comfort_relief_cap,
+                )
             step_interval_s = max(60.0, heat_pump_relief_step_interval_s)
             if self._last_heat_pump_relief_at is not None and now - self._last_heat_pump_relief_at < step_interval_s:
                 remaining_s = step_interval_s - (now - self._last_heat_pump_relief_at)
@@ -426,7 +446,7 @@ class LivingRoomPilot:
                     f"Wärmepumpen-Priorität aktiv ({power_text}); {self._display_name} hält {current_target:.0f} °C und wartet noch {max(1, ceil(remaining_s / 60))} Minute(n) auf die nächste gestaffelte Stufe.",
                     current_target,
                 )
-            priority_target = min(max_target, current_target + 1.0)
+            priority_target = min(comfort_relief_cap, current_target + 1.0)
             return PilotAction(
                 "adjust",
                 priority_target,

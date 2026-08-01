@@ -858,6 +858,7 @@ class PVClimateController:
         urgent_reasons = {
             "heat_pump_priority_relief_step",
             "heat_pump_priority_recovery_step",
+            "heat_pump_priority_comfort_guard",
             "pv_wind_down",
         }
         command = Command(
