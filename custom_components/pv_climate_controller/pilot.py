@@ -270,9 +270,19 @@ class LivingRoomPilot:
         if heat_pump_priority_active and not priority_reserve_available and not hard_limit:
             current_target = self._active_target_temperature_c if self._active_target_temperature_c is not None else climate_target_temperature_c
             power_text = "unbekannter Leistung" if heat_pump_power_w is None else f"{heat_pump_power_w:.0f} W"
-            if current_target is None or current_target < max_target:
+            room_above_comfort_band = living_room_band and temperature_c > zone.comfort_temperature + 0.25
+            priority_target = hold_target if room_above_comfort_band else max_target
+            if current_target is None or abs(current_target - priority_target) > 0.01:
+                if room_above_comfort_band:
+                    return PilotAction(
+                        "adjust",
+                        hold_target,
+                        "heat_pump_priority_comfort_hold",
+                        f"Wärmepumpen-Priorität aktiv ({power_text}), aber {self._display_name} liegt noch über dem Komfortband; Solltemperatur hält bei {hold_target:.0f} °C.",
+                        hold_target,
+                    )
                 return PilotAction("adjust", max_target, "heat_pump_priority_relief", f"Wärmepumpen-Priorität aktiv ({power_text}); Solltemperatur wird sofort auf {max_target:.0f} °C angehoben.", max_target)
-            return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {priority_reserve_w:.0f} W Leistungsreserve werden für die Klimamodulation benötigt.", max_target)
+            return PilotAction("none", None, "heat_pump_priority_holding", f"Wärmepumpen-Priorität aktiv ({power_text}); {priority_reserve_w:.0f} W Leistungsreserve werden für die Klimamodulation benötigt.", priority_target)
 
         # A high setpoint is not a guarantee that the indoor unit has stopped
         # removing heat.  Small rooms can continue cooling well below their

@@ -1208,7 +1208,7 @@ def test_heat_pump_priority_keeps_room_relieved_until_compressor_reserve_exists(
         export_power_w=283, outdoor_unit_power_w=1059,
         heat_pump_priority_active=True, heat_pump_power_w=2900,
     )
-    assert (relief.action, relief.target_temperature_c, relief.reason_code) == ("adjust", 25.0, "heat_pump_priority_relief")
+    assert (relief.action, relief.target_temperature_c, relief.reason_code) == ("adjust", 24.0, "heat_pump_priority_comfort_hold")
     living_pilot.mark_sent(relief)
 
     holding = living_pilot.decide(
@@ -1216,12 +1216,11 @@ def test_heat_pump_priority_keeps_room_relieved_until_compressor_reserve_exists(
         export_power_w=283, outdoor_unit_power_w=1059,
         heat_pump_priority_active=True, heat_pump_power_w=2900,
     )
-    assert (holding.action, holding.planned_target_temperature_c, holding.reason_code) == ("none", 25.0, "heat_pump_priority_holding")
+    assert (holding.action, holding.planned_target_temperature_c, holding.reason_code) == ("none", 24.0, "heat_pump_priority_holding")
 
     clock.now += living_pilot._PV_WIND_DOWN_FAST_STEP_S
     final_relief = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)
-    assert (final_relief.action, final_relief.planned_target_temperature_c, final_relief.reason_code) == ("adjust", 24.0, "pv_comfort_hold")
-    living_pilot.mark_sent(final_relief)
+    assert (final_relief.action, final_relief.planned_target_temperature_c, final_relief.reason_code) == ("none", 24.0, "pv_comfort_holding")
 
     clock.now = 2400 + living_pilot._PV_WIND_DOWN_S
     stopping = living_pilot.decide(runtime, temperature_c=24.5, climate_mode="cool", granted_stages=1, export_power_w=0)

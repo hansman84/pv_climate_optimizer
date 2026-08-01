@@ -838,7 +838,7 @@ class PVClimateController:
         # away.  Do not let the calm five-minute per-device cadence keep a
         # stale low target in place; the global guard still limits this to one
         # command per 30 seconds across all rooms.
-        urgent_reasons = {"heat_pump_priority_relief", "pv_wind_down"}
+        urgent_reasons = {"heat_pump_priority_relief", "heat_pump_priority_comfort_hold", "pv_wind_down"}
         command = Command(
             target_zone.climate_entity_id,
             f"pilot_{action.action}",
