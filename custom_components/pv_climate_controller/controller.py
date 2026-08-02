@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_AIR_ADVANTAGE_C, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_TEMPERATURE_MAX_AGE_MINUTES, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -182,6 +182,9 @@ class PVClimateController:
             no_pv_hold_max_power_w=max(0.0, float(options.get(CONF_NO_PV_HOLD_MAX_POWER_W, data.get(CONF_NO_PV_HOLD_MAX_POWER_W, 350.0)))),
             house_zones=zones,
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
+            cooling_start_offset_c=max(0.0, min(3.0, float(options.get(CONF_COOLING_START_OFFSET_C, data.get(CONF_COOLING_START_OFFSET_C, 0.7))))),
+            outdoor_air_advantage_c=max(0.0, min(5.0, float(options.get(CONF_OUTDOOR_AIR_ADVANTAGE_C, data.get(CONF_OUTDOOR_AIR_ADVANTAGE_C, 1.0))))),
+            outdoor_temperature_max_age_minutes=max(1.0, min(180.0, float(options.get(CONF_OUTDOOR_TEMPERATURE_MAX_AGE_MINUTES, data.get(CONF_OUTDOOR_TEMPERATURE_MAX_AGE_MINUTES, 30.0))))),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
             sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
             bedroom_mode_enabled=bool(options.get(CONF_BEDROOM_MODE_ENABLED, data.get(CONF_BEDROOM_MODE_ENABLED, True))),
@@ -638,6 +641,8 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
+        outdoor_temperature_age_s: float | None = None,
         now: time | None = None,
     ) -> PilotAction:
         """Use late-afternoon PV for sleeping rooms and enforce their quiet time."""
@@ -684,6 +689,8 @@ class PVClimateController:
             thermal_profile=self.last_thermal_profiles.get(zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+            outdoor_temperature_c=outdoor_temperature_c,
+            outdoor_temperature_age_s=outdoor_temperature_age_s,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
             shade_open_percent=shade_open_percent,
@@ -709,6 +716,8 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
+        outdoor_temperature_age_s: float | None = None,
     ) -> PilotAction:
         """Evaluate the only productive PoC route after HA state refresh."""
         if not self.config.living_room_pilot_enabled:
@@ -732,6 +741,8 @@ class PVClimateController:
             thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+            outdoor_temperature_c=outdoor_temperature_c,
+            outdoor_temperature_age_s=outdoor_temperature_age_s,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
             shade_open_percent=shade_open_percent,
@@ -757,6 +768,8 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
+        outdoor_temperature_age_s: float | None = None,
     ) -> PilotAction:
         """Evaluate the productive Arbeitszimmer route only for its exact mapped zone."""
         office_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "spielzimmer"), None)
@@ -784,6 +797,8 @@ class PVClimateController:
             thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+            outdoor_temperature_c=outdoor_temperature_c,
+            outdoor_temperature_age_s=outdoor_temperature_age_s,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
             shade_open_percent=shade_open_percent,
@@ -809,6 +824,8 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
+        outdoor_temperature_age_s: float | None = None,
     ) -> PilotAction:
         """Evaluate the small Speis as a productive zone with a fast overshoot guard."""
         speis_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "speis"), None)
@@ -836,6 +853,8 @@ class PVClimateController:
             thermal_profile=self.last_thermal_profiles.get(speis_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+            outdoor_temperature_c=outdoor_temperature_c,
+            outdoor_temperature_age_s=outdoor_temperature_age_s,
             direct_sun=direct_sun,
             irradiance_w_m2=irradiance_w_m2,
             shade_open_percent=shade_open_percent,
@@ -906,6 +925,18 @@ class PVClimateController:
     def set_no_pv_hold_max_power_w(self, watts: float) -> None:
         """Set the measured-power ceiling for a deliberate no-PV hold."""
         self.config = replace(self.config, no_pv_hold_max_power_w=max(0.0, watts))
+
+    def set_cooling_start_offset_c(self, value: float) -> None:
+        """Require a visible external-room-temperature margin before PV cooling starts."""
+        self.config = replace(self.config, cooling_start_offset_c=max(0.0, min(3.0, value)))
+
+    def set_outdoor_air_advantage_c(self, value: float) -> None:
+        """Prefer fresh outside air once it is meaningfully cooler than a room."""
+        self.config = replace(self.config, outdoor_air_advantage_c=max(0.0, min(5.0, value)))
+
+    def set_outdoor_temperature_max_age_minutes(self, value: float) -> None:
+        """Reject stale outside measurements from all productive pilot decisions."""
+        self.config = replace(self.config, outdoor_temperature_max_age_minutes=max(1.0, min(180.0, value)))
 
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:
         """Set only the display normalization convention for the selected source."""

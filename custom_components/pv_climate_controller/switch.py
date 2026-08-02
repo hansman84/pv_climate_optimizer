@@ -24,10 +24,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
     entities.extend(
-        ClimateTemperatureFallbackSwitch(controller, entry.entry_id, f"temperature_fallback_{index}", zone.zone_id)
-        for index, zone in enumerate(controller.config.house_zones, start=1)
-    )
-    entities.extend(
         ZonePilotSwitch(controller, entry.entry_id, f"zone_pilot_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
