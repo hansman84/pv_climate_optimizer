@@ -836,7 +836,7 @@ class PVClimateController:
         pending_s = 0
         if self.bedroom_comfort_candidate_since is not None:
             pending_s = max(0, int(15 * 60 - (monotonic() - self.bedroom_comfort_candidate_since)))
-        active = self.effective_bedroom_target_temperature
+        active = self.effective_bedroom_target_temperature or self.config.bedroom_target_temperature
         if self.outdoor_comfort_temperature_c is None:
             state = "Außentemperatur fehlt – bisheriges Abendziel aktiv."
         elif pending_s:
