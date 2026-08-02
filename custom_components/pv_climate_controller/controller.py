@@ -192,6 +192,7 @@ class PVClimateController:
             cooling_start_offset_c=max(0.0, min(3.0, float(options.get(CONF_COOLING_START_OFFSET_C, data.get(CONF_COOLING_START_OFFSET_C, 0.7))))),
             mild_outdoor_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, data.get(CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, 25.0))))),
             hot_outdoor_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, data.get(CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, 24.0))))),
+            living_evening_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_LIVING_EVENING_COMFORT_TEMPERATURE, data.get(CONF_LIVING_EVENING_COMFORT_TEMPERATURE, 24.5))))),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
             sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
             bedroom_mode_enabled=bool(options.get(CONF_BEDROOM_MODE_ENABLED, data.get(CONF_BEDROOM_MODE_ENABLED, True))),
@@ -771,6 +772,11 @@ class PVClimateController:
             return zone
         self.outdoor_comfort_temperature_c = outdoor_temperature_c
         base_temperature = zone.comfort_temperature
+        local_time = datetime.now().astimezone().time()
+        if time(20, 30) <= local_time < time(23, 30):
+            self.effective_living_room_comfort_temperature = self.config.living_evening_comfort_temperature
+            self.outdoor_comfort_candidate_since = None
+            return replace(zone, comfort_temperature=self.config.living_evening_comfort_temperature)
         candidate = base_temperature if outdoor_temperature_c is None else (
             self.config.mild_outdoor_comfort_temperature if outdoor_temperature_c <= 28.0
             else self.config.hot_outdoor_comfort_temperature
@@ -1033,6 +1039,9 @@ class PVClimateController:
             mild_outdoor_comfort_temperature=self.config.mild_outdoor_comfort_temperature if mild is None else max(20.0, min(28.0, mild)),
             hot_outdoor_comfort_temperature=self.config.hot_outdoor_comfort_temperature if hot is None else max(20.0, min(28.0, hot)),
         )
+
+    def set_living_evening_comfort_temperature(self, value: float) -> None:
+        self.config = replace(self.config, living_evening_comfort_temperature=max(20.0, min(28.0, value)))
 
 
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:
