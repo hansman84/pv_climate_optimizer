@@ -8,7 +8,7 @@ from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_TARGET_TEMPERATURE, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_AIR_ADVANTAGE_C, CONF_OUTDOOR_TEMPERATURE_MAX_AGE_MINUTES, DOMAIN
+from .const import CONF_BEDROOM_TARGET_TEMPERATURE, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_HARD_MAX_TEMPERATURE, CONF_HOUSE_ZONES, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, DOMAIN
 from .entity import ControllerEntity
 from .controller import serialize_zone_config
 
@@ -22,8 +22,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         MinPVSurplusNumber(controller, entry.entry_id, "min_pv_surplus"),
         NoPVHoldMaxPowerNumber(controller, entry.entry_id, "no_pv_hold_max_power"),
         CoolingStartOffsetNumber(controller, entry.entry_id, "cooling_start_offset"),
-        OutdoorAirAdvantageNumber(controller, entry.entry_id, "outdoor_air_advantage"),
-        OutdoorTemperatureMaxAgeNumber(controller, entry.entry_id, "outdoor_temperature_max_age"),
         BedroomTargetTemperatureNumber(controller, entry.entry_id, "bedroom_target_temperature"),
     ])
     zone_numbers = []
@@ -142,38 +140,6 @@ class CoolingStartOffsetNumber(_HouseCoolingNumber):
         self.controller.notify_state_listeners()
 
 
-class OutdoorAirAdvantageNumber(_HouseCoolingNumber):
-    _attr_name = "Außenluft-Vorsprung"
-    _attr_native_min_value = 0.0
-    _attr_native_max_value = 5.0
-    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_device_class = NumberDeviceClass.TEMPERATURE
-
-    @property
-    def native_value(self) -> float:
-        return self.controller.config.outdoor_air_advantage_c
-
-    async def async_set_native_value(self, value: float) -> None:
-        self.controller.set_outdoor_air_advantage_c(value)
-        await self.async_persist_option(CONF_OUTDOOR_AIR_ADVANTAGE_C, value)
-        self.controller.notify_state_listeners()
-
-
-class OutdoorTemperatureMaxAgeNumber(_HouseCoolingNumber):
-    _attr_name = "Maximales Alter der Außentemperatur"
-    _attr_native_min_value = 1.0
-    _attr_native_max_value = 180.0
-    _attr_native_step = 1.0
-    _attr_native_unit_of_measurement = "min"
-
-    @property
-    def native_value(self) -> float:
-        return self.controller.config.outdoor_temperature_max_age_minutes
-
-    async def async_set_native_value(self, value: float) -> None:
-        self.controller.set_outdoor_temperature_max_age_minutes(value)
-        await self.async_persist_option(CONF_OUTDOOR_TEMPERATURE_MAX_AGE_MINUTES, value)
-        self.controller.notify_state_listeners()
 
 
 class BedroomTargetTemperatureNumber(_TemperatureNumber):

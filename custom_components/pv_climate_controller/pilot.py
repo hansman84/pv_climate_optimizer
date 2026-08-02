@@ -358,8 +358,6 @@ class LivingRoomPilot:
         irradiance_w_m2: float | None = None,
         temperature_trend_c_per_h: float | None = None,
         predicted_temperature_60m_c: float | None = None,
-        outdoor_temperature_c: float | None = None,
-        outdoor_temperature_age_s: float | None = None,
         shade_open_percent: float | None = None,
         active_cooling_zone_count: int = 1,
         climate_target_temperature_c: float | None = None,
@@ -395,15 +393,6 @@ class LivingRoomPilot:
                 return PilotAction("none", None, "manual_control_resumed", f"Manuelle Änderung erkannt; {self._display_name}-Pilot hat die Kontrolle zurückgegeben.")
         pv_available = export_power_w is not None and export_power_w >= config.min_pv_surplus_w
         hard_limit = temperature_c >= zone.hard_max_temperature
-        outdoor_fresh = (
-            outdoor_temperature_c is not None
-            and outdoor_temperature_age_s is not None
-            and outdoor_temperature_age_s <= config.outdoor_temperature_max_age_minutes * 60
-        )
-        fresh_air_preferred = (
-            outdoor_fresh
-            and outdoor_temperature_c <= temperature_c - config.outdoor_air_advantage_c
-        )
         # The configured comfort value is the thermal promise, even when the
         # indoor unit accepts whole degrees only.  A 23.5 °C comfort target is
         # therefore held at 24 °C: starting at 23 °C makes this inverter cool
@@ -462,12 +451,6 @@ class LivingRoomPilot:
                 return PilotAction("none", None, "manual_control_resumed", f"{self._display_name} läuft manuell; Pilot greift erst nach Übergabe ein.")
             self._adopt_external_cooling(now, snapshot)
         if not self._owns_cooling:
-            if fresh_air_preferred and not hard_limit:
-                self._demand_since = None
-                return PilotAction(
-                    "none", None, "fresh_air_preferred",
-                    f"{self._display_name}: Außenluft ist {temperature_c - outdoor_temperature_c:.1f} °C kühler; aktive Kühlung bleibt aus.",
-                )
             if not needs_cooling:
                 self._demand_since = None
                 return PilotAction("none", None, "pv_or_thermal_need_missing", "Kein PV-gestützter oder thermischer Kühlbedarf.")
@@ -495,12 +478,6 @@ class LivingRoomPilot:
         if climate_mode != "cool":
             self.release_ownership()
             return PilotAction("none", None, "pilot_start_unconfirmed", "Pilotstart ist am Klimagerät noch nicht bestätigt.")
-
-        if fresh_air_preferred and not hard_limit:
-            return PilotAction(
-                "stop", None, "fresh_air_preferred",
-                f"{self._display_name}: Außenluft ist {temperature_c - outdoor_temperature_c:.1f} °C kühler; Pilot beendet die aktive Kühlung.",
-            )
 
         # A recovered hard-limit fail-safe must always end its grid-powered
         # run.  The normal no-PV low-power hold intentionally allows a PV run

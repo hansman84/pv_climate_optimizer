@@ -152,7 +152,6 @@ async def _async_refresh_controller(
     irradiance_state = None if config.solar_irradiance_entity_id is None else hass.states.get(config.solar_irradiance_entity_id)
     sun_state = None if config.sun_entity_id is None else hass.states.get(config.sun_entity_id)
     outside_temperature = _temperature_value(None if outside_state is None else outside_state.state)
-    outside_temperature_age_s = _state_age_s(outside_state)
     irradiance = _temperature_value(None if irradiance_state is None else irradiance_state.state)
     sun_azimuth = _temperature_value(None if sun_state is None else sun_state.attributes.get("azimuth"))
     sun_elevation = _temperature_value(None if sun_state is None else sun_state.attributes.get("elevation"))
@@ -205,8 +204,6 @@ async def _async_refresh_controller(
             if controller.config.zone is not None
             else None
         ),
-        outdoor_temperature_c=outside_temperature,
-        outdoor_temperature_age_s=outside_temperature_age_s,
     )
     await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
     office_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "spielzimmer"), None)
@@ -224,8 +221,6 @@ async def _async_refresh_controller(
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
             shade_open_percent=contexts.get(office_zone.zone_id, {}).get("shade_open_percent"),
-            outdoor_temperature_c=outside_temperature,
-            outdoor_temperature_age_s=outside_temperature_age_s,
         )
         await controller.async_apply_pilot_action(office_action, _pilot_service_executor(hass), zone=office_zone, room_pilot=controller.office_pilot)
     speis_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "speis"), None)
@@ -243,8 +238,6 @@ async def _async_refresh_controller(
             direct_sun=bool(contexts.get(speis_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
             shade_open_percent=contexts.get(speis_zone.zone_id, {}).get("shade_open_percent"),
-            outdoor_temperature_c=outside_temperature,
-            outdoor_temperature_age_s=outside_temperature_age_s,
         )
         await controller.async_apply_pilot_action(speis_action, _pilot_service_executor(hass), zone=speis_zone, room_pilot=controller.speis_pilot)
     for bedroom_zone in (item for item in config.house_zones if item.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}):
@@ -261,8 +254,6 @@ async def _async_refresh_controller(
             direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
             shade_open_percent=contexts.get(bedroom_zone.zone_id, {}).get("shade_open_percent"),
-            outdoor_temperature_c=outside_temperature,
-            outdoor_temperature_age_s=outside_temperature_age_s,
         )
         await controller.async_apply_pilot_action(
             bedroom_action,

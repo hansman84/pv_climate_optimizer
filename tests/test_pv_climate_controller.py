@@ -2022,7 +2022,7 @@ def test_half_degree_comfort_starts_at_the_quiet_whole_degree_hold_target() -> N
     assert action.target_temperature_c == 24.0
 
 
-def test_fresh_cooler_outdoor_air_blocks_pilot_start_below_hard_limit() -> None:
+def test_cooler_outdoor_air_does_not_block_pilot_start() -> None:
     runtime = models.ControllerConfig(
         shadow_mode=False,
         energy_policy=const.EnergyPolicy.STRICT_PV,
@@ -2033,26 +2033,6 @@ def test_fresh_cooler_outdoor_air_blocks_pilot_start_below_hard_limit() -> None:
 
     action = pilot.LivingRoomPilot().decide(
         runtime, temperature_c=25.0, climate_mode="off", granted_stages=1, export_power_w=1200,
-        outdoor_temperature_c=23.5, outdoor_temperature_age_s=60,
-    )
-
-    assert action.reason_code == "fresh_air_preferred"
-    assert action.action == "none"
-
-
-def test_stale_outdoor_air_does_not_block_pilot_start() -> None:
-    runtime = models.ControllerConfig(
-        shadow_mode=False,
-        energy_policy=const.EnergyPolicy.STRICT_PV,
-        zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living", comfort_temperature=24.0),
-        living_room_pilot_enabled=True,
-        min_pv_surplus_w=1000,
-    )
-    room_pilot = pilot.LivingRoomPilot(clock=lambda: 0)
-
-    action = room_pilot.decide(
-        runtime, temperature_c=25.0, climate_mode="off", granted_stages=1, export_power_w=1200,
-        outdoor_temperature_c=20.0, outdoor_temperature_age_s=31 * 60,
     )
 
     assert action.reason_code == "pilot_demand_stabilizing"
