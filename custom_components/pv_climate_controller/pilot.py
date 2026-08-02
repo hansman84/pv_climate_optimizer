@@ -364,6 +364,7 @@ class LivingRoomPilot:
         climate_fan_mode: str | None = None,
         climate_swing_mode: str | None = None,
         pv_deadline_active: bool = False,
+        comfort_required: bool = False,
         manual_change_candidate: bool = True,
     ) -> PilotAction | None:
         """Return a PV-first action or a visible reason for doing nothing."""
@@ -434,6 +435,9 @@ class LivingRoomPilot:
         )
         strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
         needs_cooling = hard_limit or (
+            comfort_required
+            and temperature_c > zone.comfort_temperature + 0.25
+        ) or (
             pv_available
             and (temperature_c >= zone.comfort_temperature + config.cooling_start_offset_c
                  or (predicted_temperature_60m_c is not None
@@ -470,8 +474,10 @@ class LivingRoomPilot:
                 return PilotAction("start", start_target, "hard_temperature_limit", f"Harte Temperaturgrenze erreicht; Kühlung startet temperaturgeführt bei {start_target:.0f} °C.")
             if self._demand_since is None:
                 self._demand_since = now
-            if now - self._demand_since < 600:
+            if not comfort_required and now - self._demand_since < 600:
                 return PilotAction("none", None, "pilot_demand_stabilizing", "PV-Kühlbedarf wird zehn Minuten auf Stabilität geprüft.")
+            if comfort_required:
+                return PilotAction("start", start_target, "bedroom_evening_comfort", f"Abendkomfort ist noch nicht erreicht; {self._display_name} startet bei {start_target:.0f} °C auch ohne PV.")
             start_reason = "pv_capacity_preconditioning" if pv_capacity_target is not None and start_target == pv_capacity_target else "pv_preconditioning"
             return PilotAction("start", start_target, start_reason, f"PV-Überschuss startet eine ruhige, temperaturgeführte Kühlung bei {start_target:.0f} °C.")
 
@@ -755,6 +761,15 @@ class LivingRoomPilot:
             )
         if self._last_heat_pump_relief_at is not None and reported_target is not None and reported_target <= desired_target:
             self._last_heat_pump_relief_at = None
+
+        if comfort_required and temperature_c > zone.comfort_temperature + 0.25:
+            target = desired_target if pv_available else cool_target
+            current_target = self._active_target_temperature_c
+            if current_target is None:
+                current_target = climate_target_temperature_c
+            if current_target is None or abs(current_target - target) > 0.01:
+                return PilotAction("adjust", target, "bedroom_evening_comfort", f"Abendkomfort ist noch nicht erreicht; {self._display_name} kühlt bis zum Ziel bei {target:.0f} °C weiter, auch ohne PV.", target)
+            return PilotAction("none", None, "bedroom_evening_comfort_holding", f"Abendkomfort ist noch nicht erreicht; {self._display_name} kühlt bei {target:.0f} °C weiter.", target)
 
         if not pv_available and not hard_limit:
             self._settled_since = None

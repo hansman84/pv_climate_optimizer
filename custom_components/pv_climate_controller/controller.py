@@ -702,6 +702,8 @@ class PVClimateController:
             climate_target_temperature_c=climate_target_temperature_c,
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
+            pv_deadline_active=True,
+            comfort_required=True,
             manual_change_candidate=manual_change_candidate,
         )
         self.last_bedroom_pilot_actions[zone.zone_id] = action
