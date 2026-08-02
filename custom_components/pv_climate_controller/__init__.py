@@ -75,7 +75,7 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.outdoor_unit_power_entity_id,
             config.heat_pump_priority_entity_id,
             config.heat_pump_power_entity_id,
-            config.outdoor_temperature_entity_id,
+            config.outdoor_temperature_entity_id or "sensor.aussentemperatur",
             config.solar_irradiance_entity_id,
             config.sun_entity_id,
             *(entity for house_zone in config.house_zones for entity in (
@@ -148,7 +148,11 @@ async def _async_refresh_controller(
         heat_pump_power_unit=None if heat_pump_power is None else heat_pump_power.attributes.get("unit_of_measurement"),
         heat_pump_priority_state=None if heat_pump_priority is None else heat_pump_priority.state,
     )
-    outside_state = None if config.outdoor_temperature_entity_id is None else hass.states.get(config.outdoor_temperature_entity_id)
+    # This installation's agreed outdoor reference.  Keep the options-flow
+    # selection authoritative when present, but do not silently disable the
+    # comfort profile merely because a legacy entry predates that field.
+    outside_temperature_entity_id = config.outdoor_temperature_entity_id or "sensor.aussentemperatur"
+    outside_state = hass.states.get(outside_temperature_entity_id)
     irradiance_state = None if config.solar_irradiance_entity_id is None else hass.states.get(config.solar_irradiance_entity_id)
     sun_state = None if config.sun_entity_id is None else hass.states.get(config.sun_entity_id)
     outside_temperature = _temperature_value(None if outside_state is None else outside_state.state)
