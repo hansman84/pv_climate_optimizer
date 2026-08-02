@@ -458,7 +458,12 @@ class LivingRoomPilot:
                 return PilotAction("none", None, "pilot_resting", f"{self._display_name}-Pilot hält die Kompressor-Ruhezeit ein.")
             start_target = dynamic_room_target if living_room_band else cool_target
             if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None:
-                start_target = min(start_target, pv_capacity_target)
+                pv_capacity_floor = (
+                    max(min_target, float(ceil(zone.comfort_temperature - 1.0)))
+                    if living_room_band
+                    else min_target
+                )
+                start_target = min(start_target, max(pv_capacity_floor, pv_capacity_target))
             if hard_limit:
                 if not pv_available:
                     return PilotAction(
@@ -700,7 +705,17 @@ class LivingRoomPilot:
         # comfort, rather than treating PV as a simple on/off permission.
         pv_capacity_active = False
         if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None and pv_capacity_target < desired_target:
-            desired_target = pv_capacity_target
+            # PV surplus is an invitation to cool a little longer, not a reason
+            # to turn the living room into a cold-air outlet.  Keep at most one
+            # whole device degree below the current, externally measured comfort
+            # target; the explicit pilot minimum remains an additional lower
+            # boundary.  Other rooms retain their individual pre-cooling rules.
+            pv_capacity_floor = (
+                max(min_target, float(ceil(zone.comfort_temperature - 1.0)))
+                if living_room_band
+                else min_target
+            )
+            desired_target = max(pv_capacity_floor, pv_capacity_target)
             pv_capacity_active = True
             target_change_due = target_change_due or (
                 self._last_target_change_at is None

@@ -1415,7 +1415,7 @@ def test_available_pv_uses_the_full_configured_target_range_until_room_is_comfor
     )
 
     assert (action.action, action.target_temperature_c, action.reason_code) == (
-        "adjust", 20.0, "pv_capacity_preconditioning",
+        "adjust", 22.0, "pv_capacity_preconditioning",
     )
 
 
@@ -1447,7 +1447,7 @@ def test_pv_capacity_target_is_also_used_when_starting_a_warm_room() -> None:
     )
 
     assert (start.action, start.target_temperature_c, start.reason_code) == (
-        "start", 20.0, "pv_capacity_preconditioning",
+        "start", 22.0, "pv_preconditioning",
     )
 
 
