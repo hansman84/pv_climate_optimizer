@@ -126,6 +126,10 @@ class PVClimateController:
     last_bedroom_pilot_actions: dict[str, PilotAction] = field(default_factory=dict)
     heat_pump_priority_active: bool = False
     active_cooling_zone_count: int = 0
+    effective_living_room_comfort_temperature: float | None = None
+    outdoor_comfort_candidate_temperature: float | None = None
+    outdoor_comfort_candidate_since: float | None = None
+    outdoor_comfort_temperature_c: float | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -710,6 +714,7 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
     ) -> PilotAction:
         """Evaluate the only productive PoC route after HA state refresh."""
         if not self.config.living_room_pilot_enabled:
@@ -719,9 +724,10 @@ class PVClimateController:
             self.last_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Wohnzimmer-Pilot ist für diesen Raum ausgeschaltet.")
             return self.last_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
-        forecast = None if self.config.zone is None else self.last_zone_forecasts.get(self.config.zone.zone_id)
+        effective_zone = self._effective_living_room_zone(outdoor_temperature_c)
+        forecast = None if effective_zone is None else self.last_zone_forecasts.get(effective_zone.zone_id)
         self.last_pilot_action = self.pilot.decide(
-            self.config,
+            replace(self.config, zone=effective_zone),
             temperature_c=temperature_c,
             climate_mode=climate_mode,
             granted_stages=grant,
@@ -730,7 +736,7 @@ class PVClimateController:
             heat_pump_priority_active=self.heat_pump_priority_active,
             heat_pump_power_w=self.last_energy.heat_pump_power_w,
             heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
-            thermal_profile=None if self.config.zone is None else self.last_thermal_profiles.get(self.config.zone.zone_id),
+            thermal_profile=None if effective_zone is None else self.last_thermal_profiles.get(effective_zone.zone_id),
             temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
             predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
             direct_sun=direct_sun,
@@ -744,6 +750,64 @@ class PVClimateController:
             manual_change_candidate=manual_change_candidate,
         )
         return self.last_pilot_action
+
+    def _effective_living_room_zone(self, outdoor_temperature_c: float | None) -> ZoneConfig | None:
+        """Apply the confirmed outdoor comfort band without treating outside air as ventilation.
+
+        The profile only relaxes the desired room temperature. Direct sun, room
+        temperature and the hard limit remain fully effective safeguards.
+        A band must persist for 15 minutes before becoming active.
+        """
+        zone = self.config.zone
+        if zone is None or zone.name.strip().casefold() != "wohnzimmer":
+            return zone
+        self.outdoor_comfort_temperature_c = outdoor_temperature_c
+        base_temperature = zone.comfort_temperature
+        candidate = base_temperature
+        if outdoor_temperature_c is not None:
+            if outdoor_temperature_c <= 26.0:
+                candidate = 26.0
+            elif outdoor_temperature_c <= 28.0:
+                candidate = 25.0
+        now = monotonic()
+        if candidate != self.outdoor_comfort_candidate_temperature:
+            self.outdoor_comfort_candidate_temperature = candidate
+            self.outdoor_comfort_candidate_since = now
+        if self.effective_living_room_comfort_temperature is None:
+            self.effective_living_room_comfort_temperature = base_temperature
+        if candidate == self.effective_living_room_comfort_temperature:
+            self.outdoor_comfort_candidate_since = None
+        elif self.outdoor_comfort_candidate_since is not None and now - self.outdoor_comfort_candidate_since >= 15 * 60:
+            self.effective_living_room_comfort_temperature = candidate
+            self.outdoor_comfort_candidate_since = None
+        return replace(zone, comfort_temperature=self.effective_living_room_comfort_temperature)
+
+    def living_room_outdoor_comfort_status(self) -> dict[str, float | int | str | None]:
+        """Return the complete, dashboard-friendly state of the comfort profile."""
+        zone = self.config.zone
+        base = None if zone is None else zone.comfort_temperature
+        active = self.effective_living_room_comfort_temperature
+        candidate = self.outdoor_comfort_candidate_temperature
+        pending_s = 0
+        if self.outdoor_comfort_candidate_since is not None:
+            pending_s = max(0, int(15 * 60 - (monotonic() - self.outdoor_comfort_candidate_since)))
+        if self.outdoor_comfort_temperature_c is None:
+            state = "Außentemperatur fehlt – Grundkomfort aktiv."
+        elif pending_s:
+            state = f"Außenband wird noch {max(1, (pending_s + 59) // 60)} Minute(n) bestätigt."
+        elif active == base:
+            state = "Hitzetag – Grundkomfort aktiv."
+        else:
+            state = "Außenkomfort aktiv; Außenluft wird dabei nicht als Kühlung angenommen."
+        return {
+            "state": state,
+            "outdoor_temperature_c": self.outdoor_comfort_temperature_c,
+            "base_comfort_temperature_c": base,
+            "effective_comfort_temperature_c": active,
+            "candidate_comfort_temperature_c": candidate,
+            "stability_remaining_s": pending_s,
+            "stability_required_s": 15 * 60,
+        }
 
     def decide_office_pilot(
         self,

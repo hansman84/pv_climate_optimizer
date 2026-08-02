@@ -6,6 +6,7 @@ import sys
 import types
 from datetime import time
 from pathlib import Path
+from time import monotonic
 
 PACKAGE = "pv_climate_controller"
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / PACKAGE
@@ -474,6 +475,44 @@ def test_controller_reports_disabled_pilot_action() -> None:
 
     assert action.reason_code == "pilot_disabled"
     assert runtime.last_pilot_action == action
+
+
+def test_living_room_outdoor_comfort_waits_fifteen_minutes_then_relaxes_target() -> None:
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            zone=models.ZoneConfig(
+                "living", "Wohnzimmer", "climate.living", "sensor.living",
+                comfort_temperature=24.0, hard_max_temperature=26.5,
+            ),
+        ),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    assert runtime._effective_living_room_zone(23.9).comfort_temperature == 24.0
+    status = runtime.living_room_outdoor_comfort_status()
+    assert status["candidate_comfort_temperature_c"] == 26.0
+    assert 0 < status["stability_remaining_s"] <= 900
+
+    runtime.outdoor_comfort_candidate_since = monotonic() - 900
+    assert runtime._effective_living_room_zone(23.9).comfort_temperature == 26.0
+    assert runtime.living_room_outdoor_comfort_status()["stability_remaining_s"] == 0
+
+
+def test_living_room_outdoor_comfort_uses_25c_in_the_middle_band() -> None:
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            zone=models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living", comfort_temperature=24.0),
+        ),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    runtime._effective_living_room_zone(27.0)
+    runtime.outdoor_comfort_candidate_since = monotonic() - 900
+    assert runtime._effective_living_room_zone(27.0).comfort_temperature == 25.0
 
 
 def test_controller_office_pilot_uses_only_configured_spielzimmer_zone() -> None:

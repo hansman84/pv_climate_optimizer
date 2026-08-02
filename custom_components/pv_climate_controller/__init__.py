@@ -204,6 +204,7 @@ async def _async_refresh_controller(
             if controller.config.zone is not None
             else None
         ),
+        outdoor_temperature_c=outside_temperature,
     )
     await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
     office_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "spielzimmer"), None)

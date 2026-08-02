@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ControllerStateSensor(controller, entry.entry_id, "controller_state"),
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
         PilotActionSensor(controller, entry.entry_id, "pilot_action"),
+        LivingRoomOutdoorComfortSensor(controller, entry.entry_id, "living_room_outdoor_comfort"),
         OfficePilotActionSensor(controller, entry.entry_id, "office_pilot_action"),
         SpeisPilotActionSensor(controller, entry.entry_id, "speis_pilot_action"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
@@ -124,7 +125,23 @@ class PilotActionSensor(ControllerEntity, SensorEntity):
             "pv_surplus_available": export_power_w is not None and export_power_w >= minimum_surplus_w,
             "comfort_temperature_c": None if zone is None else zone.comfort_temperature,
             "hard_temperature_limit_c": None if zone is None else zone.hard_max_temperature,
+            "effective_comfort_temperature_c": self.controller.effective_living_room_comfort_temperature,
         }
+
+
+class LivingRoomOutdoorComfortSensor(ControllerEntity, SensorEntity):
+    """Explain the temporary outdoor-based comfort relaxation for the living room."""
+
+    _attr_name = "Wohnzimmer-Außenkomfort"
+
+    @property
+    def native_value(self) -> str:
+        return str(self.controller.living_room_outdoor_comfort_status()["state"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, float | int | None]:
+        status = self.controller.living_room_outdoor_comfort_status()
+        return {key: value for key, value in status.items() if key != "state"}
 
 
 class OfficePilotActionSensor(PilotActionSensor):
