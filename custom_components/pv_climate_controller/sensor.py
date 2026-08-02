@@ -21,6 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
         PilotActionSensor(controller, entry.entry_id, "pilot_action"),
         LivingRoomOutdoorComfortSensor(controller, entry.entry_id, "living_room_outdoor_comfort"),
+        BedroomOutdoorComfortSensor(controller, entry.entry_id, "bedroom_outdoor_comfort"),
         OfficePilotActionSensor(controller, entry.entry_id, "office_pilot_action"),
         SpeisPilotActionSensor(controller, entry.entry_id, "speis_pilot_action"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
@@ -130,9 +131,9 @@ class PilotActionSensor(ControllerEntity, SensorEntity):
 
 
 class LivingRoomOutdoorComfortSensor(ControllerEntity, SensorEntity):
-    """Explain the temporary outdoor-based comfort relaxation for the living room."""
+    """Explain the shared outdoor-based comfort relaxation for day rooms."""
 
-    _attr_name = "Wohnzimmer-Außenkomfort"
+    _attr_name = "Wohn- & Arbeitszimmer-Außenkomfort"
 
     @property
     def native_value(self) -> str:
@@ -141,6 +142,21 @@ class LivingRoomOutdoorComfortSensor(ControllerEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, float | int | None]:
         status = self.controller.living_room_outdoor_comfort_status()
+        return {key: value for key, value in status.items() if key != "state"}
+
+
+class BedroomOutdoorComfortSensor(ControllerEntity, SensorEntity):
+    """Explain the relaxed sleeping-room evening target."""
+
+    _attr_name = "Schlafräume-Außenkomfort"
+
+    @property
+    def native_value(self) -> str:
+        return str(self.controller.bedroom_outdoor_comfort_status()["state"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, float | int | None]:
+        status = self.controller.bedroom_outdoor_comfort_status()
         return {key: value for key, value in status.items() if key != "state"}
 
 

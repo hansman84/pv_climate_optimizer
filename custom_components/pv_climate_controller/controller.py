@@ -130,6 +130,9 @@ class PVClimateController:
     outdoor_comfort_candidate_temperature: float | None = None
     outdoor_comfort_candidate_since: float | None = None
     outdoor_comfort_temperature_c: float | None = None
+    effective_bedroom_target_temperature: float | None = None
+    bedroom_comfort_candidate_since: float | None = None
+    bedroom_comfort_candidate_temperature: float | None = None
     _state_listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @classmethod
@@ -643,6 +646,7 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
         now: time | None = None,
     ) -> PilotAction:
         """Use late-afternoon PV for sleeping rooms and enforce their quiet time."""
@@ -674,7 +678,7 @@ class PVClimateController:
             self.last_bedroom_pilot_actions[zone.zone_id] = action
             return action
         forecast = self.last_zone_forecasts.get(zone.zone_id)
-        target_zone = replace(zone, comfort_temperature=self.config.bedroom_target_temperature)
+        target_zone = replace(zone, comfort_temperature=self._effective_bedroom_target(outdoor_temperature_c))
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
         action = pilot.decide(
             replace(self.config, zone=target_zone),
@@ -751,15 +755,15 @@ class PVClimateController:
         )
         return self.last_pilot_action
 
-    def _effective_living_room_zone(self, outdoor_temperature_c: float | None) -> ZoneConfig | None:
+    def _effective_living_room_zone(self, outdoor_temperature_c: float | None, zone: ZoneConfig | None = None) -> ZoneConfig | None:
         """Apply the confirmed outdoor comfort band without treating outside air as ventilation.
 
         The profile only relaxes the desired room temperature. Direct sun, room
         temperature and the hard limit remain fully effective safeguards.
         A band must persist for 15 minutes before becoming active.
         """
-        zone = self.config.zone
-        if zone is None or zone.name.strip().casefold() != "wohnzimmer":
+        zone = self.config.zone if zone is None else zone
+        if zone is None or zone.name.strip().casefold() not in {"wohnzimmer", "spielzimmer"}:
             return zone
         self.outdoor_comfort_temperature_c = outdoor_temperature_c
         base_temperature = zone.comfort_temperature
@@ -798,13 +802,55 @@ class PVClimateController:
         elif active == base:
             state = "Hitzetag – Grundkomfort aktiv."
         else:
-            state = "Außenkomfort aktiv; Außenluft wird dabei nicht als Kühlung angenommen."
+            state = "Außenkomfort für Wohn- und Arbeitszimmer aktiv; Außenluft wird nicht als Kühlung angenommen."
         return {
             "state": state,
             "outdoor_temperature_c": self.outdoor_comfort_temperature_c,
             "base_comfort_temperature_c": base,
             "effective_comfort_temperature_c": active,
             "candidate_comfort_temperature_c": candidate,
+            "stability_remaining_s": pending_s,
+            "stability_required_s": 15 * 60,
+        }
+
+    def _effective_bedroom_target(self, outdoor_temperature_c: float | None) -> float:
+        """Relax sleeping-room pre-cooling to a 23 °C evening target off hot days."""
+        self.outdoor_comfort_temperature_c = outdoor_temperature_c
+        base_target = self.config.bedroom_target_temperature
+        candidate = 23.0 if outdoor_temperature_c is not None and outdoor_temperature_c <= 28.0 else base_target
+        now = monotonic()
+        if candidate != self.bedroom_comfort_candidate_temperature:
+            self.bedroom_comfort_candidate_temperature = candidate
+            self.bedroom_comfort_candidate_since = now
+        if self.effective_bedroom_target_temperature is None:
+            self.effective_bedroom_target_temperature = base_target
+        if candidate == self.effective_bedroom_target_temperature:
+            self.bedroom_comfort_candidate_since = None
+        elif self.bedroom_comfort_candidate_since is not None and now - self.bedroom_comfort_candidate_since >= 15 * 60:
+            self.effective_bedroom_target_temperature = candidate
+            self.bedroom_comfort_candidate_since = None
+        return self.effective_bedroom_target_temperature
+
+    def bedroom_outdoor_comfort_status(self) -> dict[str, float | int | str | None]:
+        """Expose the evening target and its 15-minute confirmation state."""
+        pending_s = 0
+        if self.bedroom_comfort_candidate_since is not None:
+            pending_s = max(0, int(15 * 60 - (monotonic() - self.bedroom_comfort_candidate_since)))
+        active = self.effective_bedroom_target_temperature
+        if self.outdoor_comfort_temperature_c is None:
+            state = "Außentemperatur fehlt – bisheriges Abendziel aktiv."
+        elif pending_s:
+            state = f"Entspannteres Abendziel wird noch {max(1, (pending_s + 59) // 60)} Minute(n) bestätigt."
+        elif active == self.config.bedroom_target_temperature:
+            state = "Hitzetag – bisherige Vorkühlung aktiv."
+        else:
+            state = "Gemäßigte Außenlage – Abendziel 23 °C aktiv."
+        return {
+            "state": state,
+            "outdoor_temperature_c": self.outdoor_comfort_temperature_c,
+            "base_evening_target_temperature_c": self.config.bedroom_target_temperature,
+            "effective_evening_target_temperature_c": active,
+            "candidate_evening_target_temperature_c": self.bedroom_comfort_candidate_temperature,
             "stability_remaining_s": pending_s,
             "stability_required_s": 15 * 60,
         }
@@ -822,6 +868,7 @@ class PVClimateController:
         direct_sun: bool = False,
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
+        outdoor_temperature_c: float | None = None,
     ) -> PilotAction:
         """Evaluate the productive Arbeitszimmer route only for its exact mapped zone."""
         office_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "spielzimmer"), None)
@@ -835,9 +882,10 @@ class PVClimateController:
             self.last_office_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Arbeitszimmer-Pilot ist für diesen Raum ausgeschaltet.")
             return self.last_office_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
+        effective_zone = self._effective_living_room_zone(outdoor_temperature_c, office_zone)
         forecast = self.last_zone_forecasts.get(office_zone.zone_id)
         self.last_office_pilot_action = self.office_pilot.decide(
-            replace(self.config, zone=office_zone),
+            replace(self.config, zone=effective_zone),
             temperature_c=temperature_c,
             climate_mode=climate_mode,
             granted_stages=grant,

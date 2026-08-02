@@ -226,6 +226,7 @@ async def _async_refresh_controller(
             direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
             shade_open_percent=contexts.get(office_zone.zone_id, {}).get("shade_open_percent"),
+            outdoor_temperature_c=outside_temperature,
         )
         await controller.async_apply_pilot_action(office_action, _pilot_service_executor(hass), zone=office_zone, room_pilot=controller.office_pilot)
     speis_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "speis"), None)
@@ -259,6 +260,7 @@ async def _async_refresh_controller(
             direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
             irradiance_w_m2=irradiance,
             shade_open_percent=contexts.get(bedroom_zone.zone_id, {}).get("shade_open_percent"),
+            outdoor_temperature_c=outside_temperature,
         )
         await controller.async_apply_pilot_action(
             bedroom_action,

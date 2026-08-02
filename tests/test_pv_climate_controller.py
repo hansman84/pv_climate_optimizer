@@ -515,6 +515,35 @@ def test_living_room_outdoor_comfort_uses_25c_in_the_middle_band() -> None:
     assert runtime._effective_living_room_zone(27.0).comfort_temperature == 25.0
 
 
+def test_daytime_outdoor_comfort_also_applies_to_arbeitszimmer_not_speis() -> None:
+    living = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living", comfort_temperature=24.0)
+    office = models.ZoneConfig("office", "Spielzimmer", "climate.office", "sensor.office", comfort_temperature=24.0)
+    speis = models.ZoneConfig("speis", "Speis", "climate.speis", "sensor.speis", comfort_temperature=23.5)
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, zone=living, house_zones=(living, office, speis)),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    runtime._effective_living_room_zone(23.0)
+    runtime.outdoor_comfort_candidate_since = monotonic() - 900
+    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 26.0
+    runtime.effective_living_room_comfort_temperature = 26.0
+    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 26.0
+    assert speis.comfort_temperature == 23.5
+
+
+def test_bedroom_outdoor_comfort_relaxes_evening_target_to_23c() -> None:
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, bedroom_target_temperature=22.5),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    assert runtime._effective_bedroom_target(25.0) == 22.5
+    runtime.bedroom_comfort_candidate_since = monotonic() - 900
+    assert runtime._effective_bedroom_target(25.0) == 23.0
+    assert runtime.bedroom_outdoor_comfort_status()["effective_evening_target_temperature_c"] == 23.0
+
+
 def test_controller_office_pilot_uses_only_configured_spielzimmer_zone() -> None:
     office = models.ZoneConfig("office", "Spielzimmer", "climate.office", "sensor.office")
     runtime = controller.PVClimateController(
