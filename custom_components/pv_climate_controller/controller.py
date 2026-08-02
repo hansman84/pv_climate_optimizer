@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -190,6 +190,8 @@ class PVClimateController:
             house_zones=zones,
             outdoor_temperature_entity_id=_optional_entity(options, data, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID),
             cooling_start_offset_c=max(0.0, min(3.0, float(options.get(CONF_COOLING_START_OFFSET_C, data.get(CONF_COOLING_START_OFFSET_C, 0.7))))),
+            mild_outdoor_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, data.get(CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, 25.0))))),
+            hot_outdoor_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, data.get(CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, 24.0))))),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
             sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
             bedroom_mode_enabled=bool(options.get(CONF_BEDROOM_MODE_ENABLED, data.get(CONF_BEDROOM_MODE_ENABLED, True))),
@@ -767,12 +769,10 @@ class PVClimateController:
             return zone
         self.outdoor_comfort_temperature_c = outdoor_temperature_c
         base_temperature = zone.comfort_temperature
-        candidate = base_temperature
-        if outdoor_temperature_c is not None:
-            if outdoor_temperature_c <= 26.0:
-                candidate = 26.0
-            elif outdoor_temperature_c <= 28.0:
-                candidate = 25.0
+        candidate = base_temperature if outdoor_temperature_c is None else (
+            self.config.mild_outdoor_comfort_temperature if outdoor_temperature_c <= 28.0
+            else self.config.hot_outdoor_comfort_temperature
+        )
         now = monotonic()
         if candidate != self.outdoor_comfort_candidate_temperature:
             self.outdoor_comfort_candidate_temperature = candidate
@@ -1023,6 +1023,14 @@ class PVClimateController:
     def set_cooling_start_offset_c(self, value: float) -> None:
         """Require a visible external-room-temperature margin before PV cooling starts."""
         self.config = replace(self.config, cooling_start_offset_c=max(0.0, min(3.0, value)))
+
+    def set_outdoor_comfort_temperature(self, *, mild: float | None = None, hot: float | None = None) -> None:
+        """Update the visible day-room comfort profile without touching the Speis."""
+        self.config = replace(
+            self.config,
+            mild_outdoor_comfort_temperature=self.config.mild_outdoor_comfort_temperature if mild is None else max(20.0, min(28.0, mild)),
+            hot_outdoor_comfort_temperature=self.config.hot_outdoor_comfort_temperature if hot is None else max(20.0, min(28.0, hot)),
+        )
 
 
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:

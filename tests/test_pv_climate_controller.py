@@ -492,11 +492,11 @@ def test_living_room_outdoor_comfort_waits_fifteen_minutes_then_relaxes_target()
 
     assert runtime._effective_living_room_zone(23.9).comfort_temperature == 24.0
     status = runtime.living_room_outdoor_comfort_status()
-    assert status["candidate_comfort_temperature_c"] == 26.0
+    assert status["candidate_comfort_temperature_c"] == 25.0
     assert 0 < status["stability_remaining_s"] <= 900
 
     runtime.outdoor_comfort_candidate_since = monotonic() - 900
-    assert runtime._effective_living_room_zone(23.9).comfort_temperature == 26.0
+    assert runtime._effective_living_room_zone(23.9).comfort_temperature == 25.0
     assert runtime.living_room_outdoor_comfort_status()["stability_remaining_s"] == 0
 
 
@@ -526,9 +526,9 @@ def test_daytime_outdoor_comfort_also_applies_to_arbeitszimmer_not_speis() -> No
 
     runtime._effective_living_room_zone(23.0)
     runtime.outdoor_comfort_candidate_since = monotonic() - 900
-    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 26.0
-    runtime.effective_living_room_comfort_temperature = 26.0
-    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 26.0
+    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 25.0
+    runtime.effective_living_room_comfort_temperature = 25.0
+    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 25.0
     assert speis.comfort_temperature == 23.5
 
 

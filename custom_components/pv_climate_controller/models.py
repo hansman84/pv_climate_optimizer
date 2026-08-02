@@ -120,6 +120,8 @@ class ControllerConfig:
     house_zones: tuple[ZoneConfig, ...] = ()
     outdoor_temperature_entity_id: str | None = None
     cooling_start_offset_c: float = 0.7
+    mild_outdoor_comfort_temperature: float = 25.0
+    hot_outdoor_comfort_temperature: float = 24.0
     solar_irradiance_entity_id: str | None = None
     sun_entity_id: str | None = None
     bedroom_mode_enabled: bool = True
