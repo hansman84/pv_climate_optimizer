@@ -1499,6 +1499,41 @@ def test_pv_capacity_target_relaxes_promptly_when_the_room_reaches_comfort() -> 
     )
 
 
+def test_warm_rising_living_room_uses_minimum_target_despite_small_residual_export() -> None:
+    clock = Clock()
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=23.5,
+            hard_max_temperature=26.5,
+            pilot_min_target_temperature=21.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=100,
+    )
+    room_pilot = pilot.LivingRoomPilot(clock)
+    room_pilot.mark_sent(pilot.PilotAction("start", 23.0, "test", "test"))
+
+    action = room_pilot.decide(
+        runtime,
+        temperature_c=24.93,
+        climate_mode="cool",
+        granted_stages=1,
+        export_power_w=269,
+        outdoor_unit_power_w=2540.6,
+        climate_target_temperature_c=23.0,
+        temperature_trend_c_per_h=0.134,
+        predicted_temperature_60m_c=25.06,
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "adjust", 21.0, "pv_comfort_recovery",
+    )
+
+
 def test_heat_pump_priority_step_applies_to_every_indoor_unit() -> None:
     for zone_name in ("Wohnzimmer", "Spielzimmer", "Speis", "Schlafzimmer", "Kinderzimmer"):
         runtime = models.ControllerConfig(

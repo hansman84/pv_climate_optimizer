@@ -313,7 +313,10 @@ class LivingRoomPilot:
             self._settled_since = None
             self._overcooling_since = None
             self._expected_snapshot = ("cool", action.target_temperature_c, None if self._observed_snapshot is None else self._observed_snapshot[2], None if self._observed_snapshot is None else self._observed_snapshot[3])
-            self._pv_capacity_active = action.reason_code == "pv_capacity_preconditioning"
+            self._pv_capacity_active = action.reason_code in {
+                "pv_capacity_preconditioning",
+                "pv_comfort_recovery",
+            }
             self._hard_limit_failsafe_active = action.reason_code == "hard_temperature_limit_failsafe"
             self._hard_limit_failsafe_recovered_since = None
         elif action.action == "adjust":
@@ -328,7 +331,7 @@ class LivingRoomPilot:
                 self._last_heat_pump_relief_at = now
             if action.reason_code == "pilot_model_feedback_adjustment" and pending_model_offset is not None:
                 self._model_target_offset_c = pending_model_offset
-            if action.reason_code == "pv_capacity_preconditioning":
+            if action.reason_code in {"pv_capacity_preconditioning", "pv_comfort_recovery"}:
                 self._pv_capacity_active = True
             elif action.reason_code == "pv_capacity_target_reached":
                 self._pv_capacity_active = False
@@ -434,6 +437,24 @@ class LivingRoomPilot:
             max_target_c=max_target,
         )
         strong_pv = export_power_w is not None and export_power_w >= 2 * config.min_pv_surplus_w
+        # Net export is measured after the outdoor unit has already absorbed
+        # most of the available PV. A small remaining export must therefore not
+        # make a warm, still-rising living room look as if little solar cooling
+        # capacity existed. Demand the configured minimum target until the
+        # external room sensor is back near comfort; the normal comfort and
+        # overshoot guards take over immediately afterwards.
+        comfort_recovery_active = (
+            living_room_band
+            and pv_available
+            and temperature_c > zone.comfort_temperature + 1.0
+            and (
+                (temperature_trend_c_per_h is not None and temperature_trend_c_per_h > -0.1)
+                or (
+                    predicted_temperature_60m_c is not None
+                    and predicted_temperature_60m_c > zone.comfort_temperature + 0.3
+                )
+            )
+        )
         needs_cooling = hard_limit or (
             comfort_required
             and temperature_c > zone.comfort_temperature + 0.25
@@ -463,7 +484,9 @@ class LivingRoomPilot:
             start_target = dynamic_room_target if living_room_band else cool_target
             if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None:
                 start_target = min(start_target, pv_capacity_target)
-            if hard_limit:
+            if comfort_recovery_active:
+                start_target = min_target
+            if hard_limit and not comfort_required:
                 if not pv_available:
                     return PilotAction(
                         "start",
@@ -478,7 +501,13 @@ class LivingRoomPilot:
                 return PilotAction("none", None, "pilot_demand_stabilizing", "PV-Kühlbedarf wird zehn Minuten auf Stabilität geprüft.")
             if comfort_required:
                 return PilotAction("start", start_target, "bedroom_evening_comfort", f"Abendkomfort ist noch nicht erreicht; {self._display_name} startet bei {start_target:.0f} °C auch ohne PV.")
-            start_reason = "pv_capacity_preconditioning" if pv_capacity_target is not None and start_target == pv_capacity_target else "pv_preconditioning"
+            start_reason = (
+                "pv_comfort_recovery"
+                if comfort_recovery_active
+                else "pv_capacity_preconditioning"
+                if pv_capacity_target is not None and start_target == pv_capacity_target
+                else "pv_preconditioning"
+            )
             return PilotAction("start", start_target, start_reason, f"PV-Überschuss startet eine ruhige, temperaturgeführte Kühlung bei {start_target:.0f} °C.")
 
         if climate_mode != "cool":
@@ -712,6 +741,9 @@ class LivingRoomPilot:
                 self._last_target_change_at is None
                 or now - self._last_target_change_at >= self._PV_CAPACITY_TARGET_INTERVAL_S
             )
+        if comfort_recovery_active:
+            desired_target = min_target
+            pv_capacity_active = True
         current_known_target = climate_target_temperature_c if climate_target_temperature_c is not None else self._active_target_temperature_c
         pv_target_recovery_due = (
             self._pv_capacity_active
@@ -852,7 +884,14 @@ class LivingRoomPilot:
                     "pilot_target_drift",
                     f"{self._display_name} meldet {climate_target_temperature_c:.0f} °C statt des geplanten Sollwerts {desired_target:.0f} °C; Pilot stellt den wirksamen Kühl-Sollwert wieder her.",
                 )
-            if self._active_target_temperature_c != desired_target and target_change_due:
+            if self._active_target_temperature_c != desired_target and (target_change_due or comfort_recovery_active):
+                if comfort_recovery_active:
+                    return PilotAction(
+                        "adjust",
+                        desired_target,
+                        "pv_comfort_recovery",
+                        f"{self._display_name} liegt trotz PV weiter über dem Komfortziel; der steigende Raumtrend wird bei {desired_target:.0f} °C aktiv zurückgekühlt.",
+                    )
                 if pv_capacity_active:
                     return PilotAction(
                         "adjust",
