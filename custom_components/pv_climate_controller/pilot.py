@@ -390,6 +390,11 @@ class LivingRoomPilot:
         if pv_deadline_active:
             self._sunset_takeover_active = True
             self._manual_override_active = False
+        if comfort_required:
+            # Occupied-evening comfort is automatic.  A previous manual run or
+            # ownership hand-back must not disable the scheduled room promise.
+            self._sunset_takeover_active = True
+            self._manual_override_active = False
         if self._owns_cooling and manual_change_candidate and self._manual_change_detected(snapshot):
             self.release_ownership()
             self._manual_override_active = True
@@ -407,6 +412,7 @@ class LivingRoomPilot:
         max_target = self._thermal_relief_target_c if zone.pilot_max_target_temperature is None else zone.pilot_max_target_temperature
         max_target = max(min_target, max_target)
         hold_target = min(max(min_target, max_target - 1.0), max(min_target, float(ceil(zone.comfort_temperature))))
+        evening_comfort_target = min(max_target, max(min_target, float(floor(zone.comfort_temperature))))
         living_room_band = self._expected_zone_name.casefold() == "wohnzimmer"
         cool_target = (
             hold_target
@@ -482,6 +488,8 @@ class LivingRoomPilot:
             if not hard_limit and self._last_stopped_at is not None and now - self._last_stopped_at < self._MIN_OFF_TIME_S:
                 return PilotAction("none", None, "pilot_resting", f"{self._display_name}-Pilot hält die Kompressor-Ruhezeit ein.")
             start_target = dynamic_room_target if living_room_band else cool_target
+            if comfort_required:
+                start_target = evening_comfort_target
             if temperature_c > zone.comfort_temperature + 0.25 and pv_capacity_target is not None:
                 start_target = min(start_target, pv_capacity_target)
             if comfort_recovery_active:
@@ -795,13 +803,40 @@ class LivingRoomPilot:
             self._last_heat_pump_relief_at = None
 
         if comfort_required and temperature_c > zone.comfort_temperature + 0.25:
-            target = desired_target if pv_available else cool_target
+            target = min(desired_target, evening_comfort_target) if pv_available else evening_comfort_target
             current_target = self._active_target_temperature_c
             if current_target is None:
                 current_target = climate_target_temperature_c
             if current_target is None or abs(current_target - target) > 0.01:
                 return PilotAction("adjust", target, "bedroom_evening_comfort", f"Abendkomfort ist noch nicht erreicht; {self._display_name} kühlt bis zum Ziel bei {target:.0f} °C weiter, auch ohne PV.", target)
             return PilotAction("none", None, "bedroom_evening_comfort_holding", f"Abendkomfort ist noch nicht erreicht; {self._display_name} kühlt bei {target:.0f} °C weiter.", target)
+
+        if comfort_required:
+            if temperature_c <= zone.comfort_temperature - 0.5:
+                return PilotAction(
+                    "stop",
+                    None,
+                    "evening_comfort_reached",
+                    f"Abendkomfort ist erreicht; {self._display_name} wird zum Schutz vor Überkühlung ausgeschaltet.",
+                )
+            current_target = self._active_target_temperature_c
+            if current_target is None:
+                current_target = climate_target_temperature_c
+            if current_target is None or abs(current_target - evening_comfort_target) > 0.01:
+                return PilotAction(
+                    "adjust",
+                    evening_comfort_target,
+                    "evening_comfort_hold",
+                    f"Abendkomfort ist aktiv; {self._display_name} hält den Sollwert bei {evening_comfort_target:.0f} °C statt auf {max_target:.0f} °C auszulaufen.",
+                    evening_comfort_target,
+                )
+            return PilotAction(
+                "none",
+                None,
+                "evening_comfort_holding",
+                f"Abendkomfort ist aktiv; {self._display_name} hält ruhig bei {evening_comfort_target:.0f} °C.",
+                evening_comfort_target,
+            )
 
         if not pv_available and not hard_limit:
             self._settled_since = None

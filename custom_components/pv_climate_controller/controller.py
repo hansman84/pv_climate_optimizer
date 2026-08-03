@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -193,6 +193,8 @@ class PVClimateController:
             mild_outdoor_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, data.get(CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, 25.0))))),
             hot_outdoor_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, data.get(CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, 24.0))))),
             living_evening_comfort_temperature=max(20.0, min(28.0, float(options.get(CONF_LIVING_EVENING_COMFORT_TEMPERATURE, data.get(CONF_LIVING_EVENING_COMFORT_TEMPERATURE, 24.5))))),
+            living_evening_start_time=str(options.get(CONF_LIVING_EVENING_START_TIME, data.get(CONF_LIVING_EVENING_START_TIME, "20:30"))),
+            living_evening_end_time=str(options.get(CONF_LIVING_EVENING_END_TIME, data.get(CONF_LIVING_EVENING_END_TIME, "23:30"))),
             solar_irradiance_entity_id=_optional_entity(options, data, CONF_SOLAR_IRRADIANCE_ENTITY_ID),
             sun_entity_id=_optional_entity(options, data, CONF_SUN_ENTITY_ID),
             bedroom_mode_enabled=bool(options.get(CONF_BEDROOM_MODE_ENABLED, data.get(CONF_BEDROOM_MODE_ENABLED, True))),
@@ -724,6 +726,7 @@ class PVClimateController:
         irradiance_w_m2: float | None = None,
         shade_open_percent: float | None = None,
         outdoor_temperature_c: float | None = None,
+        now: time | None = None,
     ) -> PilotAction:
         """Evaluate the only productive PoC route after HA state refresh."""
         if not self.config.living_room_pilot_enabled:
@@ -733,7 +736,8 @@ class PVClimateController:
             self.last_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Wohnzimmer-Pilot ist für diesen Raum ausgeschaltet.")
             return self.last_pilot_action
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
-        effective_zone = self._effective_living_room_zone(outdoor_temperature_c)
+        evening_comfort_active = self.living_evening_comfort_active(now)
+        effective_zone = self._effective_living_room_zone(outdoor_temperature_c, now=now)
         forecast = None if effective_zone is None else self.last_zone_forecasts.get(effective_zone.zone_id)
         self.last_pilot_action = self.pilot.decide(
             replace(self.config, zone=effective_zone),
@@ -756,11 +760,27 @@ class PVClimateController:
             climate_fan_mode=climate_fan_mode,
             climate_swing_mode=climate_swing_mode,
             pv_deadline_active=pv_deadline_active,
+            comfort_required=evening_comfort_active,
             manual_change_candidate=manual_change_candidate,
         )
         return self.last_pilot_action
 
-    def _effective_living_room_zone(self, outdoor_temperature_c: float | None, zone: ZoneConfig | None = None) -> ZoneConfig | None:
+    def living_evening_comfort_active(self, now: time | None = None) -> bool:
+        """Return whether the configured occupied-evening comfort window is active."""
+        local_time = now or datetime.now().astimezone().time()
+        start = self._schedule_time(self.config.living_evening_start_time, time(20, 30))
+        end = self._schedule_time(self.config.living_evening_end_time, time(23, 30))
+        if start <= end:
+            return start <= local_time < end
+        return local_time >= start or local_time < end
+
+    def _effective_living_room_zone(
+        self,
+        outdoor_temperature_c: float | None,
+        zone: ZoneConfig | None = None,
+        *,
+        now: time | None = None,
+    ) -> ZoneConfig | None:
         """Apply the confirmed outdoor comfort band without treating outside air as ventilation.
 
         The profile only relaxes the desired room temperature. Direct sun, room
@@ -772,8 +792,7 @@ class PVClimateController:
             return zone
         self.outdoor_comfort_temperature_c = outdoor_temperature_c
         base_temperature = zone.comfort_temperature
-        local_time = datetime.now().astimezone().time()
-        if time(20, 30) <= local_time < time(23, 30):
+        if zone.name.strip().casefold() == "wohnzimmer" and self.living_evening_comfort_active(now):
             self.effective_living_room_comfort_temperature = self.config.living_evening_comfort_temperature
             self.outdoor_comfort_candidate_since = None
             return replace(zone, comfort_temperature=self.config.living_evening_comfort_temperature)
@@ -1043,6 +1062,14 @@ class PVClimateController:
 
     def set_living_evening_comfort_temperature(self, value: float) -> None:
         self.config = replace(self.config, living_evening_comfort_temperature=max(20.0, min(28.0, value)))
+
+    def set_living_evening_schedule(self, *, start_time: str | None = None, end_time: str | None = None) -> None:
+        """Update the occupied-evening window exposed by integration controls."""
+        self.config = replace(
+            self.config,
+            living_evening_start_time=self.config.living_evening_start_time if start_time is None else start_time,
+            living_evening_end_time=self.config.living_evening_end_time if end_time is None else end_time,
+        )
 
 
     def set_export_power_positive(self, positive_when_exporting: bool) -> None:

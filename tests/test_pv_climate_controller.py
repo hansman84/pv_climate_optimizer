@@ -490,13 +490,13 @@ def test_living_room_outdoor_comfort_waits_fifteen_minutes_then_relaxes_target()
         adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
     )
 
-    assert runtime._effective_living_room_zone(23.9).comfort_temperature == 24.0
+    assert runtime._effective_living_room_zone(23.9, now=time(12, 0)).comfort_temperature == 24.0
     status = runtime.living_room_outdoor_comfort_status()
     assert status["candidate_comfort_temperature_c"] == 25.0
     assert 0 < status["stability_remaining_s"] <= 900
 
     runtime.outdoor_comfort_candidate_since = monotonic() - 900
-    assert runtime._effective_living_room_zone(23.9).comfort_temperature == 25.0
+    assert runtime._effective_living_room_zone(23.9, now=time(12, 0)).comfort_temperature == 25.0
     assert runtime.living_room_outdoor_comfort_status()["stability_remaining_s"] == 0
 
 
@@ -510,9 +510,9 @@ def test_living_room_outdoor_comfort_uses_25c_in_the_middle_band() -> None:
         adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
     )
 
-    runtime._effective_living_room_zone(27.0)
+    runtime._effective_living_room_zone(27.0, now=time(12, 0))
     runtime.outdoor_comfort_candidate_since = monotonic() - 900
-    assert runtime._effective_living_room_zone(27.0).comfort_temperature == 25.0
+    assert runtime._effective_living_room_zone(27.0, now=time(12, 0)).comfort_temperature == 25.0
 
 
 def test_daytime_outdoor_comfort_also_applies_to_arbeitszimmer_not_speis() -> None:
@@ -524,11 +524,11 @@ def test_daytime_outdoor_comfort_also_applies_to_arbeitszimmer_not_speis() -> No
         adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
     )
 
-    runtime._effective_living_room_zone(23.0)
+    runtime._effective_living_room_zone(23.0, now=time(12, 0))
     runtime.outdoor_comfort_candidate_since = monotonic() - 900
-    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 25.0
+    assert runtime._effective_living_room_zone(23.0, now=time(12, 0)).comfort_temperature == 25.0
     runtime.effective_living_room_comfort_temperature = 25.0
-    assert runtime._effective_living_room_zone(23.0).comfort_temperature == 25.0
+    assert runtime._effective_living_room_zone(23.0, now=time(12, 0)).comfort_temperature == 25.0
     assert speis.comfort_temperature == 23.5
 
 
@@ -1968,10 +1968,91 @@ def test_controller_passes_the_evening_deadline_to_the_living_room_pilot() -> No
 
     action = runtime.decide_living_room_pilot(
         temperature_c=24.0, climate_mode="cool", climate_target_temperature_c=22.0,
-        pv_deadline_active=True,
+        pv_deadline_active=True, now=time(12, 0),
     )
 
     assert (action.action, action.target_temperature_c, action.reason_code) == ("adjust", 24.0, "pv_comfort_hold")
+
+
+def test_living_room_evening_comfort_starts_automatically_without_pv() -> None:
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.STRICT_PV,
+            zone=models.ZoneConfig(
+                "living", "Wohnzimmer", "climate.living", "sensor.living",
+                comfort_temperature=23.5,
+                pilot_min_target_temperature=23.0,
+                pilot_max_target_temperature=25.0,
+            ),
+            living_room_pilot_enabled=True,
+            living_evening_comfort_temperature=24.5,
+            min_pv_surplus_w=1000,
+        ),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=0)
+
+    action = runtime.decide_living_room_pilot(
+        temperature_c=25.6,
+        climate_mode="off",
+        climate_target_temperature_c=25.0,
+        now=time(21, 30),
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "start", 24.0, "bedroom_evening_comfort",
+    )
+    assert runtime.effective_living_room_comfort_temperature == 24.5
+
+
+def test_living_room_evening_comfort_never_winds_down_to_25c() -> None:
+    runtime = models.ControllerConfig(
+        shadow_mode=False,
+        energy_policy=const.EnergyPolicy.STRICT_PV,
+        zone=models.ZoneConfig(
+            "living", "Wohnzimmer", "climate.living", "sensor.living",
+            comfort_temperature=24.5,
+            pilot_min_target_temperature=23.0,
+            pilot_max_target_temperature=25.0,
+        ),
+        living_room_pilot_enabled=True,
+        min_pv_surplus_w=1000,
+    )
+    living_pilot = pilot.LivingRoomPilot(lambda: 0)
+
+    action = living_pilot.decide(
+        runtime,
+        temperature_c=25.0,
+        climate_mode="cool",
+        granted_stages=1,
+        export_power_w=0,
+        climate_target_temperature_c=25.0,
+        comfort_required=True,
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "adjust", 24.0, "bedroom_evening_comfort",
+    )
+
+
+def test_living_room_evening_window_is_configurable() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {
+            "shadow_mode": False,
+            "living_room_pilot_enabled": True,
+            "climate_entity_id": "climate.living",
+            "temperature_entity_id": "sensor.living",
+            "zone_name": "Wohnzimmer",
+        },
+        {
+            "living_evening_start_time": "19:30",
+            "living_evening_end_time": "22:30",
+        },
+    )
+
+    assert runtime.living_evening_comfort_active(time(20, 0))
+    assert not runtime.living_evening_comfort_active(time(23, 0))
 
 
 def test_living_room_pilot_mock_matrix_covers_every_gate() -> None:
