@@ -70,7 +70,7 @@ class BedroomQuietTimeSelect(ControllerEntity, SelectEntity):
 
     _attr_name = "Schlafzimmer-Ruhezeit ab"
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = BedroomScheduleSelect._attr_options
+    _attr_options = ["15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00", "18:30", "19:00"]
 
     def __init__(self, controller, entry_id: str) -> None:
         super().__init__(controller, entry_id, "bedroom_quiet_time")
