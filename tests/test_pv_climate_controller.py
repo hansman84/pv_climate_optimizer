@@ -584,11 +584,43 @@ def test_bedroom_mode_waits_for_late_afternoon_and_enforces_quiet_time() -> None
     runtime.last_energy = models.EnergySnapshot(export_power_w=500)
 
     waiting = runtime.decide_bedroom_pilot(bedroom, temperature_c=24.0, climate_mode="off", now=time(15, 0))
-    quiet = runtime.decide_bedroom_pilot(bedroom, temperature_c=24.0, climate_mode="cool", now=time(18, 30))
+    quiet = runtime.decide_bedroom_pilot(bedroom, temperature_c=22.5, climate_mode="cool", now=time(18, 30))
 
     assert waiting.reason_code == "bedroom_window_pending"
     assert quiet.action == "stop"
     assert quiet.reason_code == "bedroom_quiet_time"
+
+
+def test_bedroom_evening_comfort_overrides_quiet_time_when_room_is_warm() -> None:
+    """Quiet time stops PV pre-cooling, but must not cancel night comfort."""
+    bedroom = models.ZoneConfig(
+        "bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom",
+        comfort_temperature=22.0,
+    )
+    runtime = controller.PVClimateController(
+        config=models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            living_room_pilot_enabled=True,
+            house_zones=(bedroom,),
+            min_pv_surplus_w=100,
+            bedroom_mode_enabled=True,
+            bedroom_cutoff_enabled=True,
+            bedroom_start_time="15:00",
+            bedroom_cutoff_time="18:30",
+            bedroom_target_temperature=22.5,
+        ),
+        command_adapter=adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=0)
+
+    action = runtime.decide_bedroom_pilot(
+        bedroom, temperature_c=23.7, climate_mode="off", now=time(19, 15),
+    )
+
+    assert (action.action, action.target_temperature_c, action.reason_code) == (
+        "start", 22.0, "bedroom_evening_comfort",
+    )
 
 
 def test_bedroom_mode_reaches_evening_comfort_without_pv() -> None:

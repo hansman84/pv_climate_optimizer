@@ -670,7 +670,16 @@ class PVClimateController:
         local_time = now or datetime.now().astimezone().time()
         start = self._schedule_time(self.config.bedroom_start_time, time(15, 30))
         cutoff = self._schedule_time(self.config.bedroom_cutoff_time, time(18, 30))
-        if self.config.bedroom_cutoff_enabled and local_time >= cutoff:
+        # The cutoff ends opportunistic PV pre-cooling, not the configured
+        # evening-comfort recovery.  Otherwise a warm bedroom is turned off
+        # precisely at the quiet-time boundary and can never reach its
+        # explicitly configured sleeping target.
+        target_zone = replace(zone, comfort_temperature=self._effective_bedroom_target(outdoor_temperature_c))
+        evening_comfort_needed = (
+            temperature_c is not None
+            and temperature_c > target_zone.comfort_temperature + 0.25
+        )
+        if self.config.bedroom_cutoff_enabled and local_time >= cutoff and not evening_comfort_needed:
             action = (
                 PilotAction("stop", None, "bedroom_quiet_time", f"{zone.name}: Ruhezeit ab {cutoff.strftime('%H:%M')} Uhr; Klimagerät wird ausgeschaltet.")
                 if climate_mode == "cool"
@@ -683,7 +692,6 @@ class PVClimateController:
             self.last_bedroom_pilot_actions[zone.zone_id] = action
             return action
         forecast = self.last_zone_forecasts.get(zone.zone_id)
-        target_zone = replace(zone, comfort_temperature=self._effective_bedroom_target(outdoor_temperature_c))
         grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
         action = pilot.decide(
             replace(self.config, zone=target_zone),
