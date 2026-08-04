@@ -43,6 +43,8 @@ CONF_BEDROOM_MODE_ENABLED = "bedroom_mode_enabled"
 CONF_BEDROOM_CUTOFF_ENABLED = "bedroom_cutoff_enabled"
 CONF_BEDROOM_START_TIME = "bedroom_start_time"
 CONF_BEDROOM_CUTOFF_TIME = "bedroom_cutoff_time"
+CONF_BEDROOM_QUIET_ENABLED = "bedroom_quiet_enabled"
+CONF_BEDROOM_QUIET_TIME = "bedroom_quiet_time"
 CONF_BEDROOM_TARGET_TEMPERATURE = "bedroom_target_temperature"
 
 

@@ -623,6 +623,32 @@ def test_bedroom_evening_comfort_overrides_quiet_time_when_room_is_warm() -> Non
     )
 
 
+def test_master_bedroom_uses_its_own_quiet_time_boundary() -> None:
+    bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom", comfort_temperature=22.0)
+    child = models.ZoneConfig("child", "Kinderzimmer", "climate.child", "sensor.child", comfort_temperature=22.0)
+    runtime = controller.PVClimateController(
+        config=models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            living_room_pilot_enabled=True,
+            house_zones=(bedroom, child),
+            bedroom_mode_enabled=True,
+            bedroom_cutoff_enabled=True,
+            bedroom_cutoff_time="18:30",
+            bedroom_quiet_enabled=True,
+            bedroom_quiet_time="20:30",
+        ),
+        command_adapter=adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.last_energy = models.EnergySnapshot(export_power_w=0)
+
+    master = runtime.decide_bedroom_pilot(bedroom, temperature_c=22.0, climate_mode="cool", now=time(19, 0))
+    child_action = runtime.decide_bedroom_pilot(child, temperature_c=22.0, climate_mode="cool", now=time(19, 0))
+
+    assert master.reason_code != "bedroom_quiet_time"
+    assert child_action.reason_code == "bedroom_quiet_time"
+
+
 def test_bedroom_mode_reaches_evening_comfort_without_pv() -> None:
     bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom", comfort_temperature=22.5)
     runtime = controller.PVClimateController(

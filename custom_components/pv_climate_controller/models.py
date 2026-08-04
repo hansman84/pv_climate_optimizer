@@ -131,6 +131,8 @@ class ControllerConfig:
     bedroom_cutoff_enabled: bool = True
     bedroom_start_time: str = "15:30"
     bedroom_cutoff_time: str = "18:30"
+    bedroom_quiet_enabled: bool = True
+    bedroom_quiet_time: str = "18:30"
     bedroom_target_temperature: float = 22.5
     manual_override_enabled: bool = True
 

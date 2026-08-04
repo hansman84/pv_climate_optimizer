@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
@@ -21,6 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ManualOverrideSwitch(controller, entry.entry_id, "manual_override"),
         BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
         BedroomCutoffSwitch(controller, entry.entry_id, "bedroom_cutoff"),
+        BedroomQuietSwitch(controller, entry.entry_id, "bedroom_quiet"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
     entities.extend(
@@ -124,6 +125,27 @@ class BedroomCutoffSwitch(ControllerEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs) -> None:
         self.controller.set_bedroom_cutoff_enabled(True)
         await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+
+class BedroomQuietSwitch(ControllerEntity, SwitchEntity):
+    """Independent quiet-time enable switch for the master bedroom."""
+
+    _attr_name = "Schlafzimmer-Ruhezeit aktiv"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.bedroom_quiet_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_bedroom_quiet_enabled(True)
+        await self.async_persist_option(CONF_BEDROOM_QUIET_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_bedroom_quiet_enabled(False)
+        await self.async_persist_option(CONF_BEDROOM_QUIET_ENABLED, False)
         self.controller.notify_state_listeners()
 
     async def async_turn_off(self, **kwargs) -> None:

@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_START_TIME, CONF_ENERGY_POLICY, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, DOMAIN, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_ENERGY_POLICY, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, DOMAIN, EnergyPolicy
 from .entity import ControllerEntity
 
 
@@ -18,6 +18,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         EnergyPolicySelect(controller, entry.entry_id, "energy_policy"),
         BedroomScheduleSelect(controller, entry.entry_id, "bedroom_start_time", "Schlafraum-Modus ab", CONF_BEDROOM_START_TIME, "start"),
         BedroomScheduleSelect(controller, entry.entry_id, "bedroom_cutoff_time", "Schlafraum-Ruhezeit ab", CONF_BEDROOM_CUTOFF_TIME, "cutoff"),
+        BedroomQuietTimeSelect(controller, entry.entry_id),
         LivingEveningScheduleSelect(controller, entry.entry_id, "living_evening_start_time", "Wohnzimmer-Abendkomfort ab", CONF_LIVING_EVENING_START_TIME, "start"),
         LivingEveningScheduleSelect(controller, entry.entry_id, "living_evening_end_time", "Wohnzimmer-Abendkomfort bis", CONF_LIVING_EVENING_END_TIME, "end"),
     ])
@@ -61,6 +62,26 @@ class BedroomScheduleSelect(ControllerEntity, SelectEntity):
         else:
             self.controller.set_bedroom_schedule(cutoff_time=option)
         await self.async_persist_option(self._option_key, option)
+        self.controller.notify_state_listeners()
+
+
+class BedroomQuietTimeSelect(ControllerEntity, SelectEntity):
+    """Independent quiet-time control for the master bedroom."""
+
+    _attr_name = "Schlafzimmer-Ruhezeit ab"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = BedroomScheduleSelect._attr_options
+
+    def __init__(self, controller, entry_id: str) -> None:
+        super().__init__(controller, entry_id, "bedroom_quiet_time")
+
+    @property
+    def current_option(self) -> str:
+        return self.controller.config.bedroom_quiet_time
+
+    async def async_select_option(self, option: str) -> None:
+        self.controller.set_bedroom_quiet_time(option)
+        await self.async_persist_option(CONF_BEDROOM_QUIET_TIME, option)
         self.controller.notify_state_listeners()
 
 
