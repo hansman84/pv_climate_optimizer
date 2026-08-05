@@ -122,7 +122,10 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                 if room.room_id in decision.approved_room_ids
             ]
             names = ", ".join(self._room_name(room.room_id) for room in approved)
-            action = approved[0].selected_action.value if approved and approved[0].selected_action else "adjust"
+            plan = self.controller.v2_command_plan_for(approved[0].room_id) if approved else None
+            action = plan.action.value if plan is not None else (
+                approved[0].selected_action.value if approved and approved[0].selected_action else "adjust"
+            )
             action_text = {
                 "start": "V2 startet sanft",
                 "adjust": "V2 passt sanft an",
