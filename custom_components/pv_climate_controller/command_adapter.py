@@ -76,6 +76,18 @@ class ClimateCommandAdapter:
     def is_manual_override(self, entity_id: str) -> bool:
         return self._manual_override_until.get(entity_id, 0.0) > self._clock()
 
+    def handoff_blockers(self, entity_id: str) -> tuple[str, ...]:
+        """Return non-destructive reasons why a controller handoff is unsafe."""
+        now = self._clock()
+        blockers: list[str] = []
+        if self._manual_override_until.get(entity_id, 0.0) > now:
+            blockers.append("manual_override_active")
+        if entity_id in self._pending:
+            blockers.append("command_ack_pending")
+        if self._backoff_until.get(entity_id, 0.0) > now:
+            blockers.append("command_backoff_active")
+        return tuple(blockers)
+
     def observe_external_change(self, command: Command, *, override_duration_s: float = 7200.0) -> bool:
         """Record an override only if the state change is not our pending command."""
         now = self._clock()

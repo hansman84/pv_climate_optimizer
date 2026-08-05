@@ -14,6 +14,7 @@ from .const import DOMAIN
 from .controller import PVClimateController
 from .models import ZoneInput
 from .storage import pack, unpack
+from .v2_models import EligibilityDecision, InputQuality, InputSnapshot, InputValue, RoomEstimate, RoomPolicy, V2RoomInput
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.SENSOR,
@@ -23,6 +24,7 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.NUMBER,
     Platform.BUTTON,
 )
+V2_INITIAL_SOURCE_MAX_AGE_S = 600.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -78,6 +80,8 @@ def _configured_entities(controller: PVClimateController) -> list[str]:
             config.outdoor_temperature_entity_id or "sensor.aussentemperatur",
             config.solar_irradiance_entity_id,
             config.sun_entity_id,
+            config.v2_vacation_entity_id,
+            config.v2_cooling_season_entity_id,
             *(entity for house_zone in config.house_zones for entity in (
                 house_zone.climate_entity_id,
                 house_zone.temperature_entity_id,
@@ -184,6 +188,15 @@ async def _async_refresh_controller(
         )
         contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
     controller.evaluate_house(house_states, contexts)
+    if config.v2_shadow_enabled:
+        controller.evaluate_v2_shadow(
+            _v2_room_inputs(hass, controller, house_states),
+            # V2 cannot treat total PV as capacity.  Until a V2 house-budget
+            # source is configured, only observed positive export is exposed
+            # as an upper bound and unknown room power keeps every candidate
+            # safely blocked in the runner.
+            available_budget_w=max(0.0, controller.last_energy.export_power_w or 0.0),
+        )
     controller.observe_outdoor_power(tuple(
         house_zone.zone_id for house_zone in config.house_zones
         if house_states[house_zone.zone_id][1] in {"cool", "dry"}
@@ -326,6 +339,126 @@ def _temperature_value(value: object) -> float | None:
         return float(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_states: dict) -> tuple[V2RoomInput, ...]:
+    """Build V2's read-only inputs from the same explicit zone sources as V1.
+
+    Vacation and cooling-season sources deliberately remain missing until their
+    selectors are introduced.  The pure V2 gate then reports that gap rather
+    than guessing a policy or emitting a normal modulation request.
+    """
+    now = datetime.now().astimezone().isoformat()
+    result: list[V2RoomInput] = []
+    for zone in controller.config.house_zones:
+        temperature_state = hass.states.get(zone.temperature_entity_id)
+        climate_state = hass.states.get(zone.climate_entity_id)
+        forecast = controller.last_zone_forecasts.get(zone.zone_id)
+        estimate = controller.last_power_estimates.get(zone.zone_id)
+        vacation_active = _v2_boolean_input(
+            hass.states.get(controller.config.v2_vacation_entity_id) if controller.config.v2_vacation_entity_id else None,
+            controller.config.v2_vacation_entity_id,
+            true_means="active",
+        )
+        cooling_season_allowed = _v2_boolean_input(
+            hass.states.get(controller.config.v2_cooling_season_entity_id) if controller.config.v2_cooling_season_entity_id else None,
+            controller.config.v2_cooling_season_entity_id,
+            true_means="allowed",
+        )
+        if vacation_active.is_valid and vacation_active.value is True:
+            eligibility = EligibilityDecision(False, "vacation_active", "V2 Shadow: Automatik ist wegen Abwesenheit gesperrt.")
+        elif cooling_season_allowed.is_valid and cooling_season_allowed.value is False:
+            eligibility = EligibilityDecision(False, "cooling_season_inactive", "V2 Shadow: automatische Kühlung ist außerhalb der Saison gesperrt.")
+        else:
+            eligibility = EligibilityDecision(True, "shadow_eligibility_pending", "V2 Shadow bewertet die freigegebenen Quellen.")
+        result.append(V2RoomInput(
+            policy=RoomPolicy(zone.zone_id, zone.name, zone.modulation_priority),
+            snapshot=InputSnapshot(
+                observed_at=now,
+                room_temperature=_v2_numeric_input(temperature_state, zone.temperature_entity_id, "°C"),
+                climate_available=_v2_availability_input(climate_state, zone.climate_entity_id),
+                pv_export_w=_v2_numeric_input(
+                    hass.states.get(controller.config.export_power_entity_id) if controller.config.export_power_entity_id else None,
+                    controller.config.export_power_entity_id,
+                    "W",
+                ),
+                outdoor_unit_power_w=_v2_numeric_input(
+                    hass.states.get(controller.config.outdoor_unit_power_entity_id) if controller.config.outdoor_unit_power_entity_id else None,
+                    controller.config.outdoor_unit_power_entity_id,
+                    "W",
+                ),
+                outdoor_temperature=_v2_numeric_input(
+                    hass.states.get(controller.config.outdoor_temperature_entity_id or "sensor.aussentemperatur"),
+                    controller.config.outdoor_temperature_entity_id or "sensor.aussentemperatur",
+                    "°C",
+                ),
+                heat_pump_priority=_v2_availability_input(
+                    hass.states.get(controller.config.heat_pump_priority_entity_id) if controller.config.heat_pump_priority_entity_id else None,
+                    controller.config.heat_pump_priority_entity_id,
+                ),
+                automation_enabled=InputValue(None, True, None, 0.0, InputQuality.VALID, "v2_shadow_enabled"),
+                vacation_active=vacation_active,
+                cooling_season_allowed=cooling_season_allowed,
+            ),
+            estimate=RoomEstimate(
+                room_id=zone.zone_id,
+                temperature_c=house_states[zone.zone_id][0].temperature_c,
+                trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
+                predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
+                confidence=0.0 if forecast is None or forecast.data_quality not in {"valid", "ok"} else 0.5,
+                comfort_reserve_c=None if forecast is None or forecast.predicted_temperature_60m_c is None else zone.comfort_temperature - forecast.predicted_temperature_60m_c,
+                thermal_factors=(),
+                reason_code="v1_forecast_snapshot",
+            ),
+            eligibility=eligibility,
+            comfort_temperature_c=zone.comfort_temperature,
+            required_budget_w=None if estimate is None else estimate.incremental_w,
+            observed_hvac_mode=None if climate_state is None else climate_state.state,
+            observed_target_temperature_c=None if climate_state is None else _temperature_value(climate_state.attributes.get("temperature")),
+            pilot_min_target_temperature_c=zone.pilot_min_target_temperature,
+            pilot_max_target_temperature_c=zone.pilot_max_target_temperature,
+            target_temperature_step_c=(
+                None if climate_state is None else _temperature_value(climate_state.attributes.get("target_temp_step"))
+            ),
+        ))
+    return tuple(result)
+
+
+def _v2_numeric_input(state, entity_id: str | None, unit: str) -> InputValue:
+    if state is None:
+        return InputValue(entity_id, None, unit, None, InputQuality.MISSING, "source_not_configured_or_missing")
+    value = _temperature_value(state.state)
+    if value is None:
+        return InputValue(entity_id, None, unit, _state_age_s(state), InputQuality.INVALID, "source_not_numeric")
+    age_s = _state_age_s(state)
+    if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
+        return InputValue(entity_id, value, unit, age_s, InputQuality.STALE, "source_stale")
+    return InputValue(entity_id, value, unit, age_s, InputQuality.VALID, "source_fresh")
+
+
+def _v2_availability_input(state, entity_id: str | None) -> InputValue:
+    if state is None:
+        return InputValue(entity_id, None, None, None, InputQuality.MISSING, "source_not_configured_or_missing")
+    age_s = _state_age_s(state)
+    available = state.state not in {"unknown", "unavailable"}
+    if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
+        return InputValue(entity_id, available, None, age_s, InputQuality.STALE, "source_stale")
+    return InputValue(entity_id, available, None, age_s, InputQuality.VALID if available else InputQuality.INVALID, "available" if available else "source_unavailable")
+
+
+def _v2_boolean_input(state, entity_id: str | None, *, true_means: str) -> InputValue:
+    """Normalize only standard HA boolean states; unknown vocabulary fails closed."""
+    if state is None:
+        return InputValue(entity_id, None, None, None, InputQuality.MISSING, f"{true_means}_source_not_configured")
+    age_s = _state_age_s(state)
+    if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
+        return InputValue(entity_id, None, None, age_s, InputQuality.STALE, "source_stale")
+    raw = str(state.state).casefold()
+    if raw in {"on", "true", "1"}:
+        return InputValue(entity_id, True, None, age_s, InputQuality.VALID, true_means)
+    if raw in {"off", "false", "0"}:
+        return InputValue(entity_id, False, None, age_s, InputQuality.VALID, f"not_{true_means}")
+    return InputValue(entity_id, None, None, age_s, InputQuality.INVALID, "source_not_boolean")
 
 
 def _state_age_s(state) -> float | None:

@@ -22,6 +22,7 @@ class ZoneConfig:
     hard_limit_failsafe_offset_c: float = 1.0
     cooling_power_entity_id: str | None = None
     priority: int = 50
+    modulation_priority: int = 50
     pilot_enabled: bool = True
     minimum_plausible_temperature_c: float = 5.0
     maximum_plausible_temperature_c: float = 50.0
@@ -135,6 +136,9 @@ class ControllerConfig:
     bedroom_quiet_time: str = "18:30"
     bedroom_target_temperature: float = 22.5
     manual_override_enabled: bool = True
+    v2_shadow_enabled: bool = False
+    v2_vacation_entity_id: str | None = None
+    v2_cooling_season_entity_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

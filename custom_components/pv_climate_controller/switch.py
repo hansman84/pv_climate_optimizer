@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, DOMAIN
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, CONF_V2_SHADOW_ENABLED, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
@@ -17,6 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     controller = hass.data[DOMAIN][entry.entry_id]
     entities = [
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
+        V2ShadowSwitch(controller, entry.entry_id, "v2_shadow"),
         LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
         ManualOverrideSwitch(controller, entry.entry_id, "manual_override"),
         BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
@@ -50,6 +51,26 @@ class ShadowModeSwitch(ControllerEntity, SwitchEntity):
         await self.async_persist_option(CONF_SHADOW_MODE, False)
         self.controller.notify_state_listeners()
 
+
+class V2ShadowSwitch(ControllerEntity, SwitchEntity):
+    """Enable the comparison runner; it has no route to climate services."""
+
+    _attr_name = "V2 Shadow-Vergleich"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.v2_shadow_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.controller.set_v2_shadow_enabled(True)
+        await self.async_persist_option(CONF_V2_SHADOW_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_v2_shadow_enabled(False)
+        await self.async_persist_option(CONF_V2_SHADOW_ENABLED, False)
+        self.controller.notify_state_listeners()
 
 class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
     """Explicit productive gate for the confirmed Wohnzimmer pilot only."""

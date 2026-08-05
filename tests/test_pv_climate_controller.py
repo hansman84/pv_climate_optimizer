@@ -55,6 +55,114 @@ def test_legacy_zero_pv_minimum_restores_safe_default_after_restart() -> None:
     assert runtime.config.min_pv_surplus_w == 400.0
 
 
+def test_v2_authority_is_persisted_without_changing_v1_command_mode() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": False, "living_room_pilot_enabled": True},
+        {},
+    )
+    runtime.enable_v2_room_shadow("living")
+    runtime.begin_v2_handoff("living", preconditions_met=True)
+
+    restored = controller.PVClimateController.from_config(
+        {"shadow_mode": False, "living_room_pilot_enabled": True},
+        {},
+    )
+    restored.restore_learning_state(runtime.export_learning_state())
+
+    assert runtime.command_adapter.shadow_mode is False
+    assert runtime.command_adapter._productive_enabled is True
+    assert restored.v2_authority_for("living").authority.value == "handoff_pending"
+
+
+def test_v2_policy_sources_are_explicit_and_disabled_by_default() -> None:
+    default = controller.PVClimateController.from_config({"shadow_mode": True}, {})
+    configured = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {
+            "v2_shadow_enabled": True,
+            "v2_vacation_entity_id": "input_boolean.urlaub",
+            "v2_cooling_season_entity_id": "binary_sensor.kuehlsaison",
+        },
+    )
+
+    assert not default.config.v2_shadow_enabled
+    assert configured.config.v2_shadow_enabled
+    assert configured.config.v2_vacation_entity_id == "input_boolean.urlaub"
+    assert configured.config.v2_cooling_season_entity_id == "binary_sensor.kuehlsaison"
+
+
+def test_handoff_pending_blocks_v1_before_the_command_adapter_or_executor() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.enable_v2_room_shadow("living")
+    runtime.begin_v2_handoff("living", preconditions_met=True)
+    calls: list[object] = []
+
+    async def executor(command):
+        calls.append(command)
+        return True
+
+    result = asyncio.run(runtime.async_apply_pilot_action(
+        pilot.PilotAction("adjust", 23.0, "test", "Testaktion"), executor,
+    ))
+
+    assert result.status == "authority_blocked"
+    assert calls == []
+
+
+def test_v2_handoff_readiness_requires_shadow_data_and_a_house_approval() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone, v2_shadow_enabled=True),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    runtime.enable_v2_room_shadow("living")
+
+    readiness = runtime.v2_handoff_readiness("living")
+
+    assert not readiness.ready
+    assert "critical_inputs_not_fresh" in readiness.blocker_codes
+    assert "v2_candidate_not_actionable" in readiness.blocker_codes
+    assert "v2_house_step_not_approved" in readiness.blocker_codes
+
+
+def test_handoff_readiness_exposes_manual_override_as_a_blocker() -> None:
+    command_adapter = adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True)
+    command_adapter.observe_external_change(adapter.Command("climate.living", "pilot_adjust", 23.0))
+
+    assert command_adapter.handoff_blockers("climate.living") == ("manual_override_active",)
+
+
+def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0),
+    )
+    plan = controller.V2CommandPlan(
+        "living", controller.CandidateAction.ADJUST, 23.0, "forecast_comfort_risk", "V2-Testaktion",
+    )
+    calls: list[object] = []
+
+    async def executor(command):
+        calls.append(command)
+        return True
+
+    blocked = asyncio.run(runtime.async_apply_v2_command(plan, executor))
+    runtime.enable_v2_room_shadow("living")
+    runtime.begin_v2_handoff("living", preconditions_met=True)
+    runtime.activate_v2_authority("living", observed_state_aligned=True)
+    sent = asyncio.run(runtime.async_apply_v2_command(plan, executor))
+
+    assert blocked.status == "authority_blocked"
+    assert sent.status == "sent"
+    assert len(calls) == 1
+    assert calls[0].entity_id == "climate.living"
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"

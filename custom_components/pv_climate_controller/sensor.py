@@ -35,6 +35,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         EnergyRecommendationSensor(controller, entry.entry_id, "energy_recommendation"),
         HouseCoolingSensor(controller, entry.entry_id, "house_cooling"),
         HousePlanSensor(controller, entry.entry_id, "house_plan"),
+        V2ShadowDecisionSensor(controller, entry.entry_id, "v2_shadow_house_decision"),
+        V2AuthoritySensor(controller, entry.entry_id, "v2_room_authority"),
     ]
     entities.extend(
         BedroomPilotActionSensor(controller, entry.entry_id, f"bedroom_pilot_action_{index}", zone.zone_id)
@@ -92,6 +94,87 @@ class DecisionReasonSensor(ControllerEntity, SensorEntity):
         if self.controller.last_decision is None:
             return "Shadow Mode aktiv; noch keine Zonenauswertung."
         return self.controller.last_decision.reason_text
+
+
+class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
+    """Expose the read-only V2 comparison without a climate command surface."""
+
+    _attr_name = "V2 Shadow-Hausentscheidung"
+
+    @property
+    def native_value(self) -> str:
+        if not self.controller.config.v2_shadow_enabled:
+            return "deaktiviert"
+        decision = self.controller.last_v2_house_decision
+        if decision is None:
+            return "wartet auf erste Auswertung"
+        if decision.approved_room_ids:
+            return f"Shadow-Stufe für {', '.join(decision.approved_room_ids)}"
+        return "keine Shadow-Stufe freigegeben"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        decision = self.controller.last_v2_house_decision
+        candidates = self.controller.last_v2_candidates
+        if decision is None:
+            return {"enabled": self.controller.config.v2_shadow_enabled, "reason_code": "not_evaluated"}
+        return {
+            "enabled": True,
+            "approved_room_ids": list(decision.approved_room_ids),
+            "reserved_budget_w": decision.reserved_budget_w,
+            "available_budget_w": decision.available_budget_w,
+            "candidates": [
+                {
+                    "room_id": candidate.policy.room_id,
+                    "action": candidate.action.value,
+                    "reason_code": candidate.reason_code,
+                    "confidence": candidate.confidence,
+                    "required_budget_w": candidate.required_budget_w,
+                }
+                for candidate in candidates
+            ],
+            "decisions": [
+                {
+                    "room_id": room.room_id,
+                    "state": room.state.value,
+                    "reason_code": room.reason_code,
+                    "next_review_at": room.next_review_at,
+                }
+                for room in decision.room_decisions
+            ],
+        }
+
+
+class V2AuthoritySensor(ControllerEntity, SensorEntity):
+    """Show the ownership state before any future handoff button is enabled."""
+
+    _attr_name = "V2 Raumautorität"
+
+    @property
+    def native_value(self) -> str:
+        active = [
+            zone.name for zone in self.controller.config.house_zones
+            if self.controller.v2_authority_for(zone.zone_id).authority.value == "v2_active"
+        ]
+        return "V2 führt: " + ", ".join(active) if active else "V1 führt alle Räume"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            zone.zone_id: {
+                "room_name": zone.name,
+                "authority": self.controller.v2_authority_for(zone.zone_id).authority.value,
+                "reason_code": self.controller.v2_authority_for(zone.zone_id).reason_code,
+                "reason": self.controller.v2_authority_for(zone.zone_id).reason_text,
+                "v1_may_write": self.controller.v2_authority_for(zone.zone_id).v1_may_write,
+                "v2_may_write": self.controller.v2_authority_for(zone.zone_id).v2_may_write,
+                "handoff_ready": self.controller.v2_handoff_readiness(zone.zone_id).ready,
+                "handoff_blockers": list(self.controller.v2_handoff_readiness(zone.zone_id).blocker_codes),
+                "v2_next_action": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).action.value,
+                "v2_next_target_temperature_c": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).target_temperature_c,
+            }
+            for zone in self.controller.config.house_zones
+        }
 
 
 class PilotActionSensor(ControllerEntity, SensorEntity):

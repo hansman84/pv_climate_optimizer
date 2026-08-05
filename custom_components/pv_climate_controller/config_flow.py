@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
-from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_USE_EMS_GRANT, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
+from .const import CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_USE_EMS_GRANT, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, DEFAULT_NAME, DOMAIN, EnergyPolicy
 from .config_options import merge_safety_options
 from .facades import normalize_zone_tuning
 
@@ -249,6 +249,9 @@ def _safety_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     ems_key = vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID, default=values[CONF_EMS_GRANTED_STAGES_ENTITY_ID]) if values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID) else vol.Optional(CONF_EMS_GRANTED_STAGES_ENTITY_ID)
     return vol.Schema({
         vol.Required(CONF_SHADOW_MODE, default=values.get(CONF_SHADOW_MODE, True)): bool,
+        vol.Required(CONF_V2_SHADOW_ENABLED, default=values.get(CONF_V2_SHADOW_ENABLED, False)): bool,
+        vol.Optional(CONF_V2_VACATION_ENTITY_ID, default=values.get(CONF_V2_VACATION_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain=["binary_sensor", "input_boolean", "switch"], multiple=False)),
+        vol.Optional(CONF_V2_COOLING_SEASON_ENTITY_ID, default=values.get(CONF_V2_COOLING_SEASON_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain=["binary_sensor", "input_boolean", "switch"], multiple=False)),
         vol.Required(CONF_LIVING_ROOM_PILOT_ENABLED, default=values.get(CONF_LIVING_ROOM_PILOT_ENABLED, False)): bool,
         vol.Required(CONF_MANUAL_OVERRIDE_ENABLED, default=values.get(CONF_MANUAL_OVERRIDE_ENABLED, True)): bool,
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
@@ -285,6 +288,7 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required("pilot_min_target_temperature", default=values.get("pilot_min_target_temperature", 23.0)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
         vol.Required("pilot_max_target_temperature", default=values.get("pilot_max_target_temperature", 25.0)): vol.All(vol.Coerce(float), vol.Range(min=16, max=32)),
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+        vol.Required("modulation_priority", default=values.get("modulation_priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
         vol.Optional("shade_entity_ids", default=values.get("shade_entity_ids", [])): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
         # Plain optional text fields deliberately accept blank input.  HA's number

@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -21,6 +21,10 @@ from .power_learning import OutdoorPowerLearner, PowerEstimate
 from .thermal_budget import build_thermal_budget
 from .thermal_response import learn_thermal_response
 from .thermal_analysis import learn_thermal_profile
+from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
+from .v2_shadow import V2ShadowRunner
+from .v2_authority import AuthorityDecision, HandoffReadiness, RoomAuthorityRegistry
+from .v2_command_planner import V2CommandPlanner
 
 
 def _optional_entity(options: Mapping[str, object], data: Mapping[str, object], key: str) -> str | None:
@@ -58,6 +62,7 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             hard_limit_failsafe_offset_c=max(0.0, min(8.0, float(item.get("hard_limit_failsafe_offset_c", 1.0)))),
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
             priority=int(item.get("priority", 50)),
+            modulation_priority=max(1, int(item.get("modulation_priority", 50))),
             pilot_enabled=bool(item.get("pilot_enabled", default_pilot_enabled)),
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
             shade_entity_ids=shade_ids,
@@ -82,6 +87,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "pilot_max_target_temperature": zone.pilot_max_target_temperature,
         "hard_limit_failsafe_offset_c": zone.hard_limit_failsafe_offset_c,
         "priority": zone.priority,
+        "modulation_priority": zone.modulation_priority,
         "pilot_enabled": zone.pilot_enabled,
         "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
         "shade_entity_ids": list(zone.shade_entity_ids),
@@ -124,6 +130,12 @@ class PVClimateController:
     last_office_pilot_action: PilotAction | None = None
     last_speis_pilot_action: PilotAction | None = None
     last_bedroom_pilot_actions: dict[str, PilotAction] = field(default_factory=dict)
+    v2_shadow_runner: V2ShadowRunner = field(default_factory=V2ShadowRunner)
+    v2_command_planner: V2CommandPlanner = field(default_factory=V2CommandPlanner)
+    last_v2_candidates: tuple[RoomCandidate, ...] = ()
+    last_v2_house_decision: HouseDecision | None = None
+    last_v2_room_inputs: tuple[V2RoomInput, ...] = ()
+    room_authority: RoomAuthorityRegistry = field(default_factory=RoomAuthorityRegistry)
     heat_pump_priority_active: bool = False
     active_cooling_zone_count: int = 0
     effective_living_room_comfort_temperature: float | None = None
@@ -173,6 +185,9 @@ class PVClimateController:
         config = ControllerConfig(
             shadow_mode=shadow_mode,
             energy_policy=policy,
+            v2_shadow_enabled=bool(options.get(CONF_V2_SHADOW_ENABLED, data.get(CONF_V2_SHADOW_ENABLED, False))),
+            v2_vacation_entity_id=_optional_entity(options, data, CONF_V2_VACATION_ENTITY_ID),
+            v2_cooling_season_entity_id=_optional_entity(options, data, CONF_V2_COOLING_SEASON_ENTITY_ID),
             living_room_pilot_enabled=bool(options.get(CONF_LIVING_ROOM_PILOT_ENABLED, data.get(CONF_LIVING_ROOM_PILOT_ENABLED, False))),
             manual_override_enabled=bool(options.get(CONF_MANUAL_OVERRIDE_ENABLED, data.get(CONF_MANUAL_OVERRIDE_ENABLED, True))),
             zone=zone,
@@ -208,6 +223,19 @@ class PVClimateController:
         controller = cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=config.living_room_pilot_enabled and not shadow_mode))
         controller._ensure_bedroom_pilots()
         return controller
+
+    def evaluate_v2_shadow(self, rooms: tuple[V2RoomInput, ...], *, available_budget_w: float) -> HouseDecision | None:
+        """Evaluate V2 diagnostics only; this method has no command adapter input."""
+        if not self.config.v2_shadow_enabled:
+            self.last_v2_candidates = ()
+            self.last_v2_house_decision = None
+            self.last_v2_room_inputs = ()
+            return None
+        self.last_v2_room_inputs = rooms
+        self.last_v2_candidates, self.last_v2_house_decision = self.v2_shadow_runner.evaluate(
+            rooms, available_budget_w=available_budget_w
+        )
+        return self.last_v2_house_decision
 
     def evaluate_house(self, states: Mapping[str, tuple[ZoneInput, str, object]], contexts: Mapping[str, Mapping[str, object]] | None = None) -> HousePlan:
         """Create a read-only common-outdoor-unit plan for every configured zone."""
@@ -365,6 +393,7 @@ class PVClimateController:
                 "speis": self.speis_pilot.export_runtime_state(),
                 "schlafraeume": {zone_id: pilot.export_runtime_state() for zone_id, pilot in self.bedroom_pilots.items()},
             },
+            "v2_room_authority": self.room_authority.export_state(),
         }
 
     def restore_learning_state(self, state: object) -> None:
@@ -413,6 +442,7 @@ class PVClimateController:
         self._thermal_context_samples = restored_context
         self.power_learner.restore_state(state.get("outdoor_power_samples"))
         self.house_learning.restore_state(state.get("house_power_observations"), now)
+        self.room_authority = RoomAuthorityRegistry.restore(state.get("v2_room_authority"))
         pilot_runtime = state.get("pilot_runtime")
         if isinstance(pilot_runtime, dict):
             self.pilot.restore_runtime_state(pilot_runtime.get("wohnzimmer"))
@@ -554,6 +584,71 @@ class PVClimateController:
         """Update the UI-visible mode; the command adapter remains hard locked."""
         self.config = replace(self.config, shadow_mode=enabled)
         self.command_adapter.set_operating_mode(shadow_mode=enabled, productive_enabled=self.config.living_room_pilot_enabled and not enabled)
+
+    def set_v2_shadow_enabled(self, enabled: bool) -> None:
+        """Enable only V2 diagnostic comparison; it never changes V1's gate."""
+        self.config = replace(self.config, v2_shadow_enabled=enabled)
+        if not enabled:
+            self.last_v2_candidates = ()
+            self.last_v2_house_decision = None
+            self.last_v2_room_inputs = ()
+
+    def v2_authority_for(self, zone_id: str) -> AuthorityDecision:
+        """Return the visible authority; default ownership is always V1."""
+        return self.room_authority.decision_for(zone_id)
+
+    def v2_handoff_readiness(self, zone_id: str) -> HandoffReadiness:
+        """Check every precondition without freezing V1 or issuing a command."""
+        blockers: list[str] = []
+        zone = next((item for item in self.config.house_zones if item.zone_id == zone_id), None)
+        authority = self.v2_authority_for(zone_id)
+        if zone is None:
+            blockers.append("zone_not_configured")
+        if not self.config.v2_shadow_enabled:
+            blockers.append("v2_shadow_disabled")
+        if authority.authority.value != "v2_shadow":
+            blockers.append("room_not_in_v2_shadow")
+        room_input = next((item for item in self.last_v2_room_inputs if item.policy.room_id == zone_id), None)
+        if room_input is None or not room_input.snapshot.critical_inputs_valid:
+            blockers.append("critical_inputs_not_fresh")
+        candidate = next((item for item in self.last_v2_candidates if item.policy.room_id == zone_id), None)
+        if candidate is None or not candidate.requests_modulation:
+            blockers.append("v2_candidate_not_actionable")
+        if self.last_v2_house_decision is None or zone_id not in self.last_v2_house_decision.approved_room_ids:
+            blockers.append("v2_house_step_not_approved")
+        if self.v2_command_plan_for(zone_id) is None:
+            blockers.append("v2_command_plan_unavailable")
+        if zone is not None:
+            blockers.extend(self.command_adapter.handoff_blockers(zone.climate_entity_id))
+        return HandoffReadiness(zone_id, not blockers, tuple(blockers))
+
+    def v2_command_plan_for(self, zone_id: str) -> V2CommandPlan | None:
+        """Return the next V2 plan for dashboard comparison; do not execute it."""
+        room = next((item for item in self.last_v2_room_inputs if item.policy.room_id == zone_id), None)
+        candidate = next((item for item in self.last_v2_candidates if item.policy.room_id == zone_id), None)
+        if room is None or candidate is None or self.last_v2_house_decision is None:
+            return None
+        return self.v2_command_planner.plan(room, candidate, self.last_v2_house_decision)
+
+    def enable_v2_room_shadow(self, zone_id: str) -> AuthorityDecision:
+        """Mark one room for V2 comparison only; V1 remains its sole writer."""
+        return self.room_authority.enable_shadow(zone_id)
+
+    def begin_v2_handoff(self, zone_id: str, *, preconditions_met: bool) -> AuthorityDecision:
+        """Freeze both paths while a future UI verifies state adoption."""
+        return self.room_authority.begin_handoff(zone_id, preconditions_met=preconditions_met)
+
+    def activate_v2_authority(self, zone_id: str, *, observed_state_aligned: bool) -> AuthorityDecision:
+        """Complete a handoff only after adopting the observed device state."""
+        return self.room_authority.activate_v2(zone_id, observed_state_aligned=observed_state_aligned)
+
+    def begin_v1_rollback(self, zone_id: str) -> AuthorityDecision:
+        """Freeze both paths before returning a room to V1."""
+        return self.room_authority.begin_rollback(zone_id)
+
+    def complete_v1_rollback(self, zone_id: str, *, observed_state_aligned: bool) -> AuthorityDecision:
+        """Return V1 authority only after it adopts the observed device state."""
+        return self.room_authority.complete_rollback(zone_id, observed_state_aligned=observed_state_aligned)
 
     def set_living_room_pilot_enabled(self, enabled: bool) -> None:
         """Change the explicit GUI pilot gate; no command is sent here."""
@@ -1015,6 +1110,12 @@ class PVClimateController:
         active_pilot = room_pilot or self.pilot
         if action.action not in {"start", "adjust", "stop"} or target_zone is None:
             return CommandResult("noop", action.reason_text)
+        authority = self.v2_authority_for(target_zone.zone_id)
+        if not authority.v1_may_write:
+            # During handoff and rollback neither controller may create a
+            # command.  When V2 later becomes active this is the V1 half of
+            # the single-writer guarantee, ahead of the shared adapter.
+            return CommandResult("authority_blocked", authority.reason_text)
         # Wärmepumpenentlastung advances only one indoor-unit degree per
         # minute. Urgency bypasses the five-minute per-device cadence, while
         # the shared adapter preserves the one-command-per-minute house ramp.
@@ -1042,6 +1143,30 @@ class PVClimateController:
         if result.status == "sent":
             active_pilot.mark_sent(action)
         return result
+
+    async def async_apply_v2_command(self, plan: V2CommandPlan, executor) -> CommandResult:
+        """Use V1's sole adapter and supplied executor after explicit authority.
+
+        This method does not make a service call itself.  It is deliberately
+        unavailable in V2 Shadow and during handoff/rollback, so a future V2
+        executor cannot become a second writer accidentally.
+        """
+        zone = next((item for item in self.config.house_zones if item.zone_id == plan.room_id), None)
+        if zone is None and self.config.zone is not None and self.config.zone.zone_id == plan.room_id:
+            zone = self.config.zone
+        if zone is None:
+            return CommandResult("invalid", "V2-Befehl blockiert: Raum ist nicht konfiguriert.")
+        authority = self.v2_authority_for(plan.room_id)
+        if not authority.v2_may_write:
+            return CommandResult("authority_blocked", authority.reason_text)
+        action = {
+            CandidateAction.START: "pilot_start",
+            CandidateAction.ADJUST: "pilot_adjust",
+            CandidateAction.STOP: "pilot_stop",
+        }[plan.action]
+        return await self.command_adapter.async_request(
+            Command(zone.climate_entity_id, action, plan.target_temperature_c), executor
+        )
 
     def set_energy_policy(self, policy: EnergyPolicy) -> None:
         """Update the selected evaluation policy."""

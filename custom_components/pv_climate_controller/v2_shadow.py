@@ -1,0 +1,65 @@
+"""Pure V2 Shadow Mode candidate construction.
+
+There is intentionally no executor import here.  Missing safety inputs and
+unknown power estimates result in an explainable HOLD, never a guessed start.
+"""
+
+from __future__ import annotations
+
+from .v2_models import (
+    CandidateAction,
+    DecisionState,
+    HouseDecision,
+    RoomCandidate,
+    RoomDecision,
+    V2RoomInput,
+)
+from .v2_orchestrator import HouseCoordinator
+
+
+class V2ShadowRunner:
+    """Build candidates then apply the one-step house coordinator."""
+
+    def __init__(self, coordinator: HouseCoordinator | None = None) -> None:
+        self._coordinator = coordinator or HouseCoordinator()
+
+    def evaluate(self, rooms: tuple[V2RoomInput, ...], *, available_budget_w: float) -> tuple[tuple[RoomCandidate, ...], HouseDecision]:
+        candidates = tuple(self._candidate(room) for room in rooms)
+        decision = self._coordinator.decide(candidates, available_budget_w=available_budget_w)
+        return candidates, decision
+
+    @staticmethod
+    def _candidate(room: V2RoomInput) -> RoomCandidate:
+        if not room.snapshot.critical_inputs_valid:
+            return V2ShadowRunner._hold(room, "critical_input_not_fresh", "V2 wartet: mindestens eine kritische Quelle ist fehlend, unplausibel oder veraltet.")
+        if not room.eligibility.allowed:
+            return V2ShadowRunner._hold(room, room.eligibility.reason_code, room.eligibility.reason_text)
+        if room.required_budget_w is None:
+            return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
+        predicted = room.estimate.predicted_temperature_60m_c
+        if predicted is None or room.estimate.confidence <= 0.0:
+            return V2ShadowRunner._hold(room, "forecast_insufficient", "V2 wartet: Temperaturprognose oder Konfidenz reicht noch nicht für eine Modulationsstufe.")
+        comfort_gap = predicted - room.comfort_temperature_c
+        if comfort_gap <= 0:
+            return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
+        return RoomCandidate(
+            policy=room.policy,
+            action=CandidateAction.ADJUST,
+            required_budget_w=room.required_budget_w,
+            comfort_gap_c=comfort_gap,
+            confidence=room.estimate.confidence,
+            reason_code="forecast_comfort_risk",
+            reason_text="V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt.",
+        )
+
+    @staticmethod
+    def _hold(room: V2RoomInput, reason_code: str, reason_text: str) -> RoomCandidate:
+        return RoomCandidate(
+            policy=room.policy,
+            action=CandidateAction.HOLD,
+            required_budget_w=0.0,
+            comfort_gap_c=0.0,
+            confidence=room.estimate.confidence,
+            reason_code=reason_code,
+            reason_text=reason_text,
+        )
