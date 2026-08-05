@@ -116,8 +116,27 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, object]:
         decision = self.controller.last_v2_house_decision
         candidates = self.controller.last_v2_candidates
+        room_inputs = {
+            item.policy.room_id: item
+            for item in self.controller.last_v2_room_inputs
+        }
         if decision is None:
             return {"enabled": self.controller.config.v2_shadow_enabled, "reason_code": "not_evaluated"}
+
+        def critical_input_issues(room_id: str) -> list[dict[str, object]]:
+            room = room_inputs.get(room_id)
+            if room is None:
+                return []
+            return [
+                {
+                    "entity_id": value.entity_id,
+                    "quality": value.quality.value,
+                    "reason_code": value.reason_code,
+                    "age_s": value.age_s,
+                }
+                for value in room.snapshot.critical_input_issues
+            ]
+
         return {
             "enabled": True,
             "approved_room_ids": list(decision.approved_room_ids),
@@ -130,15 +149,7 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                     "reason_code": candidate.reason_code,
                     "confidence": candidate.confidence,
                     "required_budget_w": candidate.required_budget_w,
-                    "critical_input_issues": [
-                        {
-                            "entity_id": value.entity_id,
-                            "quality": value.quality.value,
-                            "reason_code": value.reason_code,
-                            "age_s": value.age_s,
-                        }
-                        for value in self.controller.last_v2_room_inputs[candidate.policy.room_id].snapshot.critical_input_issues
-                    ],
+                    "critical_input_issues": critical_input_issues(candidate.policy.room_id),
                 }
                 for candidate in candidates
             ],
