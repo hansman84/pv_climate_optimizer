@@ -1128,6 +1128,30 @@ def test_forecast_uses_observed_trend() -> None:
     assert forecasting.predicted_temperature_60m(24.0, trend) == 25.0
 
 
+def test_contextual_forecast_uses_open_shade_and_strong_irradiance() -> None:
+    forecast = forecasting.contextual_temperature_forecast(
+        24.0, 0.1, direct_sun=True, shade_open_percent=100.0,
+        irradiance_w_m2=800.0, passive_sun_trend_c_per_h=1.2,
+        passive_shaded_trend_c_per_h=0.2,
+    )
+
+    assert forecast.predicted_temperature_60m_c > 24.5
+    assert forecast.trend_c_per_h > 0.1
+    assert any("Sonnenprofil" in factor for factor in forecast.thermal_factors)
+
+
+def test_contextual_forecast_does_not_guess_without_a_learned_profile() -> None:
+    forecast = forecasting.contextual_temperature_forecast(
+        24.0, 0.3, direct_sun=True, shade_open_percent=100.0,
+        irradiance_w_m2=800.0, passive_sun_trend_c_per_h=None,
+        passive_shaded_trend_c_per_h=None,
+    )
+
+    assert forecast.predicted_temperature_60m_c == 24.3
+    assert forecast.trend_c_per_h == 0.3
+    assert any("wird noch gelernt" in factor for factor in forecast.thermal_factors)
+
+
 def test_diagnostics_redacts_credentials() -> None:
     result = diagnostics.redact({"token": "abc", "nested": {"api_key": "xyz", "temperature": 24}})
 

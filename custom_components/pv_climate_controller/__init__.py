@@ -12,6 +12,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .controller import PVClimateController
+from .forecasting import contextual_temperature_forecast
 from .models import ZoneInput
 from .storage import pack, unpack
 from .v2_models import EligibilityDecision, InputQuality, InputSnapshot, InputValue, RoomEstimate, RoomPolicy, V2RoomInput
@@ -216,7 +217,7 @@ async def _async_refresh_controller(
     controller.evaluate_house(house_states, contexts)
     if config.v2_shadow_enabled:
         controller.evaluate_v2_shadow(
-            _v2_room_inputs(hass, controller, house_states),
+            _v2_room_inputs(hass, controller, house_states, contexts),
             # V2 cannot treat total PV as capacity.  Until a V2 house-budget
             # source is configured, only observed positive export is exposed
             # as an upper bound and unknown room power keeps every candidate
@@ -392,7 +393,12 @@ def _temperature_value(value: object) -> float | None:
         return None
 
 
-def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_states: dict) -> tuple[V2RoomInput, ...]:
+def _v2_room_inputs(
+    hass: HomeAssistant,
+    controller: PVClimateController,
+    house_states: dict,
+    contexts: dict[str, dict[str, object]] | None = None,
+) -> tuple[V2RoomInput, ...]:
     """Build V2's read-only inputs from the same explicit zone sources as V1.
 
     Vacation and cooling-season sources deliberately remain missing until their
@@ -406,6 +412,17 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
         temperature_state = hass.states.get(zone.temperature_entity_id)
         climate_state = hass.states.get(zone.climate_entity_id)
         forecast = controller.last_zone_forecasts.get(zone.zone_id)
+        profile = controller.last_thermal_profiles.get(zone.zone_id)
+        context = (contexts or {}).get(zone.zone_id, {})
+        contextual_forecast = contextual_temperature_forecast(
+            house_states[zone.zone_id][0].temperature_c,
+            None if forecast is None else forecast.trend_c_per_h,
+            direct_sun=bool(context.get("direct_sun", False)),
+            shade_open_percent=context.get("shade_open_percent") if isinstance(context.get("shade_open_percent"), (int, float)) else None,
+            irradiance_w_m2=context.get("irradiance_w_m2") if isinstance(context.get("irradiance_w_m2"), (int, float)) else None,
+            passive_sun_trend_c_per_h=None if profile is None else profile.passive_sun_trend_c_per_h,
+            passive_shaded_trend_c_per_h=None if profile is None else profile.passive_shaded_trend_c_per_h,
+        )
         estimate = controller.last_power_estimates.get(zone.zone_id)
         vacation_active = _v2_boolean_input(
             hass.states.get(controller.config.v2_vacation_entity_id) if controller.config.v2_vacation_entity_id else None,
@@ -455,12 +472,12 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
             estimate=RoomEstimate(
                 room_id=zone.zone_id,
                 temperature_c=house_states[zone.zone_id][0].temperature_c,
-                trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
-                predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
-                confidence=0.0 if forecast is None or forecast.data_quality not in {"valid", "ok"} else 0.5,
-                comfort_reserve_c=None if forecast is None or forecast.predicted_temperature_60m_c is None else zone.comfort_temperature - forecast.predicted_temperature_60m_c,
-                thermal_factors=(),
-                reason_code="v1_forecast_snapshot",
+                trend_c_per_h=contextual_forecast.trend_c_per_h,
+                predicted_temperature_60m_c=contextual_forecast.predicted_temperature_60m_c,
+                confidence=0.0 if forecast is None or forecast.data_quality not in {"valid", "ok"} else min(0.75, 0.5 + contextual_forecast.confidence_adjustment),
+                comfort_reserve_c=None if contextual_forecast.predicted_temperature_60m_c is None else zone.comfort_temperature - contextual_forecast.predicted_temperature_60m_c,
+                thermal_factors=contextual_forecast.thermal_factors,
+                reason_code="contextual_temperature_forecast",
             ),
             eligibility=eligibility,
             comfort_temperature_c=zone.comfort_temperature,

@@ -208,6 +208,8 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                     "reason_code": candidate.reason_code,
                     "confidence": candidate.confidence,
                     "required_budget_w": candidate.required_budget_w,
+                    "forecast_60m_c": None if room_inputs.get(candidate.policy.room_id) is None else room_inputs[candidate.policy.room_id].estimate.predicted_temperature_60m_c,
+                    "thermal_factors": [] if room_inputs.get(candidate.policy.room_id) is None else list(room_inputs[candidate.policy.room_id].estimate.thermal_factors),
                     "critical_input_issues": critical_input_issues(candidate.policy.room_id),
                 }
                 for candidate in candidates
