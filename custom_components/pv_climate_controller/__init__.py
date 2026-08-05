@@ -202,6 +202,17 @@ async def _async_refresh_controller(
             sun_azimuth, sun_elevation,
         )
         contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
+    # Integrations can initialize before their cloud climate entities have
+    # restored state.  Reassert persisted house-wide V2 ownership only once
+    # every live room is observable; until then no ownership promotion occurs.
+    if config.v2_house_control_enabled and all(
+        state[1] not in {"unknown", "unavailable"}
+        for state in house_states.values()
+    ) and not all(
+        controller.v2_authority_for(house_zone.zone_id).v2_may_write
+        for house_zone in config.house_zones
+    ):
+        controller.activate_v2_house_control()
     controller.evaluate_house(house_states, contexts)
     if config.v2_shadow_enabled:
         controller.evaluate_v2_shadow(
