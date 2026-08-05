@@ -131,6 +131,7 @@ class ControllerConfig:
     bedroom_mode_enabled: bool = True
     bedroom_cutoff_enabled: bool = True
     bedroom_start_time: str = "15:30"
+    child_bedroom_start_time: str = "15:30"
     bedroom_cutoff_time: str = "18:30"
     bedroom_quiet_enabled: bool = True
     bedroom_quiet_time: str = "18:30"

@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -215,6 +215,7 @@ class PVClimateController:
             bedroom_mode_enabled=bool(options.get(CONF_BEDROOM_MODE_ENABLED, data.get(CONF_BEDROOM_MODE_ENABLED, True))),
             bedroom_cutoff_enabled=bool(options.get(CONF_BEDROOM_CUTOFF_ENABLED, data.get(CONF_BEDROOM_CUTOFF_ENABLED, True))),
             bedroom_start_time=str(options.get(CONF_BEDROOM_START_TIME, data.get(CONF_BEDROOM_START_TIME, "15:30"))),
+            child_bedroom_start_time=str(options.get(CONF_CHILD_BEDROOM_START_TIME, data.get(CONF_CHILD_BEDROOM_START_TIME, options.get(CONF_BEDROOM_START_TIME, data.get(CONF_BEDROOM_START_TIME, "15:30"))))),
             bedroom_cutoff_time=str(options.get(CONF_BEDROOM_CUTOFF_TIME, data.get(CONF_BEDROOM_CUTOFF_TIME, "18:30"))),
             bedroom_quiet_enabled=bool(options.get(CONF_BEDROOM_QUIET_ENABLED, data.get(CONF_BEDROOM_QUIET_ENABLED, True))),
             bedroom_quiet_time=str(options.get(CONF_BEDROOM_QUIET_TIME, data.get(CONF_BEDROOM_QUIET_TIME, "18:30"))),
@@ -706,6 +707,10 @@ class PVClimateController:
             bedroom_cutoff_time=self.config.bedroom_cutoff_time if cutoff_time is None else cutoff_time,
         )
 
+    def set_child_bedroom_start_time(self, start_time: str) -> None:
+        """Persist Kinderzimmer PV pre-cooling independently from Schlafzimmer."""
+        self.config = replace(self.config, child_bedroom_start_time=start_time)
+
     def set_bedroom_target_temperature(self, value: float) -> None:
         """Set the thermal promise for both sleeping rooms without altering daytime comfort."""
         self.config = replace(self.config, bedroom_target_temperature=min(25.0, max(20.0, value)))
@@ -788,8 +793,9 @@ class PVClimateController:
             self.last_bedroom_pilot_actions[zone.zone_id] = action
             return action
         local_time = now or datetime.now().astimezone().time()
-        start = self._schedule_time(self.config.bedroom_start_time, time(15, 30))
         is_master_bedroom = zone.name.strip().casefold() == "schlafzimmer"
+        start_value = self.config.bedroom_start_time if is_master_bedroom else self.config.child_bedroom_start_time
+        start = self._schedule_time(start_value, time(15, 30))
         quiet_enabled = self.config.bedroom_quiet_enabled if is_master_bedroom else self.config.bedroom_cutoff_enabled
         quiet_value = self.config.bedroom_quiet_time if is_master_bedroom else self.config.bedroom_cutoff_time
         cutoff = self._schedule_time(quiet_value, time(18, 30))

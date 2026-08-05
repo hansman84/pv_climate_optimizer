@@ -23,7 +23,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
         ManualOverrideSwitch(controller, entry.entry_id, "manual_override"),
         BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
-        BedroomCutoffSwitch(controller, entry.entry_id, "bedroom_cutoff"),
+        BedroomCutoffSwitch(controller, entry.entry_id, "child_bedroom_quiet"),
         BedroomQuietSwitch(controller, entry.entry_id, "bedroom_quiet"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
@@ -219,9 +219,9 @@ class BedroomModeSwitch(ControllerEntity, SwitchEntity):
 
 
 class BedroomCutoffSwitch(ControllerEntity, SwitchEntity):
-    """Optional hard stop so no bedroom unit runs into bedtime."""
+    """Independent quiet-time switch for the Kinderzimmer."""
 
-    _attr_name = "Schlafraum-Ruhezeit erzwingen"
+    _attr_name = "Kinderzimmer-Ruhezeit aktiv"
     _attr_entity_category = EntityCategory.CONFIG
 
     @property
@@ -231,6 +231,11 @@ class BedroomCutoffSwitch(ControllerEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs) -> None:
         self.controller.set_bedroom_cutoff_enabled(True)
         await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, True)
+        self.controller.notify_state_listeners()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.set_bedroom_cutoff_enabled(False)
+        await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, False)
         self.controller.notify_state_listeners()
 
 
@@ -253,12 +258,6 @@ class BedroomQuietSwitch(ControllerEntity, SwitchEntity):
         self.controller.set_bedroom_quiet_enabled(False)
         await self.async_persist_option(CONF_BEDROOM_QUIET_ENABLED, False)
         self.controller.notify_state_listeners()
-
-    async def async_turn_off(self, **kwargs) -> None:
-        self.controller.set_bedroom_cutoff_enabled(False)
-        await self.async_persist_option(CONF_BEDROOM_CUTOFF_ENABLED, False)
-        self.controller.notify_state_listeners()
-
 
 class ZonePilotSwitch(ControllerEntity, SwitchEntity):
     """Explicit per-room permission for productive pilot commands."""
