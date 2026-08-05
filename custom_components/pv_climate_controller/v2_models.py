@@ -101,6 +101,21 @@ class InputSnapshot:
             )
         )
 
+    @property
+    def critical_input_issues(self) -> tuple[InputValue, ...]:
+        """Return the critical sources that currently prevent a V2 decision."""
+        return tuple(
+            value
+            for value in (
+                self.room_temperature,
+                self.climate_available,
+                self.automation_enabled,
+                self.vacation_active,
+                self.cooling_season_allowed,
+            )
+            if not value.is_valid
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RoomEstimate:

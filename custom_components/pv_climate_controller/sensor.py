@@ -130,6 +130,15 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                     "reason_code": candidate.reason_code,
                     "confidence": candidate.confidence,
                     "required_budget_w": candidate.required_budget_w,
+                    "critical_input_issues": [
+                        {
+                            "entity_id": value.entity_id,
+                            "quality": value.quality.value,
+                            "reason_code": value.reason_code,
+                            "age_s": value.age_s,
+                        }
+                        for value in self.controller.last_v2_room_inputs[candidate.policy.room_id].snapshot.critical_input_issues
+                    ],
                 }
                 for candidate in candidates
             ],
