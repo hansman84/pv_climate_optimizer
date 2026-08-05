@@ -463,7 +463,17 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
             ),
             eligibility=eligibility,
             comfort_temperature_c=zone.comfort_temperature,
-            required_budget_w=None if estimate is None else estimate.incremental_w,
+            # A room that is already cooling does not introduce another
+            # compressor start.  Its next V2 action is limited to one confirmed
+            # target-temperature step, while the measured house/export state is
+            # observed again immediately afterwards.  Starting an *off* room,
+            # however, remains fail-closed until a learned incremental power
+            # estimate exists.
+            required_budget_w=(
+                0.0
+                if climate_state is not None and climate_state.state == "cool"
+                else None if estimate is None else estimate.incremental_w
+            ),
             observed_hvac_mode=None if climate_state is None else climate_state.state,
             observed_target_temperature_c=None if climate_state is None else _temperature_value(climate_state.attributes.get("temperature")),
             pilot_min_target_temperature_c=zone.pilot_min_target_temperature,

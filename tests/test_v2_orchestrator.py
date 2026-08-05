@@ -224,6 +224,36 @@ def test_shadow_runner_fails_closed_without_a_learned_budget() -> None:
     assert decision.room_decisions[0].state is models.DecisionState.NOT_REQUESTED
 
 
+def test_shadow_runner_allows_one_adjustment_for_an_already_running_room() -> None:
+    room = _shadow_room(budget_w=0.0)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=24.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].action is models.CandidateAction.ADJUST
+    assert decision.approved_room_ids == ("living",)
+
+
+def test_shadow_runner_does_not_spend_another_step_below_the_pilot_floor() -> None:
+    room = _shadow_room(budget_w=0.0)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=21.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "pilot_target_floor_reached"
+    assert decision.approved_room_ids == ()
+
+
 def test_shadow_runner_never_requests_a_step_from_an_insufficient_forecast() -> None:
     candidates, decision = shadow.V2ShadowRunner().evaluate((_shadow_room(predicted=None),), available_budget_w=1_000.0)
 

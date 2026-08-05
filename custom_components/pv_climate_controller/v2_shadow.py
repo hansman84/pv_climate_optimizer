@@ -36,6 +36,17 @@ class V2ShadowRunner:
             return V2ShadowRunner._hold(room, room.eligibility.reason_code, room.eligibility.reason_text)
         if room.required_budget_w is None:
             return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
+        if (
+            room.observed_hvac_mode == "cool"
+            and room.observed_target_temperature_c is not None
+            and room.pilot_min_target_temperature_c is not None
+            and room.observed_target_temperature_c <= room.pilot_min_target_temperature_c
+        ):
+            return V2ShadowRunner._hold(
+                room,
+                "pilot_target_floor_reached",
+                "V2 beobachtet weiter: das Klimagerät läuft bereits auf dem niedrigsten erlaubten Pilotsollwert.",
+            )
         predicted = room.estimate.predicted_temperature_60m_c
         if predicted is None or room.estimate.confidence <= 0.0:
             return V2ShadowRunner._hold(room, "forecast_insufficient", "V2 wartet: Temperaturprognose oder Konfidenz reicht noch nicht für eine Modulationsstufe.")
