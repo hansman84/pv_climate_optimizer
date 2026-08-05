@@ -141,6 +141,7 @@ def test_stale_temperature_fails_snapshot_critical_gate() -> None:
 
     assert not snapshot.critical_inputs_valid
     assert snapshot.critical_input_issues == (stale_temperature,)
+    assert snapshot.critical_input_issues[0].source_entity_id == "sensor.room"
 
 
 def test_authority_handoff_freezes_both_paths_until_observed_state_is_aligned() -> None:

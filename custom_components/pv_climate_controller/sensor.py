@@ -129,7 +129,7 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                 return []
             return [
                 {
-                    "entity_id": value.entity_id,
+                    "entity_id": value.source_entity_id,
                     "quality": value.quality.value,
                     "reason_code": value.reason_code,
                     "age_s": value.age_s,
