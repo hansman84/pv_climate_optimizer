@@ -30,6 +30,18 @@ class V2ShadowRunner:
 
     @staticmethod
     def _candidate(room: V2RoomInput) -> RoomCandidate:
+        if room.eligibility.reason_code in {"bedroom_schedule_pending", "bedroom_quiet_time"}:
+            if room.observed_hvac_mode == "cool":
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.STOP,
+                    required_budget_w=0.0,
+                    comfort_gap_c=0.0,
+                    confidence=room.estimate.confidence,
+                    reason_code=room.eligibility.reason_code,
+                    reason_text=room.eligibility.reason_text,
+                )
+            return V2ShadowRunner._hold(room, room.eligibility.reason_code, room.eligibility.reason_text)
         if not room.snapshot.critical_inputs_valid:
             return V2ShadowRunner._hold(room, "critical_input_not_fresh", "V2 wartet: mindestens eine kritische Quelle ist fehlend, unplausibel oder veraltet.")
         if not room.eligibility.allowed:

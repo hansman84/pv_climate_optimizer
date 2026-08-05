@@ -239,6 +239,44 @@ def test_shadow_runner_allows_one_adjustment_for_an_already_running_room() -> No
     assert decision.approved_room_ids == ("living",)
 
 
+def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None:
+    room = _shadow_room()
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate,
+        models.EligibilityDecision(False, "bedroom_schedule_pending", "Schlafzimmer: Vorkühlung beginnt ab 16:00 Uhr."),
+        room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=21.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].action is models.CandidateAction.STOP
+    assert candidates[0].reason_code == "bedroom_schedule_pending"
+    assert decision.approved_room_ids == ("living",)
+    assert plan is not None and plan.action is models.CandidateAction.STOP
+
+
+def test_shadow_runner_keeps_a_bedroom_off_before_its_start_time() -> None:
+    room = _shadow_room()
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate,
+        models.EligibilityDecision(False, "bedroom_schedule_pending", "Schlafzimmer: Vorkühlung beginnt ab 16:00 Uhr."),
+        room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="off", observed_target_temperature_c=21.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].action is models.CandidateAction.HOLD
+    assert candidates[0].reason_code == "bedroom_schedule_pending"
+    assert decision.approved_room_ids == ()
+
+
 def test_shadow_runner_does_not_spend_another_step_below_the_pilot_floor() -> None:
     room = _shadow_room(budget_w=0.0)
     room = models.V2RoomInput(

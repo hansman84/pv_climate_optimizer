@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -399,7 +399,8 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
     selectors are introduced.  The pure V2 gate then reports that gap rather
     than guessing a policy or emitting a normal modulation request.
     """
-    now = datetime.now().astimezone().isoformat()
+    local_now = datetime.now().astimezone()
+    now = local_now.isoformat()
     result: list[V2RoomInput] = []
     for zone in controller.config.house_zones:
         temperature_state = hass.states.get(zone.temperature_entity_id)
@@ -421,7 +422,7 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
         elif cooling_season_allowed.is_valid and cooling_season_allowed.value is False:
             eligibility = EligibilityDecision(False, "cooling_season_inactive", "V2 Shadow: automatische Kühlung ist außerhalb der Saison gesperrt.")
         else:
-            eligibility = EligibilityDecision(True, "shadow_eligibility_pending", "V2 Shadow bewertet die freigegebenen Quellen.")
+            eligibility = _v2_bedroom_schedule_eligibility(controller, zone.name, local_now.time())
         result.append(V2RoomInput(
             policy=RoomPolicy(zone.zone_id, zone.name, zone.modulation_priority),
             snapshot=InputSnapshot(
@@ -484,6 +485,39 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
             ),
         ))
     return tuple(result)
+
+
+def _v2_bedroom_schedule_eligibility(
+    controller: PVClimateController,
+    zone_name: str,
+    local_time: time,
+) -> EligibilityDecision:
+    """Apply each sleeping room's own start and quiet boundary to V2."""
+    normalized = zone_name.strip().casefold()
+    if normalized not in {"schlafzimmer", "kinderzimmer"}:
+        return EligibilityDecision(True, "v2_eligible", "V2 bewertet die freigegebenen Quellen.")
+    if not controller.config.bedroom_mode_enabled:
+        return EligibilityDecision(False, "bedroom_mode_disabled", f"{zone_name}: Schlafraum-Automatik ist pausiert.")
+    is_master_bedroom = normalized == "schlafzimmer"
+    start_value = controller.config.bedroom_start_time if is_master_bedroom else controller.config.child_bedroom_start_time
+    quiet_enabled = controller.config.bedroom_quiet_enabled if is_master_bedroom else controller.config.bedroom_cutoff_enabled
+    quiet_value = controller.config.bedroom_quiet_time if is_master_bedroom else controller.config.bedroom_cutoff_time
+    start = _v2_schedule_time(start_value, time(15, 30))
+    quiet = _v2_schedule_time(quiet_value, time(18, 30))
+    if quiet_enabled and local_time >= quiet:
+        return EligibilityDecision(False, "bedroom_quiet_time", f"{zone_name}: Ruhezeit ab {quiet.strftime('%H:%M')} Uhr aktiv.")
+    if local_time < start:
+        return EligibilityDecision(False, "bedroom_schedule_pending", f"{zone_name}: Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
+    return EligibilityDecision(True, "v2_eligible", "V2 bewertet die freigegebenen Quellen.")
+
+
+def _v2_schedule_time(value: str, fallback: time) -> time:
+    """Parse a UI time selector without creating a permissive fallback."""
+    try:
+        hour, minute = (int(part) for part in value.split(":", 1))
+        return time(hour, minute)
+    except (AttributeError, TypeError, ValueError):
+        return fallback
 
 
 def _v2_numeric_input(state, entity_id: str | None, unit: str) -> InputValue:
