@@ -60,7 +60,7 @@ class ShadowModeSwitch(ControllerEntity, SwitchEntity):
 
 
 class V2ShadowSwitch(ControllerEntity, SwitchEntity):
-    """Enable the comparison runner; it has no route to climate services."""
+    """Keep the V2 evaluation runner enabled while it owns the house."""
 
     _attr_name = "V2 Shadow-Vergleich"
     _attr_entity_category = EntityCategory.CONFIG
@@ -75,6 +75,11 @@ class V2ShadowSwitch(ControllerEntity, SwitchEntity):
         self.controller.notify_state_listeners()
 
     async def async_turn_off(self, **kwargs) -> None:
+        if self.controller.config.v2_house_control_enabled:
+            raise HomeAssistantError(
+                "V2-Automatik bleibt aktiv, solange V2 die Haussteuerung führt. "
+                "Für eine Pause nutze die Urlaubssperre oder die Kühlsaison."
+            )
         self.controller.set_v2_shadow_enabled(False)
         await self.async_persist_option(CONF_V2_SHADOW_ENABLED, False)
         self.controller.notify_state_listeners()
