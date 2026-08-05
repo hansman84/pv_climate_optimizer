@@ -136,6 +136,25 @@ class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
         self.controller.notify_state_listeners()
         if not active.v2_may_write:
             raise HomeAssistantError(active.reason_text)
+        # The plan used to prove this handoff is still current and the
+        # observed device state was compared immediately above.  Send that
+        # one plan through the shared adapter now instead of waiting for an
+        # unrelated state update or the periodic refresh.  This preserves one
+        # writer while making a user-approved V2 handoff operational.
+        plan = self.controller.v2_command_plan_for(self._zone_id)
+        if plan is None:
+            self.controller.failback_v2_to_v1(self._zone_id)
+            await self._async_persist_authority()
+            self.controller.notify_state_listeners()
+            raise HomeAssistantError("V2-Übergabe zurückgenommen: freigegebener Befehl ist nicht mehr vorhanden.")
+        from . import _pilot_service_executor
+
+        result = await self.controller.async_apply_v2_command(plan, _pilot_service_executor(self.hass))
+        if result.status in {"failed", "blocked", "shadow", "authority_blocked", "invalid", "manual_override", "backoff"}:
+            self.controller.failback_v2_to_v1(self._zone_id)
+            await self._async_persist_authority()
+            self.controller.notify_state_listeners()
+            raise HomeAssistantError(f"V2-Übergabe zurückgenommen: {result.reason}")
 
     async def async_turn_off(self, **kwargs) -> None:
         """Return this room to V1 without racing an in-flight V2 command."""
