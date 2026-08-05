@@ -135,6 +135,10 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
             candidate.policy.room_id: candidate
             for candidate in self.controller.last_v2_candidates
         }
+        if any(candidate.reason_code == "vacation_active" for candidate in candidate_by_room.values()):
+            return "V2-Automatik pausiert – Urlaubssperre aktiv"
+        if any(candidate.reason_code == "cooling_season_inactive" for candidate in candidate_by_room.values()):
+            return "V2-Automatik pausiert – Kühlsaison aus"
         blocked = next(
             (
                 item for item in decision.room_decisions
