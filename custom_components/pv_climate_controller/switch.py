@@ -107,6 +107,11 @@ class V2HouseControlSwitch(ControllerEntity, SwitchEntity):
         options[CONF_V2_HOUSE_CONTROL_ENABLED] = enabled
         if enabled:
             options[CONF_V2_SHADOW_ENABLED] = True
+            # Persist the matching V1 shutdown together with the V2 takeover;
+            # otherwise the legacy GUI gates return as on after a restart even
+            # though authority blocks their writes.
+            options[CONF_LIVING_ROOM_PILOT_ENABLED] = False
+            options[CONF_HOUSE_ZONES] = [serialize_zone_config(zone) for zone in self.controller.config.house_zones]
         self.hass.config_entries.async_update_entry(entry, options=options)
 
     async def _async_persist_authority(self) -> None:
@@ -247,6 +252,8 @@ class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
         return self.controller.config.living_room_pilot_enabled
 
     async def async_turn_on(self, **kwargs) -> None:
+        if self.controller.config.v2_house_control_enabled:
+            raise HomeAssistantError("V1-Pilot bleibt deaktiviert, solange V2 die Haussteuerung führt.")
         self.controller.set_living_room_pilot_enabled(True)
         await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, True)
         self.controller.notify_state_listeners()
@@ -363,6 +370,8 @@ class ZonePilotSwitch(ControllerEntity, SwitchEntity):
         return bool(zone and zone.pilot_enabled)
 
     async def async_turn_on(self, **kwargs) -> None:
+        if self.controller.config.v2_house_control_enabled:
+            raise HomeAssistantError("V1-Pilot bleibt deaktiviert, solange V2 die Haussteuerung führt.")
         await self._async_set(True)
 
     async def async_turn_off(self, **kwargs) -> None:

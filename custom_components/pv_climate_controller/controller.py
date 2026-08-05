@@ -222,6 +222,15 @@ class PVClimateController:
             bedroom_quiet_time=str(options.get(CONF_BEDROOM_QUIET_TIME, data.get(CONF_BEDROOM_QUIET_TIME, "18:30"))),
             bedroom_target_temperature=float(options.get(CONF_BEDROOM_TARGET_TEMPERATURE, data.get(CONF_BEDROOM_TARGET_TEMPERATURE, 22.5))),
         )
+        if config.v2_house_control_enabled:
+            v2_zones = tuple(replace(item, pilot_enabled=False) for item in config.house_zones)
+            v2_zone = next((item for item in v2_zones if config.zone is not None and item.zone_id == config.zone.zone_id), config.zone)
+            config = replace(
+                config,
+                living_room_pilot_enabled=False,
+                house_zones=v2_zones,
+                zone=v2_zone,
+            )
         controller = cls(
             config=config,
             command_adapter=ClimateCommandAdapter(
@@ -625,7 +634,17 @@ class PVClimateController:
                     self.failback_v2_to_v1(room_id)
                 return False
             activated.append(zone.zone_id)
-        self.config = replace(self.config, v2_shadow_enabled=True, v2_house_control_enabled=True)
+        # A house-wide V2 takeover is also a persistent shutdown of every V1
+        # pilot permission.  Authority already prevents V1 writes, but keeping
+        # the old switches logically on after a restart is misleading and makes
+        # an accidental future reactivation too easy.
+        self.config = replace(
+            self.config,
+            v2_shadow_enabled=True,
+            v2_house_control_enabled=True,
+            living_room_pilot_enabled=False,
+            house_zones=tuple(replace(zone, pilot_enabled=False) for zone in self.config.house_zones),
+        )
         # This adapter is still the only service-call boundary.  V1 cannot
         # use it while every room is V2-owned, so the productive permission
         # applies solely to explicitly approved V2 plans.
