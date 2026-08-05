@@ -98,11 +98,27 @@ class V2HouseControlSwitch(ControllerEntity, SwitchEntity):
             for zone in self.controller.config.house_zones
         )
 
+    async def _async_persist_house_mode(self, enabled: bool) -> None:
+        """Persist both coupled options in one reload-producing update."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None:
+            return
+        options = dict(entry.options)
+        options[CONF_V2_HOUSE_CONTROL_ENABLED] = enabled
+        if enabled:
+            options[CONF_V2_SHADOW_ENABLED] = True
+        self.hass.config_entries.async_update_entry(entry, options=options)
+
+    async def _async_persist_authority(self) -> None:
+        store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
+
     async def async_turn_on(self, **kwargs) -> None:
         if not self._all_rooms_observed() or not self.controller.activate_v2_house_control():
             raise HomeAssistantError("V2-Hausübernahme gesperrt: mindestens ein Klimagerät ist nicht eindeutig beobachtbar.")
-        await self.async_persist_option(CONF_V2_SHADOW_ENABLED, True)
-        await self.async_persist_option(CONF_V2_HOUSE_CONTROL_ENABLED, True)
+        await self._async_persist_authority()
+        await self._async_persist_house_mode(True)
         self.controller.notify_state_listeners()
         from . import _async_refresh_controller
 
@@ -111,7 +127,8 @@ class V2HouseControlSwitch(ControllerEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         self.controller.deactivate_v2_house_control()
-        await self.async_persist_option(CONF_V2_HOUSE_CONTROL_ENABLED, False)
+        await self._async_persist_authority()
+        await self._async_persist_house_mode(False)
         self.controller.notify_state_listeners()
 
 class V2RoomControlSwitch(ControllerEntity, SwitchEntity):

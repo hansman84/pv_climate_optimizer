@@ -33,6 +33,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = controller
     store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.learning")
     controller.restore_learning_state(unpack(await store.async_load()))
+    # The house-wide V2 switch is a persisted ownership commitment, not only
+    # a visual control.  A config-entry reload must therefore rebuild the
+    # all-room authority before the first refresh can let V1 evaluate again.
+    if controller.config.v2_house_control_enabled and all(
+        (state := hass.states.get(zone.climate_entity_id)) is not None
+        and state.state not in {"unknown", "unavailable"}
+        for zone in controller.config.house_zones
+    ):
+        if not all(controller.v2_authority_for(zone.zone_id).v2_may_write for zone in controller.config.house_zones):
+            controller.activate_v2_house_control()
     hass.data[DOMAIN].setdefault("_learning_stores", {})[entry.entry_id] = store
     source_entities = _configured_entities(controller)
     if source_entities:
