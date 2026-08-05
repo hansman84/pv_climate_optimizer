@@ -230,8 +230,8 @@ class RoomCandidate:
 
     @property
     def requests_modulation(self) -> bool:
-        """Return whether the house must reserve start/adjustment capacity."""
-        return self.action in {CandidateAction.START, CandidateAction.ADJUST}
+        """Return whether the house must schedule one explicit control step."""
+        return self.action in {CandidateAction.START, CandidateAction.ADJUST, CandidateAction.STOP}
 
 
 @dataclass(frozen=True, slots=True)

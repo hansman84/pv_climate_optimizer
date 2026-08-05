@@ -274,6 +274,40 @@ def test_shadow_runner_starts_an_off_room_at_its_hard_temperature_limit() -> Non
     assert plan.target_temperature_c == 25.0
 
 
+def test_shadow_runner_relaxes_a_running_room_one_step_after_forecast_recovers() -> None:
+    room = _shadow_room(budget_w=0.0, predicted=23.0)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=21.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "forecast_comfort_recovered"
+    assert plan is not None and plan.target_temperature_c == 22.0
+
+
+def test_shadow_runner_stops_only_after_relief_target_and_comfort_reserve() -> None:
+    room = _shadow_room(budget_w=0.0, predicted=23.0)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot,
+        models.RoomEstimate("living", 22.5, -0.2, 23.0, 0.5, 0.5, ("trend",), "forecast_ready"),
+        room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "comfort_stable_at_relief_target"
+    assert plan is not None and plan.action is models.CandidateAction.STOP
+
+
 def test_shadow_runner_never_requests_a_step_from_an_insufficient_forecast() -> None:
     candidates, decision = shadow.V2ShadowRunner().evaluate((_shadow_room(predicted=None),), available_budget_w=1_000.0)
 

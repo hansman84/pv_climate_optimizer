@@ -57,6 +57,10 @@ class V2ShadowRunner:
             and room.observed_target_temperature_c is not None
             and room.pilot_min_target_temperature_c is not None
             and room.observed_target_temperature_c <= room.pilot_min_target_temperature_c
+            and (
+                room.estimate.predicted_temperature_60m_c is None
+                or room.estimate.predicted_temperature_60m_c > room.comfort_temperature_c
+            )
         ):
             return V2ShadowRunner._hold(
                 room,
@@ -68,6 +72,35 @@ class V2ShadowRunner:
             return V2ShadowRunner._hold(room, "forecast_insufficient", "V2 wartet: Temperaturprognose oder Konfidenz reicht noch nicht für eine Modulationsstufe.")
         comfort_gap = predicted - room.comfort_temperature_c
         if comfort_gap <= 0:
+            if room.observed_hvac_mode == "cool":
+                current = room.observed_target_temperature_c
+                upper = room.pilot_max_target_temperature_c
+                if current is not None and upper is not None and current < upper:
+                    return RoomCandidate(
+                        policy=room.policy,
+                        action=CandidateAction.ADJUST,
+                        required_budget_w=0.0,
+                        comfort_gap_c=abs(comfort_gap),
+                        confidence=room.estimate.confidence,
+                        reason_code="forecast_comfort_recovered",
+                        reason_text="V2 entspannt die Kühlung um genau eine bestätigte Gerätestufe, weil die Prognose wieder im Komfortband liegt.",
+                    )
+                if (
+                    current is not None
+                    and upper is not None
+                    and current >= upper
+                    and room.estimate.temperature_c is not None
+                    and room.estimate.temperature_c <= room.comfort_temperature_c - 0.5
+                ):
+                    return RoomCandidate(
+                        policy=room.policy,
+                        action=CandidateAction.STOP,
+                        required_budget_w=0.0,
+                        comfort_gap_c=abs(comfort_gap),
+                        confidence=room.estimate.confidence,
+                        reason_code="comfort_stable_at_relief_target",
+                        reason_text="V2 beendet die Kühlung erst nach der sanften Entspannung und ausreichender Komfortreserve.",
+                    )
             return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
         return RoomCandidate(
             policy=room.policy,
