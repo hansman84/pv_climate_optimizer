@@ -40,6 +40,7 @@ class V2ShadowRunner:
                     confidence=room.estimate.confidence,
                     reason_code=room.eligibility.reason_code,
                     reason_text=room.eligibility.reason_text,
+                    safety_override=True,
                 )
             return V2ShadowRunner._hold(room, room.eligibility.reason_code, room.eligibility.reason_text)
         if not room.snapshot.critical_inputs_valid:

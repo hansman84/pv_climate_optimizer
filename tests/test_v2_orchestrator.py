@@ -255,6 +255,7 @@ def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None
 
     assert candidates[0].action is models.CandidateAction.STOP
     assert candidates[0].reason_code == "bedroom_schedule_pending"
+    assert candidates[0].safety_override
     assert decision.approved_room_ids == ("living",)
     assert plan is not None and plan.action is models.CandidateAction.STOP
 
