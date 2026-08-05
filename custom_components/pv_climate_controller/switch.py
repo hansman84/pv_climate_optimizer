@@ -138,18 +138,24 @@ class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
             raise HomeAssistantError(active.reason_text)
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Return this room to V1 without changing its current device state."""
+        """Return this room to V1 without racing an in-flight V2 command."""
         if not self._observed_state_is_aligned():
             raise HomeAssistantError("V1-Rückfall gesperrt: beobachteter Klima-Zustand hat sich geändert.")
         pending = self.controller.begin_v1_rollback(self._zone_id)
-        restored = self.controller.complete_v1_rollback(
-            self._zone_id,
-            observed_state_aligned=pending.authority.value == "rollback_pending" and self._observed_state_is_aligned(),
-        )
+        if pending.authority.value != "rollback_pending":
+            raise HomeAssistantError(pending.reason_text)
         await self._async_persist_authority()
         self.controller.notify_state_listeners()
-        if not restored.v1_may_write:
-            raise HomeAssistantError(restored.reason_text)
+        # When no V2 command is waiting for cloud/device confirmation, the
+        # failback is immediate.  Otherwise _async_refresh_controller completes
+        # it after the exact observed device state has arrived.
+        zone = self._zone
+        if zone is not None and "command_ack_pending" not in self.controller.command_adapter.handoff_blockers(zone.climate_entity_id):
+            restored = self.controller.complete_v1_rollback(self._zone_id, observed_state_aligned=True)
+            await self._async_persist_authority()
+            self.controller.notify_state_listeners()
+            if not restored.v1_may_write:
+                raise HomeAssistantError(restored.reason_text)
 
 class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
     """Explicit productive gate for the confirmed Wohnzimmer pilot only."""

@@ -88,6 +88,33 @@ class ClimateCommandAdapter:
             blockers.append("command_backoff_active")
         return tuple(blockers)
 
+    def confirm_observed_climate_state(
+        self,
+        entity_id: str,
+        *,
+        hvac_mode: str | None,
+        target_temperature_c: float | None,
+    ) -> bool:
+        """Clear a pending command only when the device reports its exact result.
+
+        A service acceptance is not a device acknowledgement.  This narrow
+        comparison is shared by V1 and V2 so a handoff or rollback never relies
+        on an optimistic command send.
+        """
+        pending = self._pending.get(entity_id)
+        if pending is None:
+            return False
+        _, action, value = pending[0]
+        target_matches = isinstance(value, (int, float)) and target_temperature_c is not None and float(value) == target_temperature_c
+        acknowledged = (
+            (action == "pilot_start" and hvac_mode == "cool" and target_matches)
+            or (action == "pilot_adjust" and target_matches)
+            or (action == "pilot_stop" and hvac_mode == "off")
+        )
+        if acknowledged:
+            self._pending.pop(entity_id, None)
+        return acknowledged
+
     def observe_external_change(self, command: Command, *, override_duration_s: float = 7200.0) -> bool:
         """Record an override only if the state change is not our pending command."""
         now = self._clock()

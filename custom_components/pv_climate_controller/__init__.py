@@ -181,6 +181,11 @@ async def _async_refresh_controller(
             "off" if climate_state is None else climate_state.state,
             None if cooling_state is None else cooling_state.state,
         )
+        controller.command_adapter.confirm_observed_climate_state(
+            house_zone.climate_entity_id,
+            hvac_mode=None if climate_state is None else climate_state.state,
+            target_temperature_c=None if climate_state is None else _temperature_value(climate_state.attributes.get("temperature")),
+        )
         direct_sun, shade_open = _sun_and_relevant_shade(
             hass, house_zone.facade_azimuths, house_zone.facade_shade_entity_ids,
             house_zone.shade_entity_ids, house_zone.overhang_cutoff_elevation,
@@ -211,6 +216,17 @@ async def _async_refresh_controller(
                 controller.failback_v2_to_v1(house_zone.zone_id)
                 if store is not None:
                     await store.async_save(pack(controller.export_learning_state()))
+    # A user can switch V2 off while its final cloud command is still pending.
+    # Keep both writers frozen until the observed state above acknowledges it;
+    # then V1 resumes without racing an in-flight V2 command.
+    for house_zone in config.house_zones:
+        if controller.v2_authority_for(house_zone.zone_id).authority.value != "rollback_pending":
+            continue
+        if "command_ack_pending" in controller.command_adapter.handoff_blockers(house_zone.climate_entity_id):
+            continue
+        controller.complete_v1_rollback(house_zone.zone_id, observed_state_aligned=True)
+        if store is not None:
+            await store.async_save(pack(controller.export_learning_state()))
     controller.observe_outdoor_power(tuple(
         house_zone.zone_id for house_zone in config.house_zones
         if house_states[house_zone.zone_id][1] in {"cool", "dry"}

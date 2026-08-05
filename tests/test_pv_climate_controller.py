@@ -136,6 +136,20 @@ def test_handoff_readiness_exposes_manual_override_as_a_blocker() -> None:
     assert command_adapter.handoff_blockers("climate.living") == ("manual_override_active",)
 
 
+def test_observed_device_state_acknowledges_only_the_matching_pending_command() -> None:
+    command_adapter = adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0)
+
+    async def executor(command):
+        return True
+
+    command = adapter.Command("climate.living", "pilot_start", 24.0)
+    assert asyncio.run(command_adapter.async_request(command, executor)).status == "sent"
+    assert "command_ack_pending" in command_adapter.handoff_blockers("climate.living")
+    assert not command_adapter.confirm_observed_climate_state("climate.living", hvac_mode="cool", target_temperature_c=23.0)
+    assert command_adapter.confirm_observed_climate_state("climate.living", hvac_mode="cool", target_temperature_c=24.0)
+    assert "command_ack_pending" not in command_adapter.handoff_blockers("climate.living")
+
+
 def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(
