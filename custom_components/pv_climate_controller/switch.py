@@ -215,6 +215,10 @@ class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         """Return this room to V1 without racing an in-flight V2 command."""
+        if self.controller.config.v2_house_control_enabled:
+            raise HomeAssistantError(
+                "V2 führt diesen Raum. Eine Rückgabe an V1 ist nur als bewusster Wartungseingriff für das gesamte Haus vorgesehen."
+            )
         if not self._observed_state_is_aligned():
             raise HomeAssistantError("V1-Rückfall gesperrt: beobachteter Klima-Zustand hat sich geändert.")
         pending = self.controller.begin_v1_rollback(self._zone_id)
