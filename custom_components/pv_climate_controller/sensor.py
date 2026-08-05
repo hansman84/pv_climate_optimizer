@@ -111,10 +111,10 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         if not self.controller.config.v2_shadow_enabled:
-            return "V2-Automatik pausiert"
+            return "Automatik pausiert"
         decision = self.controller.last_v2_house_decision
         if decision is None:
-            return "V2 prüft die erste Hauslage"
+            return "Automatik wird vorbereitet"
         if decision.approved_room_ids:
             approved = [
                 room
@@ -127,11 +127,11 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                 approved[0].selected_action.value if approved and approved[0].selected_action else "adjust"
             )
             action_text = {
-                "start": "V2 startet sanft",
-                "adjust": "V2 passt sanft an",
-                "stop": "V2 beendet die Kühlung",
-            }.get(action, "V2 steuert")
-            return f"{action_text}: {names}"
+                "start": "Kühlung startet sanft",
+                "adjust": "Kühlung wird sanft angepasst",
+                "stop": "Kühlung wird beendet",
+            }.get(action, "Automatik steuert")
+            return f"{names}: {action_text}"
 
         decisions = {item.room_id: item for item in decision.room_decisions}
         candidate_by_room = {
@@ -139,9 +139,9 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
             for candidate in self.controller.last_v2_candidates
         }
         if any(candidate.reason_code == "vacation_active" for candidate in candidate_by_room.values()):
-            return "V2-Automatik pausiert – Urlaubssperre aktiv"
+            return "Automatik pausiert: Urlaubssperre aktiv"
         if any(candidate.reason_code == "cooling_season_inactive" for candidate in candidate_by_room.values()):
-            return "V2-Automatik pausiert – Kühlsaison aus"
+            return "Automatik pausiert: Kühlsaison aus"
         blocked = next(
             (
                 item for item in decision.room_decisions
@@ -154,11 +154,11 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
             None,
         )
         if blocked is not None:
-            return f"V2 wartet auf Klimareserve: {self._room_name(blocked.room_id)}"
+            return f"Klimareserve fehlt: {self._room_name(blocked.room_id)}"
         for reason_code, text in (
-            ("critical_input_not_fresh", "V2 wartet auf frische Messwerte"),
-            ("budget_estimate_missing", "V2 lernt noch den Leistungsbedarf"),
-            ("forecast_insufficient", "V2 sammelt noch genug Prognosedaten"),
+            ("critical_input_not_fresh", "Messwerte fehlen oder sind veraltet"),
+            ("budget_estimate_missing", "Leistungsbedarf wird noch gelernt"),
+            ("forecast_insufficient", "Prognosedaten werden noch gesammelt"),
         ):
             affected = [
                 self._room_name(room_id)
@@ -169,7 +169,7 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                 return f"{text}: {', '.join(affected)}"
         if decisions and all(item.reason_code in {"comfort_holding", "pilot_target_floor_reached"} for item in decisions.values()):
             return "Alle Räume liegen im Komfortbereich"
-        return "V2 beobachtet die Hauslage"
+        return "Automatik beobachtet die Hauslage"
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
