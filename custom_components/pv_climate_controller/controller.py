@@ -719,7 +719,14 @@ class PVClimateController:
     def set_living_room_pilot_enabled(self, enabled: bool) -> None:
         """Change the explicit GUI pilot gate; no command is sent here."""
         self.config = replace(self.config, living_room_pilot_enabled=enabled)
-        self.command_adapter.set_operating_mode(shadow_mode=self.config.shadow_mode, productive_enabled=enabled and not self.config.shadow_mode)
+        # V1 may be deliberately disabled while V2 owns the whole house.  The
+        # shared adapter must remain available to V2 in that state, otherwise
+        # turning the retained V1 master switch off would silently stop V2.
+        v2_owns_house = self.config.v2_house_control_enabled
+        self.command_adapter.set_operating_mode(
+            shadow_mode=False if v2_owns_house else self.config.shadow_mode,
+            productive_enabled=v2_owns_house or (enabled and not self.config.shadow_mode),
+        )
 
     def set_manual_override_enabled(self, enabled: bool) -> None:
         """Choose whether a HA user's climate change may release a pilot."""

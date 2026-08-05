@@ -243,6 +243,12 @@ def test_housewide_v2_takeover_blocks_v1_for_every_room_and_has_a_one_call_fallb
     assert blocked.status == "authority_blocked"
     assert calls == []
 
+    runtime.set_living_room_pilot_enabled(False)
+
+    assert not runtime.config.living_room_pilot_enabled
+    assert not runtime.command_adapter.shadow_mode
+    assert runtime.command_adapter._productive_enabled
+
     runtime.deactivate_v2_house_control()
 
     assert not runtime.config.v2_house_control_enabled
