@@ -146,6 +146,7 @@ class V2RoomInput:
     estimate: RoomEstimate
     eligibility: EligibilityDecision
     comfort_temperature_c: float
+    hard_max_temperature_c: float
     required_budget_w: float | None
     observed_hvac_mode: str | None = None
     observed_target_temperature_c: float | None = None
@@ -156,6 +157,8 @@ class V2RoomInput:
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:
             raise ValueError("comfort_temperature_c is implausible")
+        if self.hard_max_temperature_c < self.comfort_temperature_c:
+            raise ValueError("hard maximum cannot be below comfort temperature")
         if self.required_budget_w is not None and self.required_budget_w < 0:
             raise ValueError("required_budget_w cannot be negative")
         if self.pilot_min_target_temperature_c is not None and self.pilot_max_target_temperature_c is not None:

@@ -204,7 +204,7 @@ def _shadow_room(*, predicted: float | None = 25.0, confidence: float = 0.8, bud
     return models.V2RoomInput(
         models.RoomPolicy("living", "Wohnzimmer", 1), snapshot,
         models.RoomEstimate("living", 24.2, 0.2, predicted, confidence, -0.7, ("trend",), "forecast_ready"),
-        models.EligibilityDecision(True, "eligible", "Automatik ist zulässig."), 23.5, budget_w,
+        models.EligibilityDecision(True, "eligible", "Automatik ist zulässig."), 23.5, 26.0, budget_w,
     )
 
 
@@ -227,7 +227,7 @@ def test_shadow_runner_fails_closed_without_a_learned_budget() -> None:
 def test_shadow_runner_allows_one_adjustment_for_an_already_running_room() -> None:
     room = _shadow_room(budget_w=0.0)
     room = models.V2RoomInput(
-        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.required_budget_w,
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
         observed_hvac_mode="cool", observed_target_temperature_c=24.0,
         pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
         target_temperature_step_c=1.0,
@@ -242,7 +242,7 @@ def test_shadow_runner_allows_one_adjustment_for_an_already_running_room() -> No
 def test_shadow_runner_does_not_spend_another_step_below_the_pilot_floor() -> None:
     room = _shadow_room(budget_w=0.0)
     room = models.V2RoomInput(
-        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.required_budget_w,
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
         observed_hvac_mode="cool", observed_target_temperature_c=21.0,
         pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
         target_temperature_step_c=1.0,
@@ -252,6 +252,26 @@ def test_shadow_runner_does_not_spend_another_step_below_the_pilot_floor() -> No
 
     assert candidates[0].reason_code == "pilot_target_floor_reached"
     assert decision.approved_room_ids == ()
+
+
+def test_shadow_runner_starts_an_off_room_at_its_hard_temperature_limit() -> None:
+    room = _shadow_room(budget_w=None)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot,
+        models.RoomEstimate("living", 26.0, 0.2, 26.4, 0.5, -2.4, ("trend",), "forecast_ready"),
+        room.eligibility, room.comfort_temperature_c, 26.0, room.required_budget_w,
+        observed_hvac_mode="off", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=None,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "hard_temperature_limit_failsafe"
+    assert decision.approved_room_ids == ("living",)
+    assert plan is not None and plan.action is models.CandidateAction.START
+    assert plan.target_temperature_c == 25.0
 
 
 def test_shadow_runner_never_requests_a_step_from_an_insufficient_forecast() -> None:
@@ -264,7 +284,7 @@ def test_shadow_runner_never_requests_a_step_from_an_insufficient_forecast() -> 
 def test_command_planner_starts_with_the_mildest_explicit_pilot_target() -> None:
     room = _shadow_room()
     room = models.V2RoomInput(
-        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.required_budget_w,
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
         observed_hvac_mode="off", pilot_min_target_temperature_c=21.0,
         pilot_max_target_temperature_c=24.0, target_temperature_step_c=1.0,
     )
@@ -280,7 +300,7 @@ def test_command_planner_starts_with_the_mildest_explicit_pilot_target() -> None
 def test_command_planner_adjusts_only_one_confirmed_device_step() -> None:
     room = _shadow_room()
     room = models.V2RoomInput(
-        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.required_budget_w,
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
         observed_hvac_mode="cool", observed_target_temperature_c=24.0,
         pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=24.0,
         target_temperature_step_c=1.0,

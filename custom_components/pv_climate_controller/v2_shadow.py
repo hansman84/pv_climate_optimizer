@@ -34,6 +34,22 @@ class V2ShadowRunner:
             return V2ShadowRunner._hold(room, "critical_input_not_fresh", "V2 wartet: mindestens eine kritische Quelle ist fehlend, unplausibel oder veraltet.")
         if not room.eligibility.allowed:
             return V2ShadowRunner._hold(room, room.eligibility.reason_code, room.eligibility.reason_text)
+        temperature = room.estimate.temperature_c
+        if (
+            temperature is not None
+            and temperature >= room.hard_max_temperature_c
+            and room.observed_hvac_mode != "cool"
+        ):
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.START,
+                required_budget_w=0.0,
+                comfort_gap_c=max(0.0, temperature - room.comfort_temperature_c),
+                confidence=room.estimate.confidence,
+                reason_code="hard_temperature_limit_failsafe",
+                reason_text="V2 Fail-safe: die harte Raumtemperaturgrenze ist erreicht; das Klimagerät wird mit einem bestätigten, milden Sollwert gestartet.",
+                safety_override=True,
+            )
         if room.required_budget_w is None:
             return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
         if (

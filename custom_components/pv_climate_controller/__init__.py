@@ -463,6 +463,7 @@ def _v2_room_inputs(hass: HomeAssistant, controller: PVClimateController, house_
             ),
             eligibility=eligibility,
             comfort_temperature_c=zone.comfort_temperature,
+            hard_max_temperature_c=zone.hard_max_temperature,
             # A room that is already cooling does not introduce another
             # compressor start.  Its next V2 action is limited to one confirmed
             # target-temperature step, while the measured house/export state is

@@ -20,16 +20,24 @@ class V2CommandPlanner:
         lower = room.pilot_min_target_temperature_c
         upper = room.pilot_max_target_temperature_c
         step = room.target_temperature_step_c
-        if lower is None or upper is None or step is None:
+        if lower is None or step is None:
             return None
         if room.observed_hvac_mode != "cool":
+            # Older room records may not yet have an explicit pilot ceiling.
+            # A failsafe start may still use the last target confirmed by that
+            # exact device; it does not invent a new setpoint.
+            start_target = upper if upper is not None else room.observed_target_temperature_c
+            if start_target is None:
+                return None
             return V2CommandPlan(
                 room.policy.room_id,
                 CandidateAction.START,
-                upper,
+                start_target,
                 "v2_gentle_start",
-                "V2 startet mit dem mildesten explizit erlaubten Pilotsollwert.",
+                "V2 startet mit dem mildesten explizit erlaubten oder zuletzt bestätigten Gerätesollwert.",
             )
+        if upper is None:
+            return None
         current = room.observed_target_temperature_c
         if current is None:
             return None
