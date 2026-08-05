@@ -171,11 +171,22 @@ class ClimateCommandAdapter:
             return CommandResult("backoff", "Gerät befindet sich nach Fehler in Backoff.")
         if self._last_signature.get(command.entity_id) == command.signature:
             return CommandResult("noop", "Identischer bestätigter Befehl wird nicht wiederholt.")
+        if command.entity_id in self._pending:
+            return CommandResult("deferred", "Gerätebestätigung für den vorherigen Befehl steht noch aus.")
         if self._last_global_at is not None and now - self._last_global_at < self._global_interval_s:
             return CommandResult("deferred", "Globales Befehlsintervall noch nicht erreicht.")
         if not command.urgent and now - self._last_entity_at.get(command.entity_id, float("-inf")) < self._per_entity_interval_s:
             return CommandResult("deferred", "Gerätebezogenes Befehlsintervall noch nicht erreicht.")
 
+        # Reserve the command *before* calling Home Assistant.  A climate
+        # service call may synchronously emit state callbacks which re-enter
+        # this adapter; without this reservation they could issue another V2
+        # step between turn_on, mode selection and set_temperature.
+        previous_global_at = self._last_global_at
+        previous_entity_at = self._last_entity_at.get(command.entity_id)
+        self._last_global_at = now
+        self._last_entity_at[command.entity_id] = now
+        self._pending[command.entity_id] = (command.signature, now)
         for attempt in (1, 2):
             accepted = await executor(command)
             if accepted:
@@ -185,5 +196,12 @@ class ClimateCommandAdapter:
                 self._last_signature[command.entity_id] = command.signature
                 self._pending[command.entity_id] = (command.signature, sent_at)
                 return CommandResult("sent", "Befehl angenommen; Cloud-Bestätigung steht aus.", attempt)
+        if self._pending.get(command.entity_id, (None,))[0] == command.signature:
+            self._pending.pop(command.entity_id, None)
+        self._last_global_at = previous_global_at
+        if previous_entity_at is None:
+            self._last_entity_at.pop(command.entity_id, None)
+        else:
+            self._last_entity_at[command.entity_id] = previous_entity_at
         self._backoff_until[command.entity_id] = self._clock() + self._backoff_s
         return CommandResult("failed", "Bestätigung fehlgeschlagen; Backoff aktiv.", 2)

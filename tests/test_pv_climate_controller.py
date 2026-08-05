@@ -446,7 +446,24 @@ def test_deduplicates_confirmed_command_and_enforces_global_rate_limit() -> None
     assert len(calls) == 1
 
 
-def test_urgent_command_bypasses_only_the_per_device_interval() -> None:
+def test_reentrant_state_callback_cannot_issue_a_second_command_before_the_first_is_reserved() -> None:
+    command_adapter = adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0)
+    first = adapter.Command("climate.confirmed", "pilot_start", 25.0)
+    second = adapter.Command("climate.confirmed", "pilot_adjust", 24.0)
+    nested_results = []
+
+    async def reentrant_executor(command):
+        nested_results.append(await command_adapter.async_request(second, lambda _: _accepted()))
+        return True
+
+    async def _accepted():
+        return True
+
+    assert asyncio.run(command_adapter.async_request(first, reentrant_executor)).status == "sent"
+    assert nested_results[0].status == "deferred"
+
+
+def test_urgent_command_does_not_bypass_pending_device_confirmation() -> None:
     clock = Clock()
     calls = []
 
@@ -463,8 +480,8 @@ def test_urgent_command_bypasses_only_the_per_device_interval() -> None:
     )).status == "sent"
     assert asyncio.run(command_adapter.async_request(
         adapter.Command("climate.confirmed", "pilot_adjust", 25.0, urgent=True), fake_executor,
-    )).status == "sent"
-    assert len(calls) == 2
+    )).status == "deferred"
+    assert len(calls) == 1
 
 
 def test_default_global_command_ramp_allows_only_one_step_per_minute() -> None:
