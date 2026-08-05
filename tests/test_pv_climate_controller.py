@@ -211,7 +211,7 @@ def test_v2_transport_failure_returns_room_to_v1() -> None:
     assert not restored.v2_may_write
 
 
-def test_housewide_v2_takeover_blocks_v1_for_every_room_and_has_a_one_call_fallback() -> None:
+def test_housewide_v2_takeover_blocks_v1_for_every_room_and_keeps_explicit_maintenance_fallback() -> None:
     living = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom")
     runtime = controller.PVClimateController(

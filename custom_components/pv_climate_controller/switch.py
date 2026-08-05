@@ -126,10 +126,15 @@ class V2HouseControlSwitch(ControllerEntity, SwitchEntity):
         await _async_refresh_controller(self.hass, self.controller, store)
 
     async def async_turn_off(self, **kwargs) -> None:
-        self.controller.deactivate_v2_house_control()
-        await self._async_persist_authority()
-        await self._async_persist_house_mode(False)
-        self.controller.notify_state_listeners()
+        # V2 is the operational controller once the house takeover has been
+        # committed.  Returning to V1 is deliberately not a dashboard action:
+        # it would silently reactivate legacy decisions while the household is
+        # using V2.  The retained controller.deactivate_v2_house_control()
+        # remains an explicit maintenance/recovery path, not an everyday UI
+        # toggle.
+        raise HomeAssistantError(
+            "V2-Haussteuerung bleibt aktiv. Ein Rückbau zu V1 ist nur als bewusster Wartungseingriff vorgesehen."
+        )
 
 class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
     """One explicit room handoff with a one-switch V1 failback."""
