@@ -67,6 +67,12 @@ class RoomAuthorityRegistry:
         self._states[room_id] = ControlAuthority.V2_SHADOW
         return self.decision_for(room_id)
 
+    def disable_shadow(self, room_id: str) -> AuthorityDecision:
+        """Cancel comparison ownership before any handoff starts."""
+        if self._states.get(room_id, ControlAuthority.V1_ACTIVE) is ControlAuthority.V2_SHADOW:
+            self._states[room_id] = ControlAuthority.V1_ACTIVE
+        return self.decision_for(room_id)
+
     def begin_handoff(self, room_id: str, *, preconditions_met: bool) -> AuthorityDecision:
         state = self._states.get(room_id, ControlAuthority.V1_ACTIVE)
         if state is not ControlAuthority.V2_SHADOW or not preconditions_met:

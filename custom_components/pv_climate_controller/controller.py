@@ -634,6 +634,10 @@ class PVClimateController:
         """Mark one room for V2 comparison only; V1 remains its sole writer."""
         return self.room_authority.enable_shadow(zone_id)
 
+    def disable_v2_room_shadow(self, zone_id: str) -> AuthorityDecision:
+        """Return an unhanded room from comparison ownership to ordinary V1."""
+        return self.room_authority.disable_shadow(zone_id)
+
     def begin_v2_handoff(self, zone_id: str, *, preconditions_met: bool) -> AuthorityDecision:
         """Freeze both paths while a future UI verifies state adoption."""
         return self.room_authority.begin_handoff(zone_id, preconditions_met=preconditions_met)
@@ -649,6 +653,17 @@ class PVClimateController:
     def complete_v1_rollback(self, zone_id: str, *, observed_state_aligned: bool) -> AuthorityDecision:
         """Return V1 authority only after it adopts the observed device state."""
         return self.room_authority.complete_rollback(zone_id, observed_state_aligned=observed_state_aligned)
+
+    def failback_v2_to_v1(self, zone_id: str) -> AuthorityDecision:
+        """Immediately restore V1 after a V2 transport failure.
+
+        No device command is issued here: the current observed state is kept and
+        V1 resumes from the next decision in the same refresh cycle.
+        """
+        pending = self.begin_v1_rollback(zone_id)
+        if pending.authority.value != "rollback_pending":
+            return pending
+        return self.complete_v1_rollback(zone_id, observed_state_aligned=True)
 
     def set_living_room_pilot_enabled(self, enabled: bool) -> None:
         """Change the explicit GUI pilot gate; no command is sent here."""

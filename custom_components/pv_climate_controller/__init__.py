@@ -197,6 +197,20 @@ async def _async_refresh_controller(
             # safely blocked in the runner.
             available_budget_w=max(0.0, controller.last_energy.export_power_w or 0.0),
         )
+        # V2 can only reach this shared command boundary after a room-specific
+        # handoff.  A failed transport immediately returns that room to V1;
+        # no retrying V2 loop or second climate executor is introduced here.
+        for house_zone in config.house_zones:
+            if not controller.v2_authority_for(house_zone.zone_id).v2_may_write:
+                continue
+            plan = controller.v2_command_plan_for(house_zone.zone_id)
+            if plan is None:
+                continue
+            result = await controller.async_apply_v2_command(plan, _pilot_service_executor(hass))
+            if result.status == "failed":
+                controller.failback_v2_to_v1(house_zone.zone_id)
+                if store is not None:
+                    await store.async_save(pack(controller.export_learning_state()))
     controller.observe_outdoor_power(tuple(
         house_zone.zone_id for house_zone in config.house_zones
         if house_states[house_zone.zone_id][1] in {"cool", "dry"}

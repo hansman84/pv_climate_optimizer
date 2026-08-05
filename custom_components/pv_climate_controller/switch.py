@@ -6,11 +6,13 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, CONF_V2_SHADOW_ENABLED, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
+from .storage import pack
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
@@ -27,6 +29,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     ]
     entities.extend(
         ZonePilotSwitch(controller, entry.entry_id, f"zone_pilot_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        V2RoomControlSwitch(controller, entry.entry_id, f"v2_room_control_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
     async_add_entities(entities)
@@ -71,6 +77,79 @@ class V2ShadowSwitch(ControllerEntity, SwitchEntity):
         self.controller.set_v2_shadow_enabled(False)
         await self.async_persist_option(CONF_V2_SHADOW_ENABLED, False)
         self.controller.notify_state_listeners()
+
+
+class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
+    """One explicit room handoff with a one-switch V1 failback."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        return next((zone for zone in self.controller.config.house_zones if zone.zone_id == self._zone_id), None)
+
+    @property
+    def name(self) -> str:
+        zone = self._zone
+        return f"{zone.name if zone else self._zone_id} – V2-Steuerung"
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.v2_authority_for(self._zone_id).v2_may_write
+
+    async def _async_persist_authority(self) -> None:
+        store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
+
+    def _observed_state_is_aligned(self) -> bool:
+        zone = self._zone
+        room = next((item for item in self.controller.last_v2_room_inputs if item.policy.room_id == self._zone_id), None)
+        state = None if zone is None else self.hass.states.get(zone.climate_entity_id)
+        if room is None or state is None:
+            return False
+        if room.observed_hvac_mode != state.state:
+            return False
+        observed_target = state.attributes.get("temperature")
+        return room.observed_target_temperature_c == observed_target
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Take ownership only after a current, approved V2 comparison."""
+        self.controller.enable_v2_room_shadow(self._zone_id)
+        readiness = self.controller.v2_handoff_readiness(self._zone_id)
+        if not readiness.ready or not self._observed_state_is_aligned():
+            self.controller.disable_v2_room_shadow(self._zone_id)
+            await self._async_persist_authority()
+            self.controller.notify_state_listeners()
+            reason = readiness.reason_text if not readiness.ready else "V2-Übergabe gesperrt: beobachteter Klima-Zustand hat sich geändert."
+            raise HomeAssistantError(reason)
+        pending = self.controller.begin_v2_handoff(self._zone_id, preconditions_met=True)
+        active = self.controller.activate_v2_authority(
+            self._zone_id,
+            observed_state_aligned=pending.authority.value == "handoff_pending" and self._observed_state_is_aligned(),
+        )
+        await self._async_persist_authority()
+        self.controller.notify_state_listeners()
+        if not active.v2_may_write:
+            raise HomeAssistantError(active.reason_text)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Return this room to V1 without changing its current device state."""
+        if not self._observed_state_is_aligned():
+            raise HomeAssistantError("V1-Rückfall gesperrt: beobachteter Klima-Zustand hat sich geändert.")
+        pending = self.controller.begin_v1_rollback(self._zone_id)
+        restored = self.controller.complete_v1_rollback(
+            self._zone_id,
+            observed_state_aligned=pending.authority.value == "rollback_pending" and self._observed_state_is_aligned(),
+        )
+        await self._async_persist_authority()
+        self.controller.notify_state_listeners()
+        if not restored.v1_may_write:
+            raise HomeAssistantError(restored.reason_text)
 
 class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
     """Explicit productive gate for the confirmed Wohnzimmer pilot only."""

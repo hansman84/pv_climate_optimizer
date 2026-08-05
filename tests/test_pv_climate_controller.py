@@ -163,6 +163,28 @@ def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:
     assert calls[0].entity_id == "climate.living"
 
 
+def test_v2_transport_failure_returns_room_to_v1() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0),
+    )
+    runtime.enable_v2_room_shadow("living")
+    runtime.begin_v2_handoff("living", preconditions_met=True)
+    runtime.activate_v2_authority("living", observed_state_aligned=True)
+    plan = controller.V2CommandPlan("living", controller.CandidateAction.ADJUST, 23.0, "test", "Testaktion")
+
+    async def executor(command):
+        return False
+
+    result = asyncio.run(runtime.async_apply_v2_command(plan, executor))
+    restored = runtime.failback_v2_to_v1("living")
+
+    assert result.status == "failed"
+    assert restored.v1_may_write
+    assert not restored.v2_may_write
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"

@@ -183,6 +183,17 @@ def test_handoff_cannot_skip_shadow_comparison_or_preconditions() -> None:
     assert decision.reason_code == "handoff_preconditions_not_met"
 
 
+def test_shadow_cancellation_returns_authority_to_v1_without_a_handoff() -> None:
+    registry = authority.RoomAuthorityRegistry()
+
+    registry.enable_shadow("living")
+    v1 = registry.disable_shadow("living")
+
+    assert v1.authority is authority.ControlAuthority.V1_ACTIVE
+    assert v1.v1_may_write
+    assert not v1.v2_may_write
+
+
 def _shadow_room(*, predicted: float | None = 25.0, confidence: float = 0.8, budget_w: float | None = 400.0) -> object:
     valid_temperature = models.InputValue("sensor.living", 24.2, "°C", 10.0, models.InputQuality.VALID, "fresh")
     valid_flag = models.InputValue("sensor.flag", True, None, 1.0, models.InputQuality.VALID, "allowed")
