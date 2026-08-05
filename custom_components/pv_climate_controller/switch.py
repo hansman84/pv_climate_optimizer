@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, CONF_V2_SHADOW_ENABLED, DOMAIN
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, DOMAIN
 from .controller import serialize_zone_config
 from .entity import ControllerEntity
 from .storage import pack
@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
         V2ShadowSwitch(controller, entry.entry_id, "v2_shadow"),
+        V2HouseControlSwitch(controller, entry.entry_id, "v2_house_control"),
         LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
         ManualOverrideSwitch(controller, entry.entry_id, "manual_override"),
         BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
@@ -78,6 +79,40 @@ class V2ShadowSwitch(ControllerEntity, SwitchEntity):
         await self.async_persist_option(CONF_V2_SHADOW_ENABLED, False)
         self.controller.notify_state_listeners()
 
+
+class V2HouseControlSwitch(ControllerEntity, SwitchEntity):
+    """One explicit house-wide V2 takeover with a guarded V1 return."""
+
+    _attr_name = "V2 Haussteuerung"
+    _attr_icon = "mdi:home-switch-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.config.v2_house_control_enabled
+
+    def _all_rooms_observed(self) -> bool:
+        return all(
+            (state := self.hass.states.get(zone.climate_entity_id)) is not None
+            and state.state not in {"unknown", "unavailable"}
+            for zone in self.controller.config.house_zones
+        )
+
+    async def async_turn_on(self, **kwargs) -> None:
+        if not self._all_rooms_observed() or not self.controller.activate_v2_house_control():
+            raise HomeAssistantError("V2-Hausübernahme gesperrt: mindestens ein Klimagerät ist nicht eindeutig beobachtbar.")
+        await self.async_persist_option(CONF_V2_SHADOW_ENABLED, True)
+        await self.async_persist_option(CONF_V2_HOUSE_CONTROL_ENABLED, True)
+        self.controller.notify_state_listeners()
+        from . import _async_refresh_controller
+
+        store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
+        await _async_refresh_controller(self.hass, self.controller, store)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.controller.deactivate_v2_house_control()
+        await self.async_persist_option(CONF_V2_HOUSE_CONTROL_ENABLED, False)
+        self.controller.notify_state_listeners()
 
 class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
     """One explicit room handoff with a one-switch V1 failback."""

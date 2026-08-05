@@ -138,6 +138,7 @@ class ControllerConfig:
     bedroom_target_temperature: float = 22.5
     manual_override_enabled: bool = True
     v2_shadow_enabled: bool = False
+    v2_house_control_enabled: bool = False
     v2_vacation_entity_id: str | None = None
     v2_cooling_season_entity_id: str | None = None
 

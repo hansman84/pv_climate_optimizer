@@ -91,6 +91,18 @@ def test_v2_policy_sources_are_explicit_and_disabled_by_default() -> None:
     assert configured.config.v2_cooling_season_entity_id == "binary_sensor.kuehlsaison"
 
 
+def test_persisted_housewide_v2_mode_keeps_the_runner_and_shared_adapter_enabled_after_restart() -> None:
+    runtime = controller.PVClimateController.from_config(
+        {"shadow_mode": True},
+        {"v2_house_control_enabled": True},
+    )
+
+    assert runtime.config.v2_house_control_enabled
+    assert runtime.config.v2_shadow_enabled
+    assert not runtime.command_adapter.shadow_mode
+    assert runtime.command_adapter._productive_enabled
+
+
 def test_handoff_pending_blocks_v1_before_the_command_adapter_or_executor() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(
@@ -197,6 +209,46 @@ def test_v2_transport_failure_returns_room_to_v1() -> None:
     assert result.status == "failed"
     assert restored.v1_may_write
     assert not restored.v2_may_write
+
+
+def test_housewide_v2_takeover_blocks_v1_for_every_room_and_has_a_one_call_fallback() -> None:
+    living = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(
+            shadow_mode=True,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            living_room_pilot_enabled=False,
+            zone=living,
+            house_zones=(living, bedroom),
+        ),
+        adapter.ClimateCommandAdapter(shadow_mode=True, productive_enabled=False),
+    )
+    calls: list[object] = []
+
+    async def executor(command):
+        calls.append(command)
+        return True
+
+    assert runtime.activate_v2_house_control()
+    assert runtime.config.v2_house_control_enabled
+    assert not runtime.command_adapter.shadow_mode
+    assert runtime.command_adapter._productive_enabled
+    assert all(runtime.v2_authority_for(zone.zone_id).v2_may_write for zone in (living, bedroom))
+
+    blocked = asyncio.run(runtime.async_apply_pilot_action(
+        pilot.PilotAction("adjust", 23.0, "test", "V1 darf nicht schreiben"), executor, zone=bedroom,
+    ))
+
+    assert blocked.status == "authority_blocked"
+    assert calls == []
+
+    runtime.deactivate_v2_house_control()
+
+    assert not runtime.config.v2_house_control_enabled
+    assert all(runtime.v2_authority_for(zone.zone_id).v1_may_write for zone in (living, bedroom))
+    assert runtime.command_adapter.shadow_mode
+    assert not runtime.command_adapter._productive_enabled
 
 
 def _load(module: str):

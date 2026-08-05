@@ -8,7 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
@@ -185,7 +185,8 @@ class PVClimateController:
         config = ControllerConfig(
             shadow_mode=shadow_mode,
             energy_policy=policy,
-            v2_shadow_enabled=bool(options.get(CONF_V2_SHADOW_ENABLED, data.get(CONF_V2_SHADOW_ENABLED, False))),
+            v2_shadow_enabled=bool(options.get(CONF_V2_SHADOW_ENABLED, data.get(CONF_V2_SHADOW_ENABLED, False))) or bool(options.get(CONF_V2_HOUSE_CONTROL_ENABLED, data.get(CONF_V2_HOUSE_CONTROL_ENABLED, False))),
+            v2_house_control_enabled=bool(options.get(CONF_V2_HOUSE_CONTROL_ENABLED, data.get(CONF_V2_HOUSE_CONTROL_ENABLED, False))),
             v2_vacation_entity_id=_optional_entity(options, data, CONF_V2_VACATION_ENTITY_ID),
             v2_cooling_season_entity_id=_optional_entity(options, data, CONF_V2_COOLING_SEASON_ENTITY_ID),
             living_room_pilot_enabled=bool(options.get(CONF_LIVING_ROOM_PILOT_ENABLED, data.get(CONF_LIVING_ROOM_PILOT_ENABLED, False))),
@@ -221,7 +222,13 @@ class PVClimateController:
             bedroom_quiet_time=str(options.get(CONF_BEDROOM_QUIET_TIME, data.get(CONF_BEDROOM_QUIET_TIME, "18:30"))),
             bedroom_target_temperature=float(options.get(CONF_BEDROOM_TARGET_TEMPERATURE, data.get(CONF_BEDROOM_TARGET_TEMPERATURE, 22.5))),
         )
-        controller = cls(config=config, command_adapter=ClimateCommandAdapter(shadow_mode=shadow_mode, productive_enabled=config.living_room_pilot_enabled and not shadow_mode))
+        controller = cls(
+            config=config,
+            command_adapter=ClimateCommandAdapter(
+                shadow_mode=False if config.v2_house_control_enabled else shadow_mode,
+                productive_enabled=config.v2_house_control_enabled or (config.living_room_pilot_enabled and not shadow_mode),
+            ),
+        )
         controller._ensure_bedroom_pilots()
         return controller
 
@@ -593,6 +600,49 @@ class PVClimateController:
             self.last_v2_candidates = ()
             self.last_v2_house_decision = None
             self.last_v2_room_inputs = ()
+
+    def activate_v2_house_control(self) -> bool:
+        """Give V2 sole command ownership for every configured room.
+
+        Ownership changes only after the caller has observed a current climate
+        state for every room.  V2 may then leave rooms untouched until the
+        orchestrator has an approved plan; V1 is nevertheless blocked from
+        issuing competing commands.
+        """
+        if not self.config.house_zones:
+            return False
+        activated: list[str] = []
+        for zone in self.config.house_zones:
+            self.enable_v2_room_shadow(zone.zone_id)
+            pending = self.begin_v2_handoff(zone.zone_id, preconditions_met=True)
+            if pending.authority.value != "handoff_pending":
+                for room_id in activated:
+                    self.failback_v2_to_v1(room_id)
+                return False
+            active = self.activate_v2_authority(zone.zone_id, observed_state_aligned=True)
+            if not active.v2_may_write:
+                for room_id in activated:
+                    self.failback_v2_to_v1(room_id)
+                return False
+            activated.append(zone.zone_id)
+        self.config = replace(self.config, v2_shadow_enabled=True, v2_house_control_enabled=True)
+        # This adapter is still the only service-call boundary.  V1 cannot
+        # use it while every room is V2-owned, so the productive permission
+        # applies solely to explicitly approved V2 plans.
+        self.command_adapter.set_operating_mode(shadow_mode=False, productive_enabled=True)
+        return True
+
+    def deactivate_v2_house_control(self) -> None:
+        """Start a safe all-room return to V1 without racing pending commands."""
+        self.config = replace(self.config, v2_house_control_enabled=False)
+        for zone in self.config.house_zones:
+            self.begin_v1_rollback(zone.zone_id)
+            if "command_ack_pending" not in self.command_adapter.handoff_blockers(zone.climate_entity_id):
+                self.complete_v1_rollback(zone.zone_id, observed_state_aligned=True)
+        self.command_adapter.set_operating_mode(
+            shadow_mode=self.config.shadow_mode,
+            productive_enabled=self.config.living_room_pilot_enabled and not self.config.shadow_mode,
+        )
 
     def v2_authority_for(self, zone_id: str) -> AuthorityDecision:
         """Return the visible authority; default ownership is always V1."""
