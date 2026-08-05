@@ -97,20 +97,72 @@ class DecisionReasonSensor(ControllerEntity, SensorEntity):
 
 
 class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
-    """Expose the read-only V2 comparison without a climate command surface."""
+    """Expose the active V2 house decision in plain language."""
 
-    _attr_name = "V2 Shadow-Hausentscheidung"
+    _attr_name = "V2-Hausentscheidung"
+
+    def _room_name(self, room_id: str) -> str:
+        """Return the configured, human-readable name for a V2 room."""
+        return next(
+            (zone.name for zone in self.controller.config.house_zones if zone.zone_id == room_id),
+            room_id,
+        )
 
     @property
     def native_value(self) -> str:
         if not self.controller.config.v2_shadow_enabled:
-            return "deaktiviert"
+            return "V2-Automatik pausiert"
         decision = self.controller.last_v2_house_decision
         if decision is None:
-            return "wartet auf erste Auswertung"
+            return "V2 prüft die erste Hauslage"
         if decision.approved_room_ids:
-            return f"Shadow-Stufe für {', '.join(decision.approved_room_ids)}"
-        return "keine Shadow-Stufe freigegeben"
+            approved = [
+                room
+                for room in decision.room_decisions
+                if room.room_id in decision.approved_room_ids
+            ]
+            names = ", ".join(self._room_name(room.room_id) for room in approved)
+            action = approved[0].selected_action.value if approved and approved[0].selected_action else "adjust"
+            action_text = {
+                "start": "V2 startet sanft",
+                "adjust": "V2 passt sanft an",
+                "stop": "V2 beendet die Kühlung",
+            }.get(action, "V2 steuert")
+            return f"{action_text}: {names}"
+
+        decisions = {item.room_id: item for item in decision.room_decisions}
+        candidate_by_room = {
+            candidate.policy.room_id: candidate
+            for candidate in self.controller.last_v2_candidates
+        }
+        blocked = next(
+            (
+                item for item in decision.room_decisions
+                if item.reason_code in {
+                    "priority_room_budget_unavailable",
+                    "budget_reserved_for_priority_room",
+                    "higher_priority_step_active",
+                }
+            ),
+            None,
+        )
+        if blocked is not None:
+            return f"V2 wartet auf Klimareserve: {self._room_name(blocked.room_id)}"
+        for reason_code, text in (
+            ("critical_input_not_fresh", "V2 wartet auf frische Messwerte"),
+            ("budget_estimate_missing", "V2 lernt noch den Leistungsbedarf"),
+            ("forecast_insufficient", "V2 sammelt noch genug Prognosedaten"),
+        ):
+            affected = [
+                self._room_name(room_id)
+                for room_id, candidate in candidate_by_room.items()
+                if candidate.reason_code == reason_code
+            ]
+            if affected:
+                return f"{text}: {', '.join(affected)}"
+        if decisions and all(item.reason_code in {"comfort_holding", "pilot_target_floor_reached"} for item in decisions.values()):
+            return "Alle Räume liegen im Komfortbereich"
+        return "V2 beobachtet die Hauslage"
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
