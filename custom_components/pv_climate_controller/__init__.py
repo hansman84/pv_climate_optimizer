@@ -459,8 +459,8 @@ def _v2_numeric_input(state, entity_id: str | None, unit: str) -> InputValue:
         return InputValue(entity_id, None, unit, None, InputQuality.MISSING, "source_not_configured_or_missing")
     value = _temperature_value(state.state)
     if value is None:
-        return InputValue(entity_id, None, unit, _state_age_s(state), InputQuality.INVALID, "source_not_numeric")
-    age_s = _state_age_s(state)
+        return InputValue(entity_id, None, unit, _v2_state_age_s(state), InputQuality.INVALID, "source_not_numeric")
+    age_s = _v2_state_age_s(state)
     if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
         return InputValue(entity_id, value, unit, age_s, InputQuality.STALE, "source_stale")
     return InputValue(entity_id, value, unit, age_s, InputQuality.VALID, "source_fresh")
@@ -469,10 +469,11 @@ def _v2_numeric_input(state, entity_id: str | None, unit: str) -> InputValue:
 def _v2_availability_input(state, entity_id: str | None) -> InputValue:
     if state is None:
         return InputValue(entity_id, None, None, None, InputQuality.MISSING, "source_not_configured_or_missing")
-    age_s = _state_age_s(state)
+    # Device availability is a state, not a sampled measurement.  A stable
+    # ``off`` climate entity must not become unavailable merely because it has
+    # nothing new to report; HA emits an event if it turns unknown/unavailable.
+    age_s = _v2_state_age_s(state)
     available = state.state not in {"unknown", "unavailable"}
-    if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
-        return InputValue(entity_id, available, None, age_s, InputQuality.STALE, "source_stale")
     return InputValue(entity_id, available, None, age_s, InputQuality.VALID if available else InputQuality.INVALID, "available" if available else "source_unavailable")
 
 
@@ -480,9 +481,9 @@ def _v2_boolean_input(state, entity_id: str | None, *, true_means: str) -> Input
     """Normalize only standard HA boolean states; unknown vocabulary fails closed."""
     if state is None:
         return InputValue(entity_id, None, None, None, InputQuality.MISSING, f"{true_means}_source_not_configured")
-    age_s = _state_age_s(state)
-    if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
-        return InputValue(entity_id, None, None, age_s, InputQuality.STALE, "source_stale")
+    # Vacation and season are deliberate persistent gates.  Their current
+    # value remains authoritative until HA reports a state/availability change.
+    age_s = _v2_state_age_s(state)
     raw = str(state.state).casefold()
     if raw in {"on", "true", "1"}:
         return InputValue(entity_id, True, None, age_s, InputQuality.VALID, true_means)
@@ -496,6 +497,23 @@ def _state_age_s(state) -> float | None:
     if state is None:
         return None
     updated = getattr(state, "last_updated", None)
+    if updated is None:
+        return None
+    return max(0.0, (datetime.now(updated.tzinfo) - updated).total_seconds())
+
+
+def _v2_state_age_s(state) -> float | None:
+    """Prefer HA's report timestamp for V2 sampled sensor freshness.
+
+    Integrations often update ``last_reported`` without a state/attribute
+    change, while ``last_updated`` only changes when the State object differs.
+    The former is therefore the correct freshness source for external room
+    sensors; old HA State objects fall back safely to ``last_updated``.
+    """
+    if state is None:
+        return None
+    reported = getattr(state, "last_reported", None)
+    updated = reported or getattr(state, "last_updated", None)
     if updated is None:
         return None
     return max(0.0, (datetime.now(updated.tzinfo) - updated).total_seconds())
