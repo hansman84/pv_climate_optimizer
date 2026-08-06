@@ -224,11 +224,13 @@ class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
             raise HomeAssistantError(f"V2-Übergabe zurückgenommen: {result.reason}")
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Return this room to V1 without racing an in-flight V2 command."""
-        if self.controller.config.v2_house_control_enabled:
-            raise HomeAssistantError(
-                "V2 führt diesen Raum. Eine Rückgabe an V1 ist nur als bewusster Wartungseingriff für das gesamte Haus vorgesehen."
-            )
+        """Exclude this room from V2 and preserve its current manual state.
+
+        House V2 keeps the remaining rooms under the orchestrator.  The
+        excluded room deliberately returns to V1 authority, whose pilot is
+        disabled in house mode, so neither controller changes it until the
+        user explicitly hands it back to V2.
+        """
         if not self._observed_state_is_aligned():
             raise HomeAssistantError("V1-Rückfall gesperrt: beobachteter Klima-Zustand hat sich geändert.")
         pending = self.controller.begin_v1_rollback(self._zone_id)

@@ -60,6 +60,16 @@ class RoomAuthorityRegistry:
         state = self._states.get(room_id, ControlAuthority.V1_ACTIVE)
         return AuthorityDecision(room_id, state, state.value, self._reason_text(state))
 
+    def has_persisted_state(self, room_id: str) -> bool:
+        """Return whether this room's authority was explicitly persisted.
+
+        ``V1_ACTIVE`` can mean either the default before a house handoff or an
+        operator's deliberate V2 exclusion.  Keeping that distinction lets an
+        excluded room remain manual across a reload without silently taking it
+        back into the house controller.
+        """
+        return room_id in self._states
+
     def enable_shadow(self, room_id: str) -> AuthorityDecision:
         state = self._states.get(room_id, ControlAuthority.V1_ACTIVE)
         if state not in {ControlAuthority.V1_ACTIVE, ControlAuthority.V2_SHADOW}:

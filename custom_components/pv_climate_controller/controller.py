@@ -136,6 +136,7 @@ class PVClimateController:
     last_v2_house_decision: HouseDecision | None = None
     last_v2_room_inputs: tuple[V2RoomInput, ...] = ()
     room_authority: RoomAuthorityRegistry = field(default_factory=RoomAuthorityRegistry)
+    _last_v2_command_at: dict[str, float] = field(default_factory=dict)
     heat_pump_priority_active: bool = False
     active_cooling_zone_count: int = 0
     effective_living_room_comfort_temperature: float | None = None
@@ -1256,14 +1257,25 @@ class PVClimateController:
         authority = self.v2_authority_for(plan.room_id)
         if not authority.v2_may_write:
             return CommandResult("authority_blocked", authority.reason_text)
+        now = monotonic()
+        last_command_at = self._last_v2_command_at.get(plan.room_id)
+        if last_command_at is not None and now - last_command_at < 15 * 60:
+            remaining_s = int(15 * 60 - (now - last_command_at))
+            return CommandResult(
+                "backoff",
+                f"V2 beobachtet {zone.name} noch {remaining_s // 60 + 1} Min. nach der letzten Sollwertstufe.",
+            )
         action = {
             CandidateAction.START: "pilot_start",
             CandidateAction.ADJUST: "pilot_adjust",
             CandidateAction.STOP: "pilot_stop",
         }[plan.action]
-        return await self.command_adapter.async_request(
+        result = await self.command_adapter.async_request(
             Command(zone.climate_entity_id, action, plan.target_temperature_c), executor
         )
+        if result.status == "sent":
+            self._last_v2_command_at[plan.room_id] = now
+        return result
 
     def set_energy_policy(self, policy: EnergyPolicy) -> None:
         """Update the selected evaluation policy."""

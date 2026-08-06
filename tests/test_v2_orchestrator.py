@@ -194,6 +194,17 @@ def test_shadow_cancellation_returns_authority_to_v1_without_a_handoff() -> None
     assert not v1.v2_may_write
 
 
+def test_explicit_v1_room_exclusion_remains_distinguishable_from_default_authority() -> None:
+    registry = authority.RoomAuthorityRegistry()
+
+    assert not registry.has_persisted_state("living")
+    registry.enable_shadow("living")
+    registry.disable_shadow("living")
+
+    assert registry.has_persisted_state("living")
+    assert authority.RoomAuthorityRegistry.restore(registry.export_state()).has_persisted_state("living")
+
+
 def _shadow_room(*, predicted: float | None = 25.0, confidence: float = 0.8, budget_w: float | None = 400.0) -> object:
     valid_temperature = models.InputValue("sensor.living", 24.2, "°C", 10.0, models.InputQuality.VALID, "fresh")
     valid_flag = models.InputValue("sensor.flag", True, None, 1.0, models.InputQuality.VALID, "allowed")

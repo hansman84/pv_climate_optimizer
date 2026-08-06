@@ -189,6 +189,25 @@ def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:
     assert calls[0].entity_id == "climate.living"
 
 
+def test_v2_waits_fifteen_minutes_between_room_setpoint_steps() -> None:
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0),
+    )
+    runtime.enable_v2_room_shadow("living")
+    runtime.begin_v2_handoff("living", preconditions_met=True)
+    runtime.activate_v2_authority("living", observed_state_aligned=True)
+    first = controller.V2CommandPlan("living", controller.CandidateAction.ADJUST, 23.0, "test", "Erste Stufe")
+    second = controller.V2CommandPlan("living", controller.CandidateAction.ADJUST, 24.0, "test", "Zweite Stufe")
+
+    async def executor(command):
+        return True
+
+    assert asyncio.run(runtime.async_apply_v2_command(first, executor)).status == "sent"
+    assert asyncio.run(runtime.async_apply_v2_command(second, executor)).status == "backoff"
+
+
 def test_v2_transport_failure_returns_room_to_v1() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(

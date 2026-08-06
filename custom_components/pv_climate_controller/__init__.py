@@ -42,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         and state.state not in {"unknown", "unavailable"}
         for zone in controller.config.house_zones
     ):
-        if not all(controller.v2_authority_for(zone.zone_id).v2_may_write for zone in controller.config.house_zones):
+        if not any(controller.room_authority.has_persisted_state(zone.zone_id) for zone in controller.config.house_zones):
             controller.activate_v2_house_control()
     hass.data[DOMAIN].setdefault("_learning_stores", {})[entry.entry_id] = store
     source_entities = _configured_entities(controller)
@@ -209,8 +209,8 @@ async def _async_refresh_controller(
     if config.v2_house_control_enabled and all(
         state[1] not in {"unknown", "unavailable"}
         for state in house_states.values()
-    ) and not all(
-        controller.v2_authority_for(house_zone.zone_id).v2_may_write
+    ) and not any(
+        controller.room_authority.has_persisted_state(house_zone.zone_id)
         for house_zone in config.house_zones
     ):
         controller.activate_v2_house_control()
