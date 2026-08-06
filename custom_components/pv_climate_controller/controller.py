@@ -701,6 +701,22 @@ class PVClimateController:
             return None
         return self.v2_command_planner.plan(room, candidate, self.last_v2_house_decision)
 
+    def v2_execution_order(self) -> tuple[str, ...]:
+        """Return actionable rooms fairly for the one-command shared transport.
+
+        The adapter intentionally serializes cloud calls.  Keeping config order
+        here would let an always-changing early room consume every available
+        minute, so the room whose last successful V2 step is oldest goes first.
+        This changes neither the house budget nor any device safety interval.
+        """
+        return tuple(
+            zone.zone_id
+            for zone in sorted(
+                self.config.house_zones,
+                key=lambda zone: self._last_v2_command_at.get(zone.zone_id, float("-inf")),
+            )
+        )
+
     def enable_v2_room_shadow(self, zone_id: str) -> AuthorityDecision:
         """Mark one room for V2 comparison only; V1 remains its sole writer."""
         return self.room_authority.enable_shadow(zone_id)

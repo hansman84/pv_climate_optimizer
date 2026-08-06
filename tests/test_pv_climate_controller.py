@@ -208,6 +208,18 @@ def test_v2_waits_fifteen_minutes_between_room_setpoint_steps() -> None:
     assert asyncio.run(runtime.async_apply_v2_command(second, executor)).status == "backoff"
 
 
+def test_v2_execution_order_prioritizes_the_room_waiting_longest() -> None:
+    living = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, living, house_zones=(living, bedroom)),
+        adapter.ClimateCommandAdapter(),
+    )
+    runtime._last_v2_command_at = {"living": 200.0, "bedroom": 100.0}
+
+    assert runtime.v2_execution_order() == ("bedroom", "living")
+
+
 def test_v2_transport_failure_returns_room_to_v1() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(

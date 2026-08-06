@@ -228,7 +228,9 @@ async def _async_refresh_controller(
         # V2 can only reach this shared command boundary after a room-specific
         # handoff.  A failed transport immediately returns that room to V1;
         # no retrying V2 loop or second climate executor is introduced here.
-        for house_zone in config.house_zones:
+        zones_by_id = {zone.zone_id: zone for zone in config.house_zones}
+        for zone_id in controller.v2_execution_order():
+            house_zone = zones_by_id[zone_id]
             if not controller.v2_authority_for(house_zone.zone_id).v2_may_write:
                 continue
             plan = controller.v2_command_plan_for(house_zone.zone_id)
