@@ -74,8 +74,12 @@ class V2CommandPlanner:
         if desired is not None:
             desired = max(lower, min(upper, desired))
             if desired > current:
-                target = min(desired, current + step)
-                reason_code, reason_text = "v2_scheduled_relief_step", "V2 entspannt entlang des berechneten Zeit- und Komfortverlaufs nur um eine Gerätestufe."
+                if candidate.reason_code == "evening_comfort_required":
+                    target = desired
+                    reason_code, reason_text = "v2_evening_comfort_handover", "V2 beendet die PV-Vorkühlung sofort und übernimmt den ruhigen Abend-Komfortsollwert."
+                else:
+                    target = min(desired, current + step)
+                    reason_code, reason_text = "v2_scheduled_relief_step", "V2 entspannt entlang des berechneten Zeit- und Komfortverlaufs nur um eine Gerätestufe."
             elif desired < current:
                 target = max(desired, current - step)
                 reason_code, reason_text = "v2_scheduled_cooling_step", "V2 verstärkt entlang des berechneten Zeit- und Komfortverlaufs nur um eine Gerätestufe."

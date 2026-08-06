@@ -150,6 +150,13 @@ class V2ShadowRunner:
                     )
             return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
         evening_comfort = room.evening_comfort_active
+        evening_target = None
+        if evening_comfort and room.observed_hvac_mode == "cool":
+            # An old PV-precool target (for example 20 C) must never leak
+            # into occupied evening use.  V1 immediately hands the device to
+            # its evening target; V2 carries that target explicitly so the
+            # planner can make the same non-aggressive transition.
+            evening_target = room.comfort_temperature_c
         return RoomCandidate(
             policy=room.policy,
             action=CandidateAction.ADJUST,
@@ -166,7 +173,7 @@ class V2ShadowRunner:
                 else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
             ),
             safety_override=evening_comfort,
-            target_after_c=scheduled,
+            target_after_c=evening_target if evening_target is not None else scheduled,
         )
 
     @staticmethod
