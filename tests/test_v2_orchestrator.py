@@ -430,6 +430,22 @@ def test_command_planner_adjusts_only_one_confirmed_device_step() -> None:
     assert plan.target_temperature_c == 23.0
 
 
+def test_scheduled_sleep_trajectory_relaxes_an_overcooled_room_one_step() -> None:
+    room = _shadow_room()
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=20.0,
+        pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, scheduled_target_temperature_c=23.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "scheduled_comfort_trajectory"
+    assert plan is not None and plan.target_temperature_c == 21.0
+
+
 def test_command_planner_refuses_to_guess_missing_pilot_bounds_or_device_step() -> None:
     room = _shadow_room()
     candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=500.0)

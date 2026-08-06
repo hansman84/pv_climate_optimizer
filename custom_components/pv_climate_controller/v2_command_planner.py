@@ -37,6 +37,8 @@ class V2CommandPlanner:
             # A failsafe start may still use the last target confirmed by that
             # exact device; it does not invent a new setpoint.
             start_target = upper if upper is not None else room.observed_target_temperature_c
+            if candidate.target_after_c is not None:
+                start_target = max(lower, min(upper if upper is not None else candidate.target_after_c, candidate.target_after_c))
             if room.evening_comfort_active and lower is not None:
                 # Evening comfort is a real temperature promise, not a
                 # permission to start at the relaxed 25 C ceiling.
@@ -55,17 +57,23 @@ class V2CommandPlanner:
         current = room.observed_target_temperature_c
         if current is None:
             return None
+        desired = candidate.target_after_c
+        if desired is not None:
+            desired = max(lower, min(upper, desired))
+            if desired > current:
+                target = min(desired, current + step)
+                reason_code, reason_text = "v2_scheduled_relief_step", "V2 entspannt entlang des berechneten Zeit- und Komfortverlaufs nur um eine Gerätestufe."
+            elif desired < current:
+                target = max(desired, current - step)
+                reason_code, reason_text = "v2_scheduled_cooling_step", "V2 verstärkt entlang des berechneten Zeit- und Komfortverlaufs nur um eine Gerätestufe."
+            else:
+                return None
+            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, round(target, 3), reason_code, reason_text)
         if candidate.reason_code == "forecast_comfort_recovered":
             target = min(upper, current + step)
             if target <= current:
                 return None
-            return V2CommandPlan(
-                room.policy.room_id,
-                CandidateAction.ADJUST,
-                round(target, 3),
-                "v2_single_relief_step",
-                "V2 hebt den Sollwert nur um eine bestätigte Gerätestufe an und beobachtet danach erneut.",
-            )
+            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, round(target, 3), "v2_single_relief_step", "V2 hebt den Sollwert nur um eine bestätigte Gerätestufe an und beobachtet danach erneut.")
         target = max(lower, min(upper, current - step))
         if target >= current:
             return None

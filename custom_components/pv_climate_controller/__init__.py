@@ -424,7 +424,7 @@ def _v2_room_inputs(
         effective_comfort_temperature = (
             controller.config.living_evening_comfort_temperature
             if evening_comfort_active
-            else zone.comfort_temperature
+            else _v2_sleeping_room_comfort_target(controller, zone.name)
         )
         contextual_forecast = contextual_temperature_forecast(
             house_states[zone.zone_id][0].temperature_c,
@@ -518,6 +518,11 @@ def _v2_room_inputs(
                 None if climate_state is None else _temperature_value(climate_state.attributes.get("target_temp_step"))
             ),
             evening_comfort_active=evening_comfort_active,
+            scheduled_target_temperature_c=_v2_sleeping_room_device_target(
+                controller, zone.name, local_now, effective_comfort_temperature,
+                contextual_forecast.predicted_temperature_60m_c,
+                zone.pilot_min_target_temperature, zone.pilot_max_target_temperature,
+            ),
         ))
     return tuple(result)
 
@@ -539,11 +544,51 @@ def _v2_bedroom_schedule_eligibility(
     quiet_value = controller.config.bedroom_quiet_time if is_master_bedroom else controller.config.bedroom_cutoff_time
     start = _v2_schedule_time(start_value, time(15, 30))
     quiet = _v2_schedule_time(quiet_value, time(18, 30))
-    if quiet_enabled and local_time >= quiet:
-        return EligibilityDecision(False, "bedroom_quiet_time", f"{zone_name}: Ruhezeit ab {quiet.strftime('%H:%M')} Uhr aktiv.")
     if local_time < start:
         return EligibilityDecision(False, "bedroom_schedule_pending", f"{zone_name}: Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
+    if quiet_enabled and local_time >= quiet:
+        return EligibilityDecision(True, "bedroom_evening_comfort", f"{zone_name}: Ruhezeit ab {quiet.strftime('%H:%M')} Uhr; nur der Komfortverlauf bleibt aktiv.")
     return EligibilityDecision(True, "v2_eligible", "V2 bewertet die freigegebenen Quellen.")
+
+
+def _v2_sleeping_room_comfort_target(controller: PVClimateController, zone_name: str) -> float:
+    """Use the explicit sleeping promise, never the generic day-room comfort."""
+    if zone_name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}:
+        return controller.config.bedroom_target_temperature
+    return next((zone.comfort_temperature for zone in controller.config.house_zones if zone.name == zone_name), 23.5)
+
+
+def _v2_sleeping_room_device_target(
+    controller: PVClimateController,
+    zone_name: str,
+    local_now: datetime,
+    comfort_target_c: float,
+    forecast_c: float | None,
+    lower: float | None,
+    upper: float | None,
+) -> float | None:
+    """Stage sleep pre-cooling toward its deadline instead of pinning a low target.
+
+    Far ahead of quiet time, a mild target preserves efficiency and lets the
+    measured forecast guide the next 15-minute step.  As the deadline nears,
+    a forecast risk may pull the target down; only a hard temperature limit
+    can bypass this staged trajectory elsewhere in the candidate builder.
+    """
+    normalized = zone_name.strip().casefold()
+    if normalized not in {"schlafzimmer", "kinderzimmer"} or lower is None or upper is None:
+        return None
+    quiet_value = controller.config.bedroom_quiet_time if normalized == "schlafzimmer" else controller.config.bedroom_cutoff_time
+    quiet = _v2_schedule_time(quiet_value, time(22, 0))
+    now_minutes = local_now.hour * 60 + local_now.minute
+    deadline_minutes = quiet.hour * 60 + quiet.minute
+    remaining_h = max(0.0, (deadline_minutes - now_minutes) / 60.0)
+    # 1.5 C above the sleep promise four hours before quiet time, converging
+    # gently over the final three hours.  It avoids a fixed 20 C setpoint
+    # while still leaving room for a forecast-based escalation.
+    staged = comfort_target_c + min(1.5, max(0.0, remaining_h - 1.0) * 0.5)
+    risk_c = max(0.0, (forecast_c or comfort_target_c) - comfort_target_c)
+    staged -= min(1.5, risk_c * 1.5)
+    return round(max(lower, min(upper, staged)), 1)
 
 
 def _v2_living_evening_comfort_active(

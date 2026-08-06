@@ -154,6 +154,7 @@ class V2RoomInput:
     pilot_max_target_temperature_c: float | None = None
     target_temperature_step_c: float | None = None
     evening_comfort_active: bool = False
+    scheduled_target_temperature_c: float | None = None
 
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:
@@ -167,6 +168,8 @@ class V2RoomInput:
                 raise ValueError("pilot minimum cannot exceed pilot maximum")
         if self.target_temperature_step_c is not None and self.target_temperature_step_c <= 0:
             raise ValueError("target_temperature_step_c must be positive")
+        if self.scheduled_target_temperature_c is not None and not 5.0 <= self.scheduled_target_temperature_c <= 50.0:
+            raise ValueError("scheduled target temperature is implausible")
 
 
 @dataclass(frozen=True, slots=True)

@@ -65,6 +65,21 @@ class V2ShadowRunner:
             )
         if room.required_budget_w is None:
             return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
+        scheduled = room.scheduled_target_temperature_c
+        if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:
+            if abs(room.observed_target_temperature_c - scheduled) >= (room.target_temperature_step_c or 1.0) - 0.001:
+                direction = "entspannt" if scheduled > room.observed_target_temperature_c else "verstärkt"
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.ADJUST,
+                    required_budget_w=0.0,
+                    comfort_gap_c=max(0.0, (room.estimate.predicted_temperature_60m_c or room.comfort_temperature_c) - room.comfort_temperature_c),
+                    confidence=room.estimate.confidence,
+                    reason_code="scheduled_comfort_trajectory",
+                    reason_text=f"V2 folgt dem berechneten Schlafraum-Verlauf und {direction} nur um eine Gerätestufe.",
+                    target_before_c=room.observed_target_temperature_c,
+                    target_after_c=scheduled,
+                )
         if (
             room.observed_hvac_mode == "cool"
             and room.observed_target_temperature_c is not None
@@ -132,6 +147,7 @@ class V2ShadowRunner:
                 else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
             ),
             safety_override=evening_comfort,
+            target_after_c=scheduled,
         )
 
     @staticmethod
