@@ -26,6 +26,7 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.BUTTON,
 )
 V2_INITIAL_SOURCE_MAX_AGE_S = 600.0
+V2_STABLE_ROOM_TEMPERATURE_MAX_AGE_S = 60 * 60.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -444,7 +445,12 @@ def _v2_room_inputs(
             policy=RoomPolicy(zone.zone_id, zone.name, zone.modulation_priority),
             snapshot=InputSnapshot(
                 observed_at=now,
-                room_temperature=_v2_numeric_input(temperature_state, zone.temperature_entity_id, "°C"),
+                room_temperature=_v2_numeric_input(
+                    temperature_state,
+                    zone.temperature_entity_id,
+                    "°C",
+                    allow_stable_room_temperature=True,
+                ),
                 climate_available=_v2_availability_input(climate_state, zone.climate_entity_id),
                 pv_export_w=_v2_numeric_input(
                     hass.states.get(controller.config.export_power_entity_id) if controller.config.export_power_entity_id else None,
@@ -537,7 +543,13 @@ def _v2_schedule_time(value: str, fallback: time) -> time:
         return fallback
 
 
-def _v2_numeric_input(state, entity_id: str | None, unit: str) -> InputValue:
+def _v2_numeric_input(
+    state,
+    entity_id: str | None,
+    unit: str,
+    *,
+    allow_stable_room_temperature: bool = False,
+) -> InputValue:
     if state is None:
         return InputValue(entity_id, None, unit, None, InputQuality.MISSING, "source_not_configured_or_missing")
     value = _temperature_value(state.state)
@@ -545,6 +557,11 @@ def _v2_numeric_input(state, entity_id: str | None, unit: str) -> InputValue:
         return InputValue(entity_id, None, unit, _v2_state_age_s(state), InputQuality.INVALID, "source_not_numeric")
     age_s = _v2_state_age_s(state)
     if age_s is not None and age_s > V2_INITIAL_SOURCE_MAX_AGE_S:
+        if allow_stable_room_temperature and age_s <= V2_STABLE_ROOM_TEMPERATURE_MAX_AGE_S:
+            # Temperature sensors commonly publish only on a material delta.
+            # A stable room is still a usable control input; PV, outdoor and
+            # power readings remain on the strict ten-minute freshness gate.
+            return InputValue(entity_id, value, unit, age_s, InputQuality.VALID, "stable_room_temperature")
         return InputValue(entity_id, value, unit, age_s, InputQuality.STALE, "source_stale")
     return InputValue(entity_id, value, unit, age_s, InputQuality.VALID, "source_fresh")
 
