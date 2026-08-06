@@ -75,13 +75,13 @@ class V2ShadowRunner:
             and no_pv
             and not room.evening_comfort_active
             and temperature is not None
-            and temperature <= room.comfort_temperature_c + 0.25
+            and temperature < room.hard_max_temperature_c
         ):
             return RoomCandidate(
                 policy=room.policy, action=CandidateAction.STOP, required_budget_w=0.0,
                 comfort_gap_c=0.0, confidence=room.estimate.confidence,
                 reason_code="pv_lost_comfort_reached",
-                reason_text="V2 übernimmt V1-Auslauf: ohne PV und bei erreichter Komfortreserve wird das Gerät ausgeschaltet.",
+                reason_text="V2 übernimmt V1-Auslauf: ohne PV wird unterhalb der harten Komfortgrenze ausgeschaltet; erst die harte Grenze darf wieder einen Start erzwingen.",
                 safety_override=True,
             )
         scheduled = room.scheduled_target_temperature_c
