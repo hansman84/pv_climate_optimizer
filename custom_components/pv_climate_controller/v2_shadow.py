@@ -65,6 +65,25 @@ class V2ShadowRunner:
             )
         if room.required_budget_w is None:
             return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
+        # V1's essential wind-down rule: without export, do not leave an
+        # already comfortable room running merely because its old device
+        # setpoint is still low.  Evening comfort is the deliberate exception
+        # and hard limits remain fail-safe above.
+        no_pv = room.snapshot.pv_export_w.is_valid and float(room.snapshot.pv_export_w.value or 0.0) <= 0.0
+        if (
+            room.observed_hvac_mode == "cool"
+            and no_pv
+            and not room.evening_comfort_active
+            and temperature is not None
+            and temperature <= room.comfort_temperature_c + 0.25
+        ):
+            return RoomCandidate(
+                policy=room.policy, action=CandidateAction.STOP, required_budget_w=0.0,
+                comfort_gap_c=0.0, confidence=room.estimate.confidence,
+                reason_code="pv_lost_comfort_reached",
+                reason_text="V2 übernimmt V1-Auslauf: ohne PV und bei erreichter Komfortreserve wird das Gerät ausgeschaltet.",
+                safety_override=True,
+            )
         scheduled = room.scheduled_target_temperature_c
         if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:
             if abs(room.observed_target_temperature_c - scheduled) >= (room.target_temperature_step_c or 1.0) - 0.001:

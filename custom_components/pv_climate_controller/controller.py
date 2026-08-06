@@ -1275,8 +1275,8 @@ class PVClimateController:
             return CommandResult("authority_blocked", authority.reason_text)
         now = monotonic()
         last_command_at = self._last_v2_command_at.get(plan.room_id)
-        if last_command_at is not None and now - last_command_at < 15 * 60:
-            remaining_s = int(15 * 60 - (now - last_command_at))
+        if last_command_at is not None and now - last_command_at < 2 * 60:
+            remaining_s = int(2 * 60 - (now - last_command_at))
             return CommandResult(
                 "backoff",
                 f"V2 beobachtet {zone.name} noch {remaining_s // 60 + 1} Min. nach der letzten Sollwertstufe.",
@@ -1287,7 +1287,7 @@ class PVClimateController:
             CandidateAction.STOP: "pilot_stop",
         }[plan.action]
         result = await self.command_adapter.async_request(
-            Command(zone.climate_entity_id, action, plan.target_temperature_c, fan_mode=plan.fan_mode), executor
+            Command(zone.climate_entity_id, action, plan.target_temperature_c, fan_mode="auto" if plan.action is not CandidateAction.STOP else None), executor
         )
         if result.status == "sent":
             self._last_v2_command_at[plan.room_id] = now
