@@ -115,14 +115,23 @@ class V2ShadowRunner:
                         reason_text="V2 beendet die Kühlung erst nach der sanften Entspannung und ausreichender Komfortreserve.",
                     )
             return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
+        evening_comfort = room.evening_comfort_active
         return RoomCandidate(
             policy=room.policy,
             action=CandidateAction.ADJUST,
-            required_budget_w=room.required_budget_w,
+            # An occupied evening promise and a hard limit may use the
+            # available house capacity even when momentary export is zero.
+            # They are still single, rate-limited device steps.
+            required_budget_w=0.0 if evening_comfort else room.required_budget_w,
             comfort_gap_c=comfort_gap,
             confidence=room.estimate.confidence,
-            reason_code="forecast_comfort_risk",
-            reason_text="V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt.",
+            reason_code="evening_comfort_required" if evening_comfort else "forecast_comfort_risk",
+            reason_text=(
+                "V2 Abendkomfort: der Raum wird trotz fehlendem PV-Export zur vereinbarten Komforttemperatur geführt."
+                if evening_comfort
+                else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
+            ),
+            safety_override=evening_comfort,
         )
 
     @staticmethod

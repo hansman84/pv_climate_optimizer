@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import floor
+
 from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
 
 
@@ -35,6 +37,10 @@ class V2CommandPlanner:
             # A failsafe start may still use the last target confirmed by that
             # exact device; it does not invent a new setpoint.
             start_target = upper if upper is not None else room.observed_target_temperature_c
+            if room.evening_comfort_active and lower is not None:
+                # Evening comfort is a real temperature promise, not a
+                # permission to start at the relaxed 25 C ceiling.
+                start_target = max(lower, min(upper if upper is not None else lower, floor(room.comfort_temperature_c)))
             if start_target is None:
                 return None
             return V2CommandPlan(

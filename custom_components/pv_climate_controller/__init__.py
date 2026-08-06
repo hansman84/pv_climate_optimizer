@@ -415,6 +415,17 @@ def _v2_room_inputs(
         forecast = controller.last_zone_forecasts.get(zone.zone_id)
         profile = controller.last_thermal_profiles.get(zone.zone_id)
         context = (contexts or {}).get(zone.zone_id, {})
+        evening_comfort_active = _v2_living_evening_comfort_active(
+            controller,
+            zone.name,
+            house_states[zone.zone_id][0].temperature_c,
+            local_now.time(),
+        )
+        effective_comfort_temperature = (
+            controller.config.living_evening_comfort_temperature
+            if evening_comfort_active
+            else zone.comfort_temperature
+        )
         contextual_forecast = contextual_temperature_forecast(
             house_states[zone.zone_id][0].temperature_c,
             None if forecast is None else forecast.trend_c_per_h,
@@ -481,12 +492,12 @@ def _v2_room_inputs(
                 trend_c_per_h=contextual_forecast.trend_c_per_h,
                 predicted_temperature_60m_c=contextual_forecast.predicted_temperature_60m_c,
                 confidence=0.0 if forecast is None or forecast.data_quality not in {"valid", "ok"} else min(0.75, 0.5 + contextual_forecast.confidence_adjustment),
-                comfort_reserve_c=None if contextual_forecast.predicted_temperature_60m_c is None else zone.comfort_temperature - contextual_forecast.predicted_temperature_60m_c,
+            comfort_reserve_c=None if contextual_forecast.predicted_temperature_60m_c is None else effective_comfort_temperature - contextual_forecast.predicted_temperature_60m_c,
                 thermal_factors=contextual_forecast.thermal_factors,
                 reason_code="contextual_temperature_forecast",
             ),
             eligibility=eligibility,
-            comfort_temperature_c=zone.comfort_temperature,
+            comfort_temperature_c=effective_comfort_temperature,
             hard_max_temperature_c=zone.hard_max_temperature,
             # A room that is already cooling does not introduce another
             # compressor start.  Its next V2 action is limited to one confirmed
@@ -506,6 +517,7 @@ def _v2_room_inputs(
             target_temperature_step_c=(
                 None if climate_state is None else _temperature_value(climate_state.attributes.get("target_temp_step"))
             ),
+            evening_comfort_active=evening_comfort_active,
         ))
     return tuple(result)
 
@@ -532,6 +544,21 @@ def _v2_bedroom_schedule_eligibility(
     if local_time < start:
         return EligibilityDecision(False, "bedroom_schedule_pending", f"{zone_name}: Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
     return EligibilityDecision(True, "v2_eligible", "V2 bewertet die freigegebenen Quellen.")
+
+
+def _v2_living_evening_comfort_active(
+    controller: PVClimateController,
+    zone_name: str,
+    temperature_c: float | None,
+    local_time: time,
+) -> bool:
+    """Keep the existing Wohnzimmer evening promise active in V2."""
+    if zone_name.strip().casefold() != "wohnzimmer" or temperature_c is None:
+        return False
+    start = _v2_schedule_time(controller.config.living_evening_start_time, time(20, 30))
+    end = _v2_schedule_time(controller.config.living_evening_end_time, time(23, 30))
+    in_window = start <= local_time < end if start <= end else local_time >= start or local_time < end
+    return in_window and temperature_c > controller.config.living_evening_comfort_temperature + 0.25
 
 
 def _v2_schedule_time(value: str, fallback: time) -> time:

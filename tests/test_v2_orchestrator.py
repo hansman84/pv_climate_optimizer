@@ -381,6 +381,25 @@ def test_command_planner_starts_with_the_mildest_explicit_pilot_target() -> None
     assert plan.target_temperature_c == 24.0
 
 
+def test_evening_comfort_can_start_without_export_at_its_comfort_target() -> None:
+    room = _shadow_room()
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility, 24.5, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="off", pilot_min_target_temperature_c=21.0,
+        pilot_max_target_temperature_c=25.0, target_temperature_step_c=1.0,
+        evening_comfort_active=True,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "evening_comfort_required"
+    assert candidates[0].safety_override
+    assert decision.approved_room_ids == ("living",)
+    assert plan is not None and plan.action is models.CandidateAction.START
+    assert plan.target_temperature_c == 24.0
+
+
 def test_command_planner_adjusts_only_one_confirmed_device_step() -> None:
     room = _shadow_room()
     room = models.V2RoomInput(

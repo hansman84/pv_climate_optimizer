@@ -153,6 +153,7 @@ class V2RoomInput:
     pilot_min_target_temperature_c: float | None = None
     pilot_max_target_temperature_c: float | None = None
     target_temperature_step_c: float | None = None
+    evening_comfort_active: bool = False
 
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:
