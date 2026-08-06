@@ -153,6 +153,8 @@ class V2RoomInput:
     pilot_min_target_temperature_c: float | None = None
     pilot_max_target_temperature_c: float | None = None
     target_temperature_step_c: float | None = None
+    observed_fan_mode: str | None = None
+    supported_fan_modes: tuple[str, ...] = ()
     evening_comfort_active: bool = False
     scheduled_target_temperature_c: float | None = None
 
@@ -293,6 +295,7 @@ class V2CommandPlan:
     target_temperature_c: float | None
     reason_code: str
     reason_text: str
+    fan_mode: str | None = None
 
     def __post_init__(self) -> None:
         if self.action not in {CandidateAction.START, CandidateAction.ADJUST, CandidateAction.STOP}:

@@ -14,6 +14,31 @@ class V2CommandPlanner:
     has no explicit pilot bounds or climate capabilities.
     """
 
+    @staticmethod
+    def _fan_mode(room: V2RoomInput, candidate: RoomCandidate, target: float | None) -> str | None:
+        """Select a supported airflow level alongside a real target step.
+
+        The target is the primary cooling-power control.  ``auto`` remains the
+        quiet default; higher airflow is used only for a material comfort gap
+        or hard safety risk, and only while V2 already sends a protected
+        setpoint step.  This avoids permanent fan noise just to consume PV.
+        """
+        if target is None or not room.supported_fan_modes:
+            return None
+        modes = {mode.casefold(): mode for mode in room.supported_fan_modes}
+        cooling_harder = room.observed_target_temperature_c is None or target < room.observed_target_temperature_c
+        if candidate.safety_override or candidate.comfort_gap_c >= 1.0:
+            preferences = ("high", "middle_high", "medium", "auto")
+        elif cooling_harder:
+            preferences = ("medium", "middle_high", "middle_low", "auto")
+        else:
+            preferences = ("low", "middle_low", "auto")
+        selected = next((modes[name] for name in preferences if name in modes), None)
+        return None if selected is None or selected == room.observed_fan_mode else selected
+
+    def _plan(self, room: V2RoomInput, candidate: RoomCandidate, action: CandidateAction, target: float | None, reason_code: str, reason_text: str) -> V2CommandPlan:
+        return V2CommandPlan(room.policy.room_id, action, target, reason_code, reason_text, self._fan_mode(room, candidate, target))
+
     def plan(self, room: V2RoomInput, candidate: RoomCandidate, decision: HouseDecision) -> V2CommandPlan | None:
         if room.policy.room_id not in decision.approved_room_ids:
             return None
@@ -23,13 +48,7 @@ class V2CommandPlanner:
         upper = room.pilot_max_target_temperature_c
         step = room.target_temperature_step_c
         if candidate.action is CandidateAction.STOP:
-            return V2CommandPlan(
-                room.policy.room_id,
-                CandidateAction.STOP,
-                None,
-                "v2_comfort_stop",
-                "V2 beendet die Kühlung nach bestätigter Komfortreserve.",
-            )
+            return self._plan(room, candidate, CandidateAction.STOP, None, "v2_comfort_stop", "V2 beendet die Kühlung nach bestätigter Komfortreserve.")
         if lower is None or step is None:
             return None
         if room.observed_hvac_mode != "cool":
@@ -45,13 +64,7 @@ class V2CommandPlanner:
                 start_target = max(lower, min(upper if upper is not None else lower, floor(room.comfort_temperature_c)))
             if start_target is None:
                 return None
-            return V2CommandPlan(
-                room.policy.room_id,
-                CandidateAction.START,
-                start_target,
-                "v2_gentle_start",
-                "V2 startet mit dem mildesten explizit erlaubten oder zuletzt bestätigten Gerätesollwert.",
-            )
+            return self._plan(room, candidate, CandidateAction.START, start_target, "v2_gentle_start", "V2 startet mit dem mildesten explizit erlaubten oder zuletzt bestätigten Gerätesollwert.")
         if upper is None:
             return None
         current = room.observed_target_temperature_c
@@ -68,19 +81,13 @@ class V2CommandPlanner:
                 reason_code, reason_text = "v2_scheduled_cooling_step", "V2 verstärkt entlang des berechneten Zeit- und Komfortverlaufs nur um eine Gerätestufe."
             else:
                 return None
-            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, round(target, 3), reason_code, reason_text)
+            return self._plan(room, candidate, CandidateAction.ADJUST, round(target, 3), reason_code, reason_text)
         if candidate.reason_code == "forecast_comfort_recovered":
             target = min(upper, current + step)
             if target <= current:
                 return None
-            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, round(target, 3), "v2_single_relief_step", "V2 hebt den Sollwert nur um eine bestätigte Gerätestufe an und beobachtet danach erneut.")
+            return self._plan(room, candidate, CandidateAction.ADJUST, round(target, 3), "v2_single_relief_step", "V2 hebt den Sollwert nur um eine bestätigte Gerätestufe an und beobachtet danach erneut.")
         target = max(lower, min(upper, current - step))
         if target >= current:
             return None
-        return V2CommandPlan(
-            room.policy.room_id,
-            CandidateAction.ADJUST,
-            round(target, 3),
-            "v2_single_gentle_step",
-            "V2 senkt den Sollwert nur um eine bestätigte Gerätestufe und beobachtet danach erneut.",
-        )
+        return self._plan(room, candidate, CandidateAction.ADJUST, round(target, 3), "v2_single_gentle_step", "V2 senkt den Sollwert nur um eine bestätigte Gerätestufe und beobachtet danach erneut.")

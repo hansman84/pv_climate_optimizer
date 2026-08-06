@@ -451,3 +451,41 @@ def test_command_planner_refuses_to_guess_missing_pilot_bounds_or_device_step() 
     candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=500.0)
 
     assert command_planner.V2CommandPlanner().plan(room, candidates[0], decision) is None
+
+
+def test_command_planner_uses_supported_high_airflow_for_material_comfort_risk() -> None:
+    room = _shadow_room(predicted=26.0)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility,
+        room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=24.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, observed_fan_mode="auto",
+        supported_fan_modes=("auto", "medium", "high"),
+    )
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=500.0)
+
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert plan is not None
+    assert plan.target_temperature_c == 23.0
+    assert plan.fan_mode == "high"
+
+
+def test_command_planner_returns_to_quiet_airflow_when_relaxing() -> None:
+    room = _shadow_room(predicted=23.0)
+    room = models.V2RoomInput(
+        room.policy, room.snapshot, room.estimate, room.eligibility,
+        room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=21.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, observed_fan_mode="high",
+        supported_fan_modes=("auto", "low", "medium", "high"),
+    )
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert plan is not None
+    assert plan.target_temperature_c == 22.0
+    assert plan.fan_mode == "low"

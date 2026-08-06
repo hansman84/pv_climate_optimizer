@@ -1271,7 +1271,7 @@ class PVClimateController:
             CandidateAction.STOP: "pilot_stop",
         }[plan.action]
         result = await self.command_adapter.async_request(
-            Command(zone.climate_entity_id, action, plan.target_temperature_c), executor
+            Command(zone.climate_entity_id, action, plan.target_temperature_c, fan_mode=plan.fan_mode), executor
         )
         if result.status == "sent":
             self._last_v2_command_at[plan.room_id] = now

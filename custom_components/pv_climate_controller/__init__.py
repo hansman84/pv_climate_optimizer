@@ -370,6 +370,8 @@ def _pilot_service_executor(hass: HomeAssistant):
                     return False
                 await hass.services.async_call("climate", "turn_on", {"entity_id": command.entity_id}, blocking=True)
                 await hass.services.async_call("climate", "set_hvac_mode", {"entity_id": command.entity_id, "hvac_mode": "cool"}, blocking=True)
+                if command.fan_mode is not None:
+                    await hass.services.async_call("climate", "set_fan_mode", {"entity_id": command.entity_id, "fan_mode": command.fan_mode}, blocking=True)
                 await hass.services.async_call("climate", "set_temperature", {"entity_id": command.entity_id, "temperature": command.value}, blocking=True)
                 return True
             if command.action == "pilot_stop":
@@ -378,6 +380,8 @@ def _pilot_service_executor(hass: HomeAssistant):
             if command.action == "pilot_adjust":
                 if command.value is None:
                     return False
+                if command.fan_mode is not None:
+                    await hass.services.async_call("climate", "set_fan_mode", {"entity_id": command.entity_id, "fan_mode": command.fan_mode}, blocking=True)
                 await hass.services.async_call("climate", "set_temperature", {"entity_id": command.entity_id, "temperature": command.value}, blocking=True)
                 return True
         except Exception:  # HA service errors must never escape into a command loop.
@@ -512,6 +516,10 @@ def _v2_room_inputs(
             ),
             observed_hvac_mode=None if climate_state is None else climate_state.state,
             observed_target_temperature_c=None if climate_state is None else _temperature_value(climate_state.attributes.get("temperature")),
+            observed_fan_mode=None if climate_state is None else climate_state.attributes.get("fan_mode"),
+            supported_fan_modes=() if climate_state is None else tuple(
+                mode for mode in climate_state.attributes.get("fan_modes", ()) if isinstance(mode, str)
+            ),
             pilot_min_target_temperature_c=zone.pilot_min_target_temperature,
             pilot_max_target_temperature_c=zone.pilot_max_target_temperature,
             target_temperature_step_c=(

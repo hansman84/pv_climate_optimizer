@@ -19,10 +19,11 @@ class Command:
     action: str
     value: str | float | None = None
     urgent: bool = False
+    fan_mode: str | None = None
 
     @property
-    def signature(self) -> tuple[str, str, str | float | None]:
-        return (self.entity_id, self.action, self.value)
+    def signature(self) -> tuple[str, str, str | float | None, str | None]:
+        return (self.entity_id, self.action, self.value, self.fan_mode)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,9 +60,9 @@ class ClimateCommandAdapter:
         self._backoff_s = backoff_s
         self._last_global_at: float | None = None
         self._last_entity_at: dict[str, float] = {}
-        self._last_signature: dict[str, tuple[str, str, str | float | None]] = {}
+        self._last_signature: dict[str, tuple[str, str, str | float | None, str | None]] = {}
         self._backoff_until: dict[str, float] = {}
-        self._pending: dict[str, tuple[tuple[str, str, str | float | None], float]] = {}
+        self._pending: dict[str, tuple[tuple[str, str, str | float | None, str | None], float]] = {}
         self._manual_override_until: dict[str, float] = {}
 
     @property
@@ -104,7 +105,7 @@ class ClimateCommandAdapter:
         pending = self._pending.get(entity_id)
         if pending is None:
             return False
-        _, action, value = pending[0]
+        _, action, value, _ = pending[0]
         target_matches = isinstance(value, (int, float)) and target_temperature_c is not None and float(value) == target_temperature_c
         acknowledged = (
             (action == "pilot_start" and hvac_mode == "cool" and target_matches)

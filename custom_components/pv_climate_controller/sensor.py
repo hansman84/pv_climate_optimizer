@@ -263,6 +263,7 @@ class V2AuthoritySensor(ControllerEntity, SensorEntity):
                 "handoff_blockers": list(self.controller.v2_handoff_readiness(zone.zone_id).blocker_codes),
                 "v2_next_action": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).action.value,
                 "v2_next_target_temperature_c": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).target_temperature_c,
+                "v2_next_fan_mode": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).fan_mode,
             }
             for zone in self.controller.config.house_zones
         }
