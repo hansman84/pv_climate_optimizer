@@ -131,6 +131,8 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                 "adjust": "Kühlung wird sanft angepasst",
                 "stop": "Kühlung wird beendet",
             }.get(action, "Automatik steuert")
+            if len(approved) > 1:
+                return f"{names}: {len(approved)} Raumstufen innerhalb des Hausbudgets eingeplant"
             return f"{names}: {action_text}"
 
         decisions = {item.room_id: item for item in decision.room_decisions}
@@ -149,6 +151,7 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
                     "priority_room_budget_unavailable",
                     "budget_reserved_for_priority_room",
                     "higher_priority_step_active",
+                    "room_budget_unavailable",
                 }
             ),
             None,
@@ -199,8 +202,15 @@ class V2ShadowDecisionSensor(ControllerEntity, SensorEntity):
         return {
             "enabled": True,
             "approved_room_ids": list(decision.approved_room_ids),
+            "approved_room_count": len(decision.approved_room_ids),
             "reserved_budget_w": decision.reserved_budget_w,
             "available_budget_w": decision.available_budget_w,
+            "remaining_budget_w": round(max(0.0, decision.available_budget_w - decision.reserved_budget_w), 1),
+            "pv_budget_utilization_percent": (
+                None
+                if decision.available_budget_w <= 0
+                else round(100.0 * decision.reserved_budget_w / decision.available_budget_w, 1)
+            ),
             "candidates": [
                 {
                     "room_id": candidate.policy.room_id,

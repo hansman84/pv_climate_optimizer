@@ -1,7 +1,8 @@
 """Pure, single-authority V2 house coordinator.
 
-This module has no Home Assistant dependency and cannot issue climate commands.
-It only decides which room may receive the next *single* modulation step.
+The coordinator allocates the *available* PV headroom across all actionable
+rooms.  It deliberately does not issue commands; the shared command adapter
+still serializes the approved plans safely at the device boundary.
 """
 
 from __future__ import annotations
@@ -10,16 +11,18 @@ from .v2_models import CandidateAction, DecisionState, HouseDecision, RoomCandid
 
 
 class HouseCoordinator:
-    """Allocate one calm modulation step with explicit room precedence.
+    """Allocate available house capacity to several calm room steps.
 
-    Priority is deliberately simple: a smaller configured priority number wins.
-    A lower-priority room cannot consume capacity while a higher-priority room
-    has a valid pending modulation request.  Only a declared hard safety
-    override outranks normal room precedence.
+    Normal steps are ordered by configured room precedence, then forecast
+    comfort gap and confidence.  Unlike the former one-step ramp, a fitting
+    lower-priority room may consume capacity left after a higher-priority room.
+    A safety override is never held back by a momentary PV deficit: preventing
+    a hard temperature breach and honoring evening comfort is allowed to use
+    grid power and remains visible as such in the decision reason.
     """
 
     def decide(self, candidates: tuple[RoomCandidate, ...], *, available_budget_w: float) -> HouseDecision:
-        """Return one explainable decision for every supplied room candidate."""
+        """Return an explainable budget decision for every supplied room."""
         if available_budget_w < 0:
             raise ValueError("available_budget_w cannot be negative")
         if len({candidate.policy.room_id for candidate in candidates}) != len(candidates):
@@ -39,14 +42,9 @@ class HouseCoordinator:
 
         remaining_budget_w = available_budget_w
         approved: list[str] = []
-        if pending:
-            cohort = self._next_priority_cohort(pending)
-            candidate = max(
-                cohort,
-                key=lambda item: (item.comfort_gap_c, item.confidence, item.policy.room_id),
-            )
-            pending.remove(candidate)
-            if candidate.required_budget_w <= remaining_budget_w:
+        for candidate in sorted(pending, key=self._allocation_key):
+            if candidate.safety_override:
+                approved.append(candidate.policy.room_id)
                 decisions[candidate.policy.room_id] = RoomDecision(
                     candidate.policy.room_id,
                     DecisionState.APPROVED_STEP,
@@ -55,23 +53,24 @@ class HouseCoordinator:
                     candidate.action,
                     candidate.next_review_at,
                 )
+                # Do not pretend a safety action is PV-funded when it exceeds
+                # the measured headroom.  The exposed reserved budget remains
+                # a real PV allocation, while the reason flags the override.
+                remaining_budget_w = max(0.0, remaining_budget_w - candidate.required_budget_w)
+                continue
+            if candidate.required_budget_w <= remaining_budget_w:
                 approved.append(candidate.policy.room_id)
                 remaining_budget_w -= candidate.required_budget_w
-                self._defer_lower_priority(pending, candidate, decisions)
-            else:
-                decisions[candidate.policy.room_id] = self._budget_block(candidate)
-                self._reserve_for_priority(candidate, pending, decisions)
-
-        for candidate in pending:
-            if candidate.policy.room_id in decisions:
+                decisions[candidate.policy.room_id] = RoomDecision(
+                    candidate.policy.room_id,
+                    DecisionState.APPROVED_STEP,
+                    candidate.reason_code,
+                    candidate.reason_text,
+                    candidate.action,
+                    candidate.next_review_at,
+                )
                 continue
-            decisions[candidate.policy.room_id] = RoomDecision(
-                candidate.policy.room_id,
-                DecisionState.WAITING_FOR_OBSERVATION,
-                "higher_priority_step_active",
-                f"{candidate.policy.display_name} wartet auf die begruendete Modulationsstufe eines priorisierten Raums.",
-                next_review_at=candidate.next_review_at,
-            )
+            decisions[candidate.policy.room_id] = self._budget_block(candidate)
 
         return HouseDecision(
             tuple(decisions[candidate.policy.room_id] for candidate in candidates),
@@ -81,13 +80,15 @@ class HouseCoordinator:
         )
 
     @staticmethod
-    def _next_priority_cohort(pending: list[RoomCandidate]) -> list[RoomCandidate]:
-        """Select safety overrides first, otherwise the configured priority band."""
-        safety = [candidate for candidate in pending if candidate.safety_override]
-        if safety:
-            return safety
-        priority = min(candidate.policy.modulation_priority for candidate in pending)
-        return [candidate for candidate in pending if candidate.policy.modulation_priority == priority]
+    def _allocation_key(candidate: RoomCandidate) -> tuple[int, int, float, float, str]:
+        """Sort safety first, then room role and thermal urgency."""
+        return (
+            0 if candidate.safety_override else 1,
+            candidate.policy.modulation_priority,
+            -candidate.comfort_gap_c,
+            -candidate.confidence,
+            candidate.policy.room_id,
+        )
 
     @staticmethod
     def _budget_block(candidate: RoomCandidate) -> RoomDecision:
@@ -95,43 +96,7 @@ class HouseCoordinator:
         return RoomDecision(
             candidate.policy.room_id,
             state,
-            "priority_room_budget_unavailable",
-            f"{candidate.policy.display_name} hat Vorrang, aber das erforderliche Hausbudget ist nicht verfuegbar; Neubewertung ist eingeplant.",
+            "room_budget_unavailable",
+            f"{candidate.policy.display_name} benötigt {candidate.required_budget_w:.0f} W, aber nach den höher priorisierten Hausstufen reicht der aktuelle PV-Überschuss nicht aus; Neubewertung ist eingeplant.",
             next_review_at=candidate.next_review_at,
         )
-
-    @staticmethod
-    def _reserve_for_priority(
-        priority_candidate: RoomCandidate,
-        pending: list[RoomCandidate],
-        decisions: dict[str, RoomDecision],
-    ) -> None:
-        """Keep lower-priority rooms from taking budget reserved for the leader."""
-        for candidate in pending:
-            if candidate.safety_override:
-                continue
-            decisions[candidate.policy.room_id] = RoomDecision(
-                candidate.policy.room_id,
-                DecisionState.BLOCKED_WITH_ESCALATION,
-                "budget_reserved_for_priority_room",
-                f"Hausbudget bleibt fuer {priority_candidate.policy.display_name} mit hoeherer Modulationsprioritaet reserviert.",
-                next_review_at=candidate.next_review_at,
-            )
-
-    @staticmethod
-    def _defer_lower_priority(
-        pending: list[RoomCandidate],
-        approved_candidate: RoomCandidate,
-        decisions: dict[str, RoomDecision],
-    ) -> None:
-        """Make the one-step house ramp and its priority effect visible."""
-        for candidate in pending:
-            if candidate.safety_override:
-                continue
-            decisions[candidate.policy.room_id] = RoomDecision(
-                candidate.policy.room_id,
-                DecisionState.WAITING_FOR_OBSERVATION,
-                "higher_priority_step_active",
-                f"{candidate.policy.display_name} wartet, waehrend {approved_candidate.policy.display_name} die priorisierte Modulationsstufe beobachtet.",
-                next_review_at=candidate.next_review_at,
-            )

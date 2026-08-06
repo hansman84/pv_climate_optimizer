@@ -51,49 +51,62 @@ def _candidate(
     )
 
 
-def test_fixed_room_priority_beats_larger_normal_comfort_gap() -> None:
+def test_fitting_rooms_share_available_pv_budget_in_priority_order() -> None:
     coordinator = orchestrator.HouseCoordinator()
     living = _candidate("living", 1, comfort_gap_c=0.3)
     bedroom = _candidate("bedroom", 2, comfort_gap_c=1.5)
 
     decision = coordinator.decide((living, bedroom), available_budget_w=1000.0)
 
-    assert decision.approved_room_ids == ("living",)
-    assert decision.room_decisions[1].state is models.DecisionState.WAITING_FOR_OBSERVATION
-    assert decision.room_decisions[1].reason_code == "higher_priority_step_active"
+    assert decision.approved_room_ids == ("living", "bedroom")
+    assert decision.reserved_budget_w == 600.0
+    assert all(item.state is models.DecisionState.APPROVED_STEP for item in decision.room_decisions)
 
 
-def test_hard_safety_override_beats_normal_room_priority() -> None:
+def test_hard_safety_override_is_approved_alongside_normal_pv_steps() -> None:
     coordinator = orchestrator.HouseCoordinator()
     living = _candidate("living", 1)
     bedroom = _candidate("bedroom", 2, safety_override=True)
 
     decision = coordinator.decide((living, bedroom), available_budget_w=1000.0)
 
-    assert decision.approved_room_ids == ("bedroom",)
+    assert decision.approved_room_ids == ("bedroom", "living")
 
 
-def test_lower_priority_room_cannot_consume_budget_reserved_for_priority_room() -> None:
+def test_smaller_lower_priority_step_uses_capacity_when_larger_room_does_not_fit() -> None:
     coordinator = orchestrator.HouseCoordinator()
     living = _candidate("living", 1, budget_w=800.0)
     bedroom = _candidate("bedroom", 2, budget_w=100.0)
 
     decision = coordinator.decide((living, bedroom), available_budget_w=400.0)
 
-    assert decision.approved_room_ids == ()
+    assert decision.approved_room_ids == ("bedroom",)
     assert decision.room_decisions[0].state is models.DecisionState.COMFORT_RISK_ALERT
-    assert decision.room_decisions[1].state is models.DecisionState.BLOCKED_WITH_ESCALATION
-    assert decision.room_decisions[1].reason_code == "budget_reserved_for_priority_room"
+    assert decision.room_decisions[1].state is models.DecisionState.APPROVED_STEP
+    assert decision.reserved_budget_w == 100.0
 
 
-def test_same_priority_uses_comfort_gap_as_only_tiebreaker() -> None:
+def test_same_priority_uses_comfort_gap_first_but_approves_all_fitting_steps() -> None:
     coordinator = orchestrator.HouseCoordinator()
     first = _candidate("office", 2, comfort_gap_c=0.3)
     second = _candidate("pantry", 2, comfort_gap_c=0.8)
 
     decision = coordinator.decide((first, second), available_budget_w=1000.0)
 
-    assert decision.approved_room_ids == ("pantry",)
+    assert decision.approved_room_ids == ("pantry", "office")
+
+
+def test_multiple_rooms_are_limited_by_the_actual_pv_budget() -> None:
+    coordinator = orchestrator.HouseCoordinator()
+    living = _candidate("living", 1, budget_w=500.0)
+    bedroom = _candidate("bedroom", 2, budget_w=300.0)
+    pantry = _candidate("pantry", 3, budget_w=200.0)
+
+    decision = coordinator.decide((living, bedroom, pantry), available_budget_w=800.0)
+
+    assert decision.approved_room_ids == ("living", "bedroom")
+    assert decision.reserved_budget_w == 800.0
+    assert decision.room_decisions[2].reason_code == "room_budget_unavailable"
 
 
 def test_every_candidate_has_a_visible_decision_when_no_modulation_is_requested() -> None:
