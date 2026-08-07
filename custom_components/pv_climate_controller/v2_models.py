@@ -158,6 +158,7 @@ class V2RoomInput:
     evening_comfort_active: bool = False
     scheduled_target_temperature_c: float | None = None
     deadline_at_risk: bool = False
+    solar_irradiance_w_m2: float | None = None
 
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:

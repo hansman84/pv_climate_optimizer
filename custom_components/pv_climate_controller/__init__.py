@@ -537,6 +537,7 @@ def _v2_room_inputs(
                 controller, zone.name, local_now, contextual_forecast.predicted_temperature_60m_c,
                 effective_comfort_temperature,
             ),
+            solar_irradiance_w_m2=irradiance,
         ))
     return tuple(result)
 

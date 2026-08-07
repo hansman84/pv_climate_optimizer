@@ -303,6 +303,33 @@ def test_shadow_runner_winds_down_without_pv_then_stops_after_the_v1_window() ->
     assert decision.approved_room_ids == ("living",)
 
 
+def test_shadow_runner_uses_a_short_evening_wind_down_after_sunset() -> None:
+    base = _shadow_room(budget_w=0.0)
+    no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        no_pv, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, solar_irradiance_w_m2=2.0,
+    )
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    runner.evaluate((room,), available_budget_w=0.0)
+    clock[0] = 10 * 60 + 1
+
+    candidates, decision = runner.evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "pv_surplus_ended"
+    assert decision.approved_room_ids == ("living",)
+
+
 def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None:
     room = _shadow_room()
     room = models.V2RoomInput(
