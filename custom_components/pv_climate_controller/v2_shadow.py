@@ -70,8 +70,6 @@ class V2ShadowRunner:
                 reason_text="V2 Fail-safe: die harte Raumtemperaturgrenze ist erreicht; das Klimagerät wird mit einem bestätigten, milden Sollwert gestartet.",
                 safety_override=True,
             )
-        if room.required_budget_w is None:
-            return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
         # V1's essential wind-down rule: without export, do not leave an
         # already comfortable room running merely because its old device
         # setpoint is still low.  Evening comfort is the deliberate exception
@@ -121,6 +119,11 @@ class V2ShadowRunner:
                 reason_code="pv_wind_down_waiting",
                 reason_text=f"V2-Auslauf: ohne PV läuft das Gerät nur auf der entspannten Stufe aus und wird nach {int(wind_down_s // 60)} Minuten abgeschaltet.",
             )
+        # A learned incremental demand is required only to *start* a new
+        # compressor load.  It must never veto a no-PV wind-down or stop of
+        # an already running, comfortable room above.
+        if room.required_budget_w is None:
+            return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
         scheduled = room.scheduled_target_temperature_c
         if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:
             if abs(room.observed_target_temperature_c - scheduled) >= (room.target_temperature_step_c or 1.0) - 0.001:
