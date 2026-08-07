@@ -20,6 +20,7 @@ class Command:
     value: str | float | None = None
     urgent: bool = False
     fan_mode: str | None = None
+    batch_window: bool = False
 
     @property
     def signature(self) -> tuple[str, str, str | float | None, str | None]:
@@ -174,7 +175,7 @@ class ClimateCommandAdapter:
             return CommandResult("noop", "Identischer bestätigter Befehl wird nicht wiederholt.")
         if command.entity_id in self._pending:
             return CommandResult("deferred", "Gerätebestätigung für den vorherigen Befehl steht noch aus.")
-        if self._last_global_at is not None and now - self._last_global_at < self._global_interval_s:
+        if not command.batch_window and self._last_global_at is not None and now - self._last_global_at < self._global_interval_s:
             return CommandResult("deferred", "Globales Befehlsintervall noch nicht erreicht.")
         if not command.urgent and now - self._last_entity_at.get(command.entity_id, float("-inf")) < self._per_entity_interval_s:
             return CommandResult("deferred", "Gerätebezogenes Befehlsintervall noch nicht erreicht.")

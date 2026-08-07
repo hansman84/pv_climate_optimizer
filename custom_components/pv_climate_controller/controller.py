@@ -1291,7 +1291,13 @@ class PVClimateController:
             # Mark this adapter request urgent so the legacy five-minute
             # per-device limit cannot silently stretch that window; the shared
             # one-command-per-minute house gate remains in force.
-            Command(zone.climate_entity_id, action, plan.target_temperature_c, urgent=True, fan_mode="auto" if plan.action is not CandidateAction.STOP else None), executor
+            Command(
+                zone.climate_entity_id, action, plan.target_temperature_c,
+                urgent=True,
+                fan_mode="auto" if plan.action is not CandidateAction.STOP else None,
+                batch_window=True,
+            ),
+            executor,
         )
         if result.status == "sent":
             self._last_v2_command_at[plan.room_id] = now
