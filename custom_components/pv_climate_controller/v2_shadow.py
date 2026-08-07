@@ -95,6 +95,11 @@ class V2ShadowRunner:
             and not pv_available
             and temperature is not None
             and temperature < room.hard_max_temperature_c
+            # A sleeping-room deadline is a comfort promise.  Once it is at
+            # risk, do not oscillate between no-PV stop and a deadline start;
+            # the trajectory branch below owns the device until the forecast
+            # is safe again or the configured hard cutoff arrives.
+            and not room.deadline_at_risk
         ):
             upper = room.pilot_max_target_temperature_c
             target = room.observed_target_temperature_c

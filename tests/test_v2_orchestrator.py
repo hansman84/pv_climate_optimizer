@@ -327,6 +327,30 @@ def test_shadow_runner_winds_down_without_pv_even_before_power_learning_is_compl
     assert decision.approved_room_ids == ("living",)
 
 
+def test_shadow_runner_does_not_stop_a_running_bedroom_with_a_real_deadline_risk() -> None:
+    base = _shadow_room(predicted=25.0, budget_w=0.0)
+    no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        no_pv, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, deadline_at_risk=True,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "sleep_deadline_risk"
+    assert candidates[0].action is models.CandidateAction.ADJUST
+    assert decision.approved_room_ids == ("living",)
+
+
 def test_shadow_runner_uses_a_short_evening_wind_down_after_sunset() -> None:
     base = _shadow_room(budget_w=0.0)
     no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
@@ -544,7 +568,7 @@ def test_command_planner_refuses_to_guess_missing_pilot_bounds_or_device_step() 
     assert command_planner.V2CommandPlanner().plan(room, candidates[0], decision) is None
 
 
-def test_command_planner_uses_supported_high_airflow_for_material_comfort_risk() -> None:
+def test_command_planner_keeps_auto_airflow_for_material_comfort_risk() -> None:
     room = _shadow_room(predicted=26.0)
     room = models.V2RoomInput(
         room.policy, room.snapshot, room.estimate, room.eligibility,
@@ -560,10 +584,10 @@ def test_command_planner_uses_supported_high_airflow_for_material_comfort_risk()
 
     assert plan is not None
     assert plan.target_temperature_c == 23.0
-    assert plan.fan_mode == "high"
+    assert plan.fan_mode is None
 
 
-def test_command_planner_returns_to_quiet_airflow_when_relaxing() -> None:
+def test_command_planner_restores_auto_airflow_when_relaxing() -> None:
     room = _shadow_room(predicted=23.0)
     room = models.V2RoomInput(
         room.policy, room.snapshot, room.estimate, room.eligibility,
@@ -579,4 +603,4 @@ def test_command_planner_returns_to_quiet_airflow_when_relaxing() -> None:
 
     assert plan is not None
     assert plan.target_temperature_c == 22.0
-    assert plan.fan_mode == "low"
+    assert plan.fan_mode == "auto"

@@ -16,24 +16,16 @@ class V2CommandPlanner:
 
     @staticmethod
     def _fan_mode(room: V2RoomInput, candidate: RoomCandidate, target: float | None) -> str | None:
-        """Select a supported airflow level alongside a real target step.
+        """Always restore automatic fan control alongside a real target step.
 
-        The target is the primary cooling-power control.  ``auto`` remains the
-        quiet default; higher airflow is used only for a material comfort gap
-        or hard safety risk, and only while V2 already sends a protected
-        setpoint step.  This avoids permanent fan noise just to consume PV.
+        Compressor target is the sole modulation axis.  V2 must never create
+        an audible high/low fan intervention; Auto lets the indoor unit choose
+        the quietest viable airflow and keeps dashboard plans truthful.
         """
         if target is None or not room.supported_fan_modes:
             return None
         modes = {mode.casefold(): mode for mode in room.supported_fan_modes}
-        cooling_harder = room.observed_target_temperature_c is None or target < room.observed_target_temperature_c
-        if candidate.safety_override or candidate.comfort_gap_c >= 1.0:
-            preferences = ("high", "middle_high", "medium", "auto")
-        elif cooling_harder:
-            preferences = ("medium", "middle_high", "middle_low", "auto")
-        else:
-            preferences = ("low", "middle_low", "auto")
-        selected = next((modes[name] for name in preferences if name in modes), None)
+        selected = modes.get("auto")
         return None if selected is None or selected == room.observed_fan_mode else selected
 
     def _plan(self, room: V2RoomInput, candidate: RoomCandidate, action: CandidateAction, target: float | None, reason_code: str, reason_text: str) -> V2CommandPlan:
