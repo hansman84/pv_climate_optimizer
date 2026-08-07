@@ -1287,7 +1287,11 @@ class PVClimateController:
             CandidateAction.STOP: "pilot_stop",
         }[plan.action]
         result = await self.command_adapter.async_request(
-            Command(zone.climate_entity_id, action, plan.target_temperature_c, fan_mode="auto" if plan.action is not CandidateAction.STOP else None), executor
+            # V2 enforces its own two-minute per-room observation window.
+            # Mark this adapter request urgent so the legacy five-minute
+            # per-device limit cannot silently stretch that window; the shared
+            # one-command-per-minute house gate remains in force.
+            Command(zone.climate_entity_id, action, plan.target_temperature_c, urgent=True, fan_mode="auto" if plan.action is not CandidateAction.STOP else None), executor
         )
         if result.status == "sent":
             self._last_v2_command_at[plan.room_id] = now
