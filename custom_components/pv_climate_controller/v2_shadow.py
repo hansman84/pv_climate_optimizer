@@ -78,7 +78,15 @@ class V2ShadowRunner:
         # running room cooling indefinitely.  It blocks new starts elsewhere;
         # here it triggers the same graceful V1 wind-down path as measured
         # zero export.
-        pv_available = room.snapshot.pv_export_w.is_valid and float(room.snapshot.pv_export_w.value or 0.0) > 0.0
+        # A few watts are meter noise, not usable compressor capacity.  Using
+        # ``> 0`` here let tiny evening/cloud export readings reset the
+        # wind-down clock indefinitely, while a V1 start correctly requires
+        # the configured minimum reserve.  Apply that same threshold to an
+        # already-running room, so the house has one definition of usable PV.
+        pv_available = (
+            room.snapshot.pv_export_w.is_valid
+            and float(room.snapshot.pv_export_w.value or 0.0) >= room.pv_surplus_threshold_w
+        )
         now = self._clock()
         if pv_available:
             self._pv_missing_since.pop(room.policy.room_id, None)

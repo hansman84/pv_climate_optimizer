@@ -540,6 +540,7 @@ def _v2_room_inputs(
                 if isinstance(context.get("irradiance_w_m2"), (int, float))
                 else None
             ),
+            pv_surplus_threshold_w=controller.config.min_pv_surplus_w,
         ))
     return tuple(result)
 

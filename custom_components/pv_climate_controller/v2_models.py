@@ -159,6 +159,7 @@ class V2RoomInput:
     scheduled_target_temperature_c: float | None = None
     deadline_at_risk: bool = False
     solar_irradiance_w_m2: float | None = None
+    pv_surplus_threshold_w: float = 100.0
 
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:
@@ -174,6 +175,8 @@ class V2RoomInput:
             raise ValueError("target_temperature_step_c must be positive")
         if self.scheduled_target_temperature_c is not None and not 5.0 <= self.scheduled_target_temperature_c <= 50.0:
             raise ValueError("scheduled target temperature is implausible")
+        if self.pv_surplus_threshold_w < 0:
+            raise ValueError("PV surplus threshold cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)

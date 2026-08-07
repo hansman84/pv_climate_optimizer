@@ -221,8 +221,9 @@ def test_explicit_v1_room_exclusion_remains_distinguishable_from_default_authori
 def _shadow_room(*, predicted: float | None = 25.0, confidence: float = 0.8, budget_w: float | None = 400.0) -> object:
     valid_temperature = models.InputValue("sensor.living", 24.2, "°C", 10.0, models.InputQuality.VALID, "fresh")
     valid_flag = models.InputValue("sensor.flag", True, None, 1.0, models.InputQuality.VALID, "allowed")
+    usable_export = models.InputValue("sensor.export", 500.0, "W", 1.0, models.InputQuality.VALID, "usable_surplus")
     snapshot = models.InputSnapshot(
-        "2026-08-05T12:00:00+00:00", valid_temperature, valid_flag, valid_flag, valid_flag,
+        "2026-08-05T12:00:00+00:00", valid_temperature, valid_flag, usable_export, valid_flag,
         valid_temperature, valid_flag, valid_flag, valid_flag, valid_flag,
     )
     return models.V2RoomInput(
@@ -376,6 +377,47 @@ def test_shadow_runner_uses_a_short_evening_wind_down_after_sunset() -> None:
 
     assert candidates[0].reason_code == "pv_surplus_ended"
     assert decision.approved_room_ids == ("living",)
+
+
+def test_weekly_real_world_export_samples_do_not_keep_a_room_running_on_meter_noise() -> None:
+    """Regression from the four representative hourly rows of 2026-07-31..08-07.
+
+    The input table included all room temperatures, PV/DC power, export,
+    irradiance and outdoor temperature.  The decision boundary under test is
+    deliberate: the 10 W cloud reading is not usable PV against the configured
+    100 W reserve, whereas 678 W is.
+    """
+    samples = (
+        # name, PV DC W, export W, irradiance W/m², outdoor °C, wind-down, expected reason
+        ("night", 0.0, 0.0, 2.0, 29.0, 10 * 60 + 1, "pv_surplus_ended"),
+        ("sunset", 13.0, 0.0, 7.0, 23.3, 10 * 60 + 1, "pv_surplus_ended"),
+        ("cloud_noise", 378.0, 10.0, 93.0, 23.6, 30 * 60 + 1, "pv_surplus_ended"),
+        ("usable_pv", 2126.0, 678.0, 336.0, 28.5, 30 * 60 + 1, "living_room_comfort_priority"),
+    )
+    for _name, _pv_dc_w, export_w, irradiance_w_m2, _outdoor_c, elapsed_s, expected in samples:
+        base = _shadow_room(budget_w=0.0)
+        export = models.InputValue("sensor.export", export_w, "W", 5.0, models.InputQuality.VALID, "weekly_sample")
+        snapshot = models.InputSnapshot(
+            base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+            export, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+            base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+            base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+        )
+        room = models.V2RoomInput(
+            base.policy, snapshot, base.estimate, base.eligibility,
+            base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+            observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+            pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+            target_temperature_step_c=1.0, solar_irradiance_w_m2=irradiance_w_m2,
+            pv_surplus_threshold_w=100.0,
+        )
+        clock = [0.0]
+        runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+        runner.evaluate((room,), available_budget_w=export_w)
+        clock[0] = elapsed_s
+        candidates, _decision = runner.evaluate((room,), available_budget_w=export_w)
+
+        assert candidates[0].reason_code == expected
 
 
 def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None:
