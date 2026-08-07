@@ -537,7 +537,14 @@ def _v2_room_inputs(
                 controller, zone.name, local_now, contextual_forecast.predicted_temperature_60m_c,
                 effective_comfort_temperature,
             ),
-            solar_irradiance_w_m2=irradiance,
+            # ``_v2_room_inputs`` is deliberately a pure per-room projection.
+            # The refresh-loop local ``irradiance`` is not in this scope; use
+            # the already attached room context so setup cannot fail here.
+            solar_irradiance_w_m2=(
+                context.get("irradiance_w_m2")
+                if isinstance(context.get("irradiance_w_m2"), (int, float))
+                else None
+            ),
         ))
     return tuple(result)
 
