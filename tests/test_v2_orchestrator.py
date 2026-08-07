@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -418,6 +420,67 @@ def test_weekly_real_world_export_samples_do_not_keep_a_room_running_on_meter_no
         candidates, _decision = runner.evaluate((room,), available_budget_w=export_w)
 
         assert candidates[0].reason_code == expected
+
+
+def test_full_weekly_hourly_inputs_stop_every_comfortable_running_room_without_usable_pv() -> None:
+    """Replay every aligned room/PV/weather hour captured from Home Assistant.
+
+    This deliberately holds each room in ``cool`` to prove the safety property
+    that failed in production: once usable export is absent for a whole hourly
+    sample, a comfortable running device must become a STOP candidate.  Rows
+    at/above the hard limit are excluded because their fail-safe cooling must
+    win over the energy-saving stop rule.
+    """
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "v2_weekly_hourly_inputs_2026-08-07.json").read_text())
+    points = fixture["points"]
+    assert len(points) == 167
+    rooms = (
+        ("living", "living", 24.0),
+        ("office", "office", 23.5),
+        ("child", "child", 22.0),
+        ("bedroom", "bedroom", 22.5),
+        ("pantry", "pantry", 23.5),
+    )
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    low_pv_previous_hour = {room_id: False for room_id, _field, _comfort in rooms}
+
+    for index, point in enumerate(points):
+        clock[0] = index * 60.0 * 60.0
+        export_w = float(point["export_w"])
+        irradiance_w_m2 = float(point["irradiance_w_m2"])
+        usable_pv = export_w >= 100.0
+        for room_id, field, comfort_c in rooms:
+            temperature_c = float(point[field])
+            valid = models.InputValue("sensor.flag", True, None, 1.0, models.InputQuality.VALID, "weekly_replay")
+            snapshot = models.InputSnapshot(
+                datetime.fromtimestamp(float(point["ts"]) / 1000.0, UTC).isoformat(),
+                models.InputValue(f"sensor.{room_id}", temperature_c, "°C", 1.0, models.InputQuality.VALID, "weekly_replay"),
+                valid,
+                models.InputValue("sensor.export", export_w, "W", 1.0, models.InputQuality.VALID, "weekly_replay"),
+                valid,
+                models.InputValue("sensor.outdoor", float(point["outdoor_c"]), "°C", 1.0, models.InputQuality.VALID, "weekly_replay"),
+                valid, valid, valid, valid,
+            )
+            room = models.V2RoomInput(
+                models.RoomPolicy(room_id, room_id, 1),
+                snapshot,
+                models.RoomEstimate(room_id, temperature_c, 0.0, temperature_c, 0.8, 0.0, (), "weekly_replay"),
+                models.EligibilityDecision(True, "eligible", "weekly replay"),
+                comfort_c, 26.0, 0.0,
+                observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+                pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
+                target_temperature_step_c=1.0, solar_irradiance_w_m2=irradiance_w_m2,
+                pv_surplus_threshold_w=100.0,
+            )
+            candidates, _decision = runner.evaluate((room,), available_budget_w=export_w)
+            candidate = candidates[0]
+            if not usable_pv and temperature_c < 26.0:
+                expected = "pv_surplus_ended" if low_pv_previous_hour[room_id] else "pv_wind_down_waiting"
+                assert candidate.reason_code == expected, (index, room_id, point, candidate)
+            elif usable_pv:
+                assert candidate.reason_code not in {"pv_wind_down", "pv_wind_down_waiting", "pv_surplus_ended"}
+            low_pv_previous_hour[room_id] = not usable_pv
 
 
 def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None:
