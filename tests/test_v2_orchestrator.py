@@ -373,7 +373,7 @@ def test_shadow_runner_uses_a_short_evening_wind_down_after_sunset() -> None:
     clock = [0.0]
     runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
     runner.evaluate((room,), available_budget_w=0.0)
-    clock[0] = 10 * 60 + 1
+    clock[0] = 2 * 60 + 1
 
     candidates, decision = runner.evaluate((room,), available_budget_w=0.0)
 
@@ -391,8 +391,8 @@ def test_weekly_real_world_export_samples_do_not_keep_a_room_running_on_meter_no
     """
     samples = (
         # name, PV DC W, export W, irradiance W/m², outdoor °C, wind-down, expected reason
-        ("night", 0.0, 0.0, 2.0, 29.0, 10 * 60 + 1, "pv_surplus_ended"),
-        ("sunset", 13.0, 0.0, 7.0, 23.3, 10 * 60 + 1, "pv_surplus_ended"),
+        ("night", 0.0, 0.0, 2.0, 29.0, 2 * 60 + 1, "pv_surplus_ended"),
+        ("sunset", 13.0, 0.0, 7.0, 23.3, 2 * 60 + 1, "pv_surplus_ended"),
         ("cloud_noise", 378.0, 10.0, 93.0, 23.6, 30 * 60 + 1, "pv_surplus_ended"),
         ("usable_pv", 2126.0, 678.0, 336.0, 28.5, 30 * 60 + 1, "living_room_comfort_priority"),
     )

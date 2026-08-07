@@ -23,7 +23,11 @@ class V2ShadowRunner:
     """Build candidates then apply the one-step house coordinator."""
 
     _PV_WIND_DOWN_S = 30 * 60
-    _EVENING_WIND_DOWN_S = 10 * 60
+    # Evening is occupied time: after PV falls below the meaningful reserve,
+    # leave only a short observation window before stopping.  The controller
+    # itself reevaluates every minute and a two-minute window filters one
+    # transient meter update without letting indoor airflow remain annoying.
+    _EVENING_WIND_DOWN_S = 2 * 60
     _EVENING_IRRADIANCE_W_M2 = 50.0
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
