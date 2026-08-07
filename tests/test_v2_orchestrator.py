@@ -483,6 +483,32 @@ def test_full_weekly_hourly_inputs_stop_every_comfortable_running_room_without_u
             low_pv_previous_hour[room_id] = not usable_pv
 
 
+def test_stopped_living_room_does_not_restart_on_forecast_risk_without_usable_pv() -> None:
+    """Wohnzimmer priority ranks PV use; it does not defeat evening shut-down."""
+    base = _shadow_room(predicted=24.7, budget_w=450.0)
+    no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        no_pv, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, 450.0,
+        observed_hvac_mode="off", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, solar_irradiance_w_m2=2.0,
+        pv_surplus_threshold_w=100.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "pv_start_blocked_no_surplus"
+    assert decision.approved_room_ids == ()
+    assert command_planner.V2CommandPlanner().plan(room, candidates[0], decision) is None
+
+
 def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None:
     room = _shadow_room()
     room = models.V2RoomInput(

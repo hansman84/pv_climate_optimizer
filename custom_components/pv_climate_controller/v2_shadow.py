@@ -203,8 +203,23 @@ class V2ShadowRunner:
                     )
             return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
         evening_comfort = room.evening_comfort_active
-        living_room_priority = room.policy.display_name.strip().casefold() == "wohnzimmer" and comfort_gap >= 0.4
         deadline_priority = room.deadline_at_risk
+        # The living room is first in the PV allocation, not a blanket right
+        # to restart a stopped compressor after sunset.  A room that has just
+        # completed wind-down may only restart without surplus for the explicit
+        # evening-comfort promise, a sleeping-room deadline, or the hard-limit
+        # failsafe handled above.
+        if not pv_available and room.observed_hvac_mode != "cool" and not evening_comfort and not deadline_priority:
+            return V2ShadowRunner._hold(
+                room,
+                "pv_start_blocked_no_surplus",
+                "V2 startet keine bereits abgeschaltete Kühlung ohne nutzbare PV-Reserve; Komfort- und Fail-safe-Ausnahmen bleiben ausdrücklich möglich.",
+            )
+        living_room_priority = (
+            room.policy.display_name.strip().casefold() == "wohnzimmer"
+            and comfort_gap >= 0.4
+            and pv_available
+        )
         evening_target = None
         if evening_comfort and room.observed_hvac_mode == "cool":
             # An old PV-precool target (for example 20 C) must never leak
