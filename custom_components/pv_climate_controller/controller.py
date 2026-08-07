@@ -1286,19 +1286,30 @@ class PVClimateController:
             CandidateAction.ADJUST: "pilot_adjust",
             CandidateAction.STOP: "pilot_stop",
         }[plan.action]
-        result = await self.command_adapter.async_request(
-            # V2 enforces its own two-minute per-room observation window.
-            # Mark this adapter request urgent so the legacy five-minute
-            # per-device limit cannot silently stretch that window; the shared
-            # one-command-per-minute house gate remains in force.
-            Command(
-                zone.climate_entity_id, action, plan.target_temperature_c,
-                urgent=True,
-                fan_mode="auto" if plan.action is not CandidateAction.STOP else None,
-                batch_window=True,
-            ),
-            executor,
+        command = Command(
+            zone.climate_entity_id,
+            action,
+            plan.target_temperature_c,
+            urgent=True,
+            fan_mode="auto" if plan.action is not CandidateAction.STOP else None,
+            batch_window=True,
         )
+        # ConnectLife can accept a command yet later report its previous
+        # target again.  A remembered signature must not turn that stale
+        # report into a permanent V2 no-op.  The V2 two-minute observation
+        # window above still limits the retry, so this only reasserts the
+        # approved target when the device demonstrably drifted from it.
+        if (
+            plan.action is CandidateAction.ADJUST
+            and plan.target_temperature_c is not None
+            and any(
+                room.policy.room_id == plan.room_id
+                and room.observed_target_temperature_c != plan.target_temperature_c
+                for room in self.last_v2_room_inputs
+            )
+        ):
+            self.command_adapter.invalidate_confirmed_signature(command)
+        result = await self.command_adapter.async_request(command, executor)
         if result.status == "sent":
             self._last_v2_command_at[plan.room_id] = now
         return result
