@@ -157,6 +157,7 @@ class V2RoomInput:
     supported_fan_modes: tuple[str, ...] = ()
     evening_comfort_active: bool = False
     scheduled_target_temperature_c: float | None = None
+    deadline_at_risk: bool = False
 
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:

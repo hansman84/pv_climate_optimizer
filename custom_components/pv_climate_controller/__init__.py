@@ -533,6 +533,10 @@ def _v2_room_inputs(
                 contextual_forecast.predicted_temperature_60m_c,
                 zone.pilot_min_target_temperature, zone.pilot_max_target_temperature,
             ),
+            deadline_at_risk=_v2_sleeping_room_deadline_at_risk(
+                controller, zone.name, local_now, contextual_forecast.predicted_temperature_60m_c,
+                effective_comfort_temperature,
+            ),
         ))
     return tuple(result)
 
@@ -599,6 +603,17 @@ def _v2_sleeping_room_device_target(
     risk_c = max(0.0, (forecast_c or comfort_target_c) - comfort_target_c)
     staged -= min(1.5, risk_c * 1.5)
     return round(max(lower, min(upper, staged)), 1)
+
+
+def _v2_sleeping_room_deadline_at_risk(controller, zone_name: str, local_now: datetime, forecast_c: float | None, comfort_c: float) -> bool:
+    """Reserve the shared budget only when a sleep deadline would otherwise slip."""
+    normalized = zone_name.strip().casefold()
+    if normalized not in {"schlafzimmer", "kinderzimmer"} or forecast_c is None:
+        return False
+    deadline_value = controller.config.bedroom_quiet_time if normalized == "schlafzimmer" else controller.config.bedroom_cutoff_time
+    deadline = _v2_schedule_time(deadline_value, time(22, 0))
+    remaining_m = deadline.hour * 60 + deadline.minute - (local_now.hour * 60 + local_now.minute)
+    return 0 < remaining_m <= 180 and forecast_c > comfort_c + 0.5
 
 
 def _v2_living_evening_comfort_active(

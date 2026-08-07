@@ -150,6 +150,8 @@ class V2ShadowRunner:
                     )
             return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
         evening_comfort = room.evening_comfort_active
+        living_room_priority = room.policy.display_name.strip().casefold() == "wohnzimmer" and comfort_gap >= 0.4
+        deadline_priority = room.deadline_at_risk
         evening_target = None
         if evening_comfort and room.observed_hvac_mode == "cool":
             # An old PV-precool target (for example 20 C) must never leak
@@ -166,13 +168,13 @@ class V2ShadowRunner:
             required_budget_w=0.0 if evening_comfort else room.required_budget_w,
             comfort_gap_c=comfort_gap,
             confidence=room.estimate.confidence,
-            reason_code="evening_comfort_required" if evening_comfort else "forecast_comfort_risk",
+            reason_code=("evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
             reason_text=(
                 "V2 Abendkomfort: der Raum wird trotz fehlendem PV-Export zur vereinbarten Komforttemperatur geführt."
                 if evening_comfort
                 else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
             ),
-            safety_override=evening_comfort,
+            safety_override=evening_comfort or living_room_priority or deadline_priority,
             target_after_c=evening_target if evening_target is not None else scheduled,
         )
 
