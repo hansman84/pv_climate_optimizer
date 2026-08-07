@@ -6,6 +6,8 @@ unknown power estimates result in an explainable HOLD, never a guessed start.
 
 from __future__ import annotations
 
+from time import monotonic
+
 from .v2_models import (
     CandidateAction,
     DecisionState,
@@ -20,16 +22,19 @@ from .v2_orchestrator import HouseCoordinator
 class V2ShadowRunner:
     """Build candidates then apply the one-step house coordinator."""
 
-    def __init__(self, coordinator: HouseCoordinator | None = None) -> None:
+    _PV_WIND_DOWN_S = 30 * 60
+
+    def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()
+        self._clock = clock
+        self._pv_missing_since: dict[str, float] = {}
 
     def evaluate(self, rooms: tuple[V2RoomInput, ...], *, available_budget_w: float) -> tuple[tuple[RoomCandidate, ...], HouseDecision]:
         candidates = tuple(self._candidate(room) for room in rooms)
         decision = self._coordinator.decide(candidates, available_budget_w=available_budget_w)
         return candidates, decision
 
-    @staticmethod
-    def _candidate(room: V2RoomInput) -> RoomCandidate:
+    def _candidate(self, room: V2RoomInput) -> RoomCandidate:
         if room.eligibility.reason_code in {"bedroom_schedule_pending", "bedroom_quiet_time"}:
             if room.observed_hvac_mode == "cool":
                 return RoomCandidate(
@@ -69,20 +74,45 @@ class V2ShadowRunner:
         # already comfortable room running merely because its old device
         # setpoint is still low.  Evening comfort is the deliberate exception
         # and hard limits remain fail-safe above.
-        no_pv = room.snapshot.pv_export_w.is_valid and float(room.snapshot.pv_export_w.value or 0.0) <= 0.0
+        # Energy telemetry that is absent or stale must never keep an already
+        # running room cooling indefinitely.  It blocks new starts elsewhere;
+        # here it triggers the same graceful V1 wind-down path as measured
+        # zero export.
+        pv_available = room.snapshot.pv_export_w.is_valid and float(room.snapshot.pv_export_w.value or 0.0) > 0.0
+        now = self._clock()
+        if pv_available:
+            self._pv_missing_since.pop(room.policy.room_id, None)
+        else:
+            self._pv_missing_since.setdefault(room.policy.room_id, now)
+        no_pv_for_s = 0.0 if pv_available else now - self._pv_missing_since[room.policy.room_id]
         if (
             room.observed_hvac_mode == "cool"
-            and no_pv
-            and not room.evening_comfort_active
+            and not pv_available
             and temperature is not None
             and temperature < room.hard_max_temperature_c
         ):
+            upper = room.pilot_max_target_temperature_c
+            target = room.observed_target_temperature_c
+            still_needs_evening_comfort = room.evening_comfort_active and temperature > room.comfort_temperature_c + 0.25
+            if not still_needs_evening_comfort and upper is not None and target is not None and target < upper:
+                return RoomCandidate(
+                    policy=room.policy, action=CandidateAction.ADJUST, required_budget_w=0.0,
+                    comfort_gap_c=max(0.0, temperature - room.comfort_temperature_c), confidence=room.estimate.confidence,
+                    reason_code="pv_wind_down", reason_text="V2 übernimmt V1-Auslauf: ohne PV wird der Gerätesollwert sofort auf die sparsame Auslaufstufe angehoben.",
+                    safety_override=True, target_before_c=target, target_after_c=upper,
+                )
+            if not still_needs_evening_comfort and no_pv_for_s >= self._PV_WIND_DOWN_S:
+                return RoomCandidate(
+                    policy=room.policy, action=CandidateAction.STOP, required_budget_w=0.0,
+                    comfort_gap_c=0.0, confidence=room.estimate.confidence,
+                    reason_code="pv_surplus_ended", reason_text="V2 übernimmt V1-Auslauf: PV-Überschuss bleibt seit 30 Minuten aus; die Kühlung wird beendet.",
+                    safety_override=True,
+                )
             return RoomCandidate(
-                policy=room.policy, action=CandidateAction.STOP, required_budget_w=0.0,
-                comfort_gap_c=0.0, confidence=room.estimate.confidence,
-                reason_code="pv_lost_comfort_reached",
-                reason_text="V2 übernimmt V1-Auslauf: ohne PV wird unterhalb der harten Komfortgrenze ausgeschaltet; erst die harte Grenze darf wieder einen Start erzwingen.",
-                safety_override=True,
+                policy=room.policy, action=CandidateAction.HOLD, required_budget_w=0.0,
+                comfort_gap_c=max(0.0, temperature - room.comfort_temperature_c), confidence=room.estimate.confidence,
+                reason_code="pv_wind_down_waiting",
+                reason_text="V2 übernimmt V1-Auslauf: ohne PV läuft das Gerät nur auf der entspannten Stufe aus und wird nach 30 Minuten abgeschaltet.",
             )
         scheduled = room.scheduled_target_temperature_c
         if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:

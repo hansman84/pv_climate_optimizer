@@ -841,8 +841,8 @@ def test_bedroom_mode_waits_for_late_afternoon_and_enforces_quiet_time() -> None
     assert quiet.reason_code == "bedroom_quiet_time"
 
 
-def test_bedroom_evening_comfort_overrides_quiet_time_when_room_is_warm() -> None:
-    """Quiet time stops PV pre-cooling, but must not cancel night comfort."""
+def test_bedroom_quiet_time_stops_a_warm_room_without_restarting_it() -> None:
+    """A configured room cutoff is a hard, autonomous end to pre-cooling."""
     bedroom = models.ZoneConfig(
         "bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom",
         comfort_temperature=22.0,
@@ -865,11 +865,11 @@ def test_bedroom_evening_comfort_overrides_quiet_time_when_room_is_warm() -> Non
     runtime.last_energy = models.EnergySnapshot(export_power_w=0)
 
     action = runtime.decide_bedroom_pilot(
-        bedroom, temperature_c=23.7, climate_mode="off", now=time(19, 15),
+        bedroom, temperature_c=23.7, climate_mode="cool", now=time(19, 15),
     )
 
     assert (action.action, action.target_temperature_c, action.reason_code) == (
-        "start", 22.0, "bedroom_evening_comfort",
+        "stop", None, "bedroom_quiet_time",
     )
 
 

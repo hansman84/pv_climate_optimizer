@@ -561,7 +561,7 @@ def _v2_bedroom_schedule_eligibility(
     if local_time < start:
         return EligibilityDecision(False, "bedroom_schedule_pending", f"{zone_name}: Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
     if quiet_enabled and local_time >= quiet:
-        return EligibilityDecision(True, "bedroom_evening_comfort", f"{zone_name}: Ruhezeit ab {quiet.strftime('%H:%M')} Uhr; nur der Komfortverlauf bleibt aktiv.")
+        return EligibilityDecision(False, "bedroom_quiet_time", f"{zone_name}: Vorkühlung endet um {quiet.strftime('%H:%M')} Uhr; das Klimagerät bleibt aus.")
     return EligibilityDecision(True, "v2_eligible", "V2 bewertet die freigegebenen Quellen.")
 
 

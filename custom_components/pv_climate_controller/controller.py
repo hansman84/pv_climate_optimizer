@@ -892,16 +892,11 @@ class PVClimateController:
         quiet_enabled = self.config.bedroom_quiet_enabled if is_master_bedroom else self.config.bedroom_cutoff_enabled
         quiet_value = self.config.bedroom_quiet_time if is_master_bedroom else self.config.bedroom_cutoff_time
         cutoff = self._schedule_time(quiet_value, time(18, 30))
-        # The cutoff ends opportunistic PV pre-cooling, not the configured
-        # evening-comfort recovery.  Otherwise a warm bedroom is turned off
-        # precisely at the quiet-time boundary and can never reach its
-        # explicitly configured sleeping target.
-        target_zone = replace(zone, comfort_temperature=self._effective_bedroom_target(outdoor_temperature_c))
-        evening_comfort_needed = (
-            temperature_c is not None
-            and temperature_c > target_zone.comfort_temperature + 0.25
-        )
-        if quiet_enabled and local_time >= cutoff and not evening_comfort_needed:
+        # A room-specific cutoff is the end of that room's pre-cooling run.
+        # It is deliberately a hard stop, even when the room is still warm:
+        # otherwise the deadline is not a deadline and the unit can run far
+        # into the evening merely because the temperature has not converged.
+        if quiet_enabled and local_time >= cutoff:
             action = (
                 PilotAction("stop", None, "bedroom_quiet_time", f"{zone.name}: Ruhezeit ab {cutoff.strftime('%H:%M')} Uhr; Klimagerät wird ausgeschaltet.")
                 if climate_mode == "cool"
@@ -909,6 +904,7 @@ class PVClimateController:
             )
             self.last_bedroom_pilot_actions[zone.zone_id] = action
             return action
+        target_zone = replace(zone, comfort_temperature=self._effective_bedroom_target(outdoor_temperature_c))
         if local_time < start:
             action = PilotAction("none", None, "bedroom_window_pending", f"{zone.name}: PV-Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
             self.last_bedroom_pilot_actions[zone.zone_id] = action
