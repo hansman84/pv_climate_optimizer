@@ -288,6 +288,34 @@ def test_housewide_v2_takeover_blocks_v1_for_every_room_and_keeps_explicit_maint
     assert not runtime.command_adapter._productive_enabled
 
 
+def test_v2_restart_restores_observable_rooms_without_releasing_an_offline_room_to_v1() -> None:
+    living = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    bedroom = models.ZoneConfig("bedroom", "Schlafzimmer", "climate.bedroom", "sensor.bedroom")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(
+            shadow_mode=False,
+            energy_policy=const.EnergyPolicy.PV_PREFERRED,
+            living_room_pilot_enabled=False,
+            zone=living,
+            house_zones=(living, bedroom),
+            v2_house_control_enabled=True,
+            v2_shadow_enabled=True,
+        ),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    runtime.restore_v2_house_authority({"bedroom"})
+
+    assert runtime.v2_authority_for("bedroom").v2_may_write
+    assert runtime.v2_authority_for("living").authority.value == "handoff_pending"
+    assert not runtime.v2_authority_for("living").v1_may_write
+    assert not runtime.v2_authority_for("living").v2_may_write
+
+    runtime.restore_v2_house_authority({"living", "bedroom"})
+
+    assert runtime.v2_authority_for("living").v2_may_write
+
+
 def _load(module: str):
     sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE)).__path__ = [str(ROOT)]
     path = ROOT / f"{module}.py"

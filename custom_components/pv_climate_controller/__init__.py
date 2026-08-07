@@ -35,16 +35,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = controller
     store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.learning")
     controller.restore_learning_state(unpack(await store.async_load()))
-    # The house-wide V2 switch is a persisted ownership commitment, not only
-    # a visual control.  A config-entry reload must therefore rebuild the
-    # all-room authority before the first refresh can let V1 evaluate again.
-    if controller.config.v2_house_control_enabled and all(
-        (state := hass.states.get(zone.climate_entity_id)) is not None
-        and state.state not in {"unknown", "unavailable"}
-        for zone in controller.config.house_zones
-    ):
-        if not any(controller.room_authority.has_persisted_state(zone.zone_id) for zone in controller.config.house_zones):
-            controller.activate_v2_house_control()
+    # V2 ownership is restored per room.  A delayed cloud climate must be
+    # frozen by itself, never prevent already observable rooms from cooling,
+    # winding down or stopping under the sole V2 writer.
+    if controller.config.v2_house_control_enabled:
+        controller.restore_v2_house_authority({
+            zone.zone_id
+            for zone in controller.config.house_zones
+            if (state := hass.states.get(zone.climate_entity_id)) is not None
+            and state.state not in {"unknown", "unavailable"}
+        })
     hass.data[DOMAIN].setdefault("_learning_stores", {})[entry.entry_id] = store
     source_entities = _configured_entities(controller)
     if source_entities:
@@ -204,17 +204,12 @@ async def _async_refresh_controller(
             sun_azimuth, sun_elevation,
         )
         contexts[house_zone.zone_id] = {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance, "shade_open_percent": shade_open, "direct_sun": direct_sun}
-    # Integrations can initialize before their cloud climate entities have
-    # restored state.  Reassert persisted house-wide V2 ownership only once
-    # every live room is observable; until then no ownership promotion occurs.
-    if config.v2_house_control_enabled and all(
-        state[1] not in {"unknown", "unavailable"}
-        for state in house_states.values()
-    ) and not any(
-        controller.room_authority.has_persisted_state(house_zone.zone_id)
-        for house_zone in config.house_zones
-    ):
-        controller.activate_v2_house_control()
+    if config.v2_house_control_enabled:
+        controller.restore_v2_house_authority({
+            zone_id
+            for zone_id, state in house_states.items()
+            if state[1] not in {"unknown", "unavailable"}
+        })
     controller.evaluate_house(house_states, contexts)
     if config.v2_shadow_enabled:
         controller.evaluate_v2_shadow(

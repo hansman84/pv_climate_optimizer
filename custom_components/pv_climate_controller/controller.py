@@ -23,7 +23,7 @@ from .thermal_response import learn_thermal_response
 from .thermal_analysis import learn_thermal_profile
 from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
 from .v2_shadow import V2ShadowRunner
-from .v2_authority import AuthorityDecision, HandoffReadiness, RoomAuthorityRegistry
+from .v2_authority import AuthorityDecision, ControlAuthority, HandoffReadiness, RoomAuthorityRegistry
 from .v2_command_planner import V2CommandPlanner
 
 
@@ -651,6 +651,28 @@ class PVClimateController:
         # applies solely to explicitly approved V2 plans.
         self.command_adapter.set_operating_mode(shadow_mode=False, productive_enabled=True)
         return True
+
+    def restore_v2_house_authority(self, observable_room_ids: set[str]) -> None:
+        """Restore V2 ownership room by room after a restart.
+
+        A cloud climate entity can take longer to restore than the controller.
+        It must not make the complete house fall back to an inert V1/V2 gap:
+        an unobservable room is held in ``handoff_pending`` (so neither writer
+        can touch it), while every observable room resumes V2 immediately.
+        """
+        if not self.config.v2_house_control_enabled:
+            return
+        for zone in self.config.house_zones:
+            authority = self.v2_authority_for(zone.zone_id)
+            if authority.authority is ControlAuthority.V1_ACTIVE:
+                self.enable_v2_room_shadow(zone.zone_id)
+                authority = self.begin_v2_handoff(zone.zone_id, preconditions_met=True)
+            if (
+                zone.zone_id in observable_room_ids
+                and authority.authority is ControlAuthority.HANDOFF_PENDING
+            ):
+                self.activate_v2_authority(zone.zone_id, observed_state_aligned=True)
+        self.command_adapter.set_operating_mode(shadow_mode=False, productive_enabled=True)
 
     def deactivate_v2_house_control(self) -> None:
         """Start a safe all-room return to V1 without racing pending commands."""
