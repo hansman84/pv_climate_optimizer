@@ -162,6 +162,44 @@ def test_observed_device_state_acknowledges_only_the_matching_pending_command() 
     assert "command_ack_pending" not in command_adapter.handoff_blockers("climate.living")
 
 
+def test_physical_remote_takeover_blocks_v2_after_a_night_stop() -> None:
+    """A remote start must outlive the V2 night-stop candidate for this room."""
+    clock = Clock()
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock, global_interval_s=0, per_entity_interval_s=0,
+    )
+
+    async def executor(command):
+        return True
+
+    assert asyncio.run(command_adapter.async_request(adapter.Command("climate.child", "pilot_stop"), executor)).status == "sent"
+    assert not command_adapter.observe_climate_state("climate.child", hvac_mode="off", target_temperature_c=25.0)
+    assert command_adapter.observe_climate_state(
+        "climate.child", hvac_mode="cool", target_temperature_c=22.0,
+    )
+    assert command_adapter.is_manual_override("climate.child")
+    assert command_adapter.manual_override_remaining_s("climate.child") == 7200
+    assert asyncio.run(command_adapter.async_request(adapter.Command("climate.child", "pilot_stop"), executor)).status == "manual_override"
+
+
+def test_confirmed_controller_state_and_expired_remote_takeover_return_to_v2() -> None:
+    clock = Clock()
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock, global_interval_s=0, per_entity_interval_s=0,
+    )
+
+    async def executor(command):
+        return True
+
+    assert asyncio.run(command_adapter.async_request(adapter.Command("climate.child", "pilot_stop"), executor)).status == "sent"
+    assert not command_adapter.observe_climate_state("climate.child", hvac_mode="off", target_temperature_c=25.0)
+    assert command_adapter.observe_climate_state("climate.child", hvac_mode="cool", target_temperature_c=22.0, override_duration_s=120)
+    clock.now = 121
+
+    assert not command_adapter.is_manual_override("climate.child")
+    assert command_adapter.manual_override_remaining_s("climate.child") == 0
+
+
 def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(

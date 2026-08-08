@@ -177,6 +177,7 @@ async def _async_refresh_controller(
     sun_elevation = _temperature_value(None if sun_state is None else sun_state.attributes.get("elevation"))
     pv_deadline_active = _pv_deadline_active(sun_state)
     house_states = {}
+    manual_room_takeover_detected = False
     contexts = {}
     for house_zone in config.house_zones:
         temperature_state = hass.states.get(house_zone.temperature_entity_id)
@@ -193,6 +194,20 @@ async def _async_refresh_controller(
             "off" if climate_state is None else climate_state.state,
             None if cooling_state is None else cooling_state.state,
         )
+        # A physical remote/vendor-app change has no HA user context.  It is
+        # nevertheless an intentional room-level takeover and must survive
+        # V2's next refresh, including a configured night/quiet stop.  The
+        # shared adapter filters our own pending and acknowledged commands.
+        if (
+            config.manual_override_enabled
+            and changed_entity_id == house_zone.climate_entity_id
+            and controller.command_adapter.observe_climate_state(
+                house_zone.climate_entity_id,
+                hvac_mode=None if climate_state is None else climate_state.state,
+                target_temperature_c=None if climate_state is None else _temperature_value(climate_state.attributes.get("temperature")),
+            )
+        ):
+            manual_room_takeover_detected = True
         controller.command_adapter.confirm_observed_climate_state(
             house_zone.climate_entity_id,
             hvac_mode=None if climate_state is None else climate_state.state,
@@ -331,7 +346,11 @@ async def _async_refresh_controller(
             zone=bedroom_zone,
             room_pilot=controller.bedroom_pilots[bedroom_zone.zone_id],
         )
-    if store is not None:
+    if store is not None and manual_room_takeover_detected:
+        # A remote control action must not disappear if HA is restarted before
+        # the normal delayed learning snapshot has elapsed.
+        await store.async_save(pack(controller.export_learning_state()))
+    elif store is not None:
         store.async_delay_save(lambda: pack(controller.export_learning_state()), 60)
     controller.notify_state_listeners()
 

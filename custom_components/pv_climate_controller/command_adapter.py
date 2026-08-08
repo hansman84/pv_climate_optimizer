@@ -78,6 +78,11 @@ class ClimateCommandAdapter:
     def is_manual_override(self, entity_id: str) -> bool:
         return self._manual_override_until.get(entity_id, 0.0) > self._clock()
 
+    def manual_override_remaining_s(self, entity_id: str) -> int:
+        """Return the visible remaining room takeover time, rounded up."""
+        remaining = self._manual_override_until.get(entity_id, 0.0) - self._clock()
+        return max(0, int(remaining + 0.999))
+
     def handoff_blockers(self, entity_id: str) -> tuple[str, ...]:
         """Return non-destructive reasons why a controller handoff is unsafe."""
         now = self._clock()
@@ -125,6 +130,48 @@ class ClimateCommandAdapter:
             self._pending.pop(command.entity_id, None)
             return False
         self._manual_override_until[command.entity_id] = now + override_duration_s
+        return True
+
+    def observe_climate_state(
+        self,
+        entity_id: str,
+        *,
+        hvac_mode: str | None,
+        target_temperature_c: float | None,
+        override_duration_s: float = 7200.0,
+    ) -> bool:
+        """Adopt a physical or foreign climate change as a timed room takeover.
+
+        Infrared remotes and vendor apps do not carry a Home Assistant user
+        context.  Compare their reported state with our pending/confirmed
+        command instead of relying on that context.  A short pending grace
+        absorbs the device's intermediate state reports during our own
+        turn-on/mode/temperature service sequence.
+        """
+        now = self._clock()
+
+        def matches(signature: tuple[str, str, str | float | None, str | None]) -> bool:
+            _, action, value, _ = signature
+            target_matches = isinstance(value, (int, float)) and target_temperature_c is not None and float(value) == target_temperature_c
+            return (
+                (action == "pilot_stop" and hvac_mode == "off")
+                or (action == "pilot_start" and hvac_mode == "cool" and target_matches)
+                or (action == "pilot_adjust" and target_matches)
+            )
+
+        pending = self._pending.get(entity_id)
+        if pending is not None:
+            signature, sent_at = pending
+            if matches(signature):
+                self._pending.pop(entity_id, None)
+                return False
+            if now - sent_at <= 30.0:
+                return False
+        confirmed = self._last_signature.get(entity_id)
+        if confirmed is not None and matches(confirmed):
+            return False
+        self._pending.pop(entity_id, None)
+        self._manual_override_until[entity_id] = now + override_duration_s
         return True
 
     def invalidate_confirmed_signature(self, command: Command) -> None:

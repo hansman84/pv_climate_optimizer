@@ -261,6 +261,7 @@ class V2AuthoritySensor(ControllerEntity, SensorEntity):
                 "v2_may_write": self.controller.v2_authority_for(zone.zone_id).v2_may_write,
                 "handoff_ready": self.controller.v2_handoff_readiness(zone.zone_id).ready,
                 "handoff_blockers": list(self.controller.v2_handoff_readiness(zone.zone_id).blocker_codes),
+                "manual_takeover_remaining_s": self.controller.command_adapter.manual_override_remaining_s(zone.climate_entity_id),
                 "v2_next_action": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).action.value,
                 "v2_next_target_temperature_c": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).target_temperature_c,
                 "v2_next_fan_mode": None if self.controller.v2_command_plan_for(zone.zone_id) is None else self.controller.v2_command_plan_for(zone.zone_id).fan_mode,
