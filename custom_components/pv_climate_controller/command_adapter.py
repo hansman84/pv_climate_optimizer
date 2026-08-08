@@ -169,6 +169,16 @@ class ClimateCommandAdapter:
             if matches(signature):
                 self._pending.pop(entity_id, None)
                 return False
+            # A stop is a single, final state transition.  If the device is
+            # subsequently reported as cooling, that cannot be one of our
+            # own intermediate start-up reports: it is a person (remote/app)
+            # deliberately taking the room back.  In particular do not let
+            # the acknowledgement grace after a night stop swallow that
+            # takeover and immediately stop the unit again.
+            if signature[1] == "pilot_stop" and hvac_mode not in {None, "off"}:
+                self._pending.pop(entity_id, None)
+                self._manual_override_until[entity_id] = now + override_duration_s
+                return True
             if now - sent_at <= 30.0:
                 return False
         confirmed = self._last_signature.get(entity_id)
