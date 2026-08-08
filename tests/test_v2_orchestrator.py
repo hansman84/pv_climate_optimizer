@@ -98,6 +98,18 @@ def test_same_priority_uses_comfort_gap_first_but_approves_all_fitting_steps() -
     assert decision.approved_room_ids == ("pantry", "office")
 
 
+def test_visible_living_room_priority_translates_to_the_first_v2_budget_slot() -> None:
+    """V2's ascending rank must preserve the UI's descending room priority."""
+    coordinator = orchestrator.HouseCoordinator()
+    living = _candidate("living", 101 - 91, budget_w=500.0)
+    child = _candidate("child", 101 - 76, budget_w=500.0)
+    pantry = _candidate("pantry", 101 - 5, budget_w=500.0)
+
+    decision = coordinator.decide((pantry, child, living), available_budget_w=500.0)
+
+    assert decision.approved_room_ids == ("living",)
+
+
 def test_multiple_rooms_are_limited_by_the_actual_pv_budget() -> None:
     coordinator = orchestrator.HouseCoordinator()
     living = _candidate("living", 1, budget_w=500.0)
@@ -327,6 +339,31 @@ def test_shadow_runner_winds_down_without_pv_even_before_power_learning_is_compl
     candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
 
     assert candidates[0].reason_code == "pv_wind_down"
+
+
+def test_wind_down_uses_the_safe_default_upper_target_when_a_room_has_no_explicit_maximum() -> None:
+    """The Speis fallback makes 22 -> 25 °C relaxation commandable."""
+    base = _shadow_room(budget_w=0.0)
+    no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        no_pv, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, 0.0,
+        observed_hvac_mode="cool", observed_target_temperature_c=22.0,
+        pilot_min_target_temperature_c=22.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "pv_wind_down"
+    assert plan is not None and plan.target_temperature_c == 25.0
     assert decision.approved_room_ids == ("living",)
 
 

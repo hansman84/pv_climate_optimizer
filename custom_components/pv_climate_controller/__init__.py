@@ -454,7 +454,13 @@ def _v2_room_inputs(
         else:
             eligibility = _v2_bedroom_schedule_eligibility(controller, zone.name, local_now.time())
         result.append(V2RoomInput(
-            policy=RoomPolicy(zone.zone_id, zone.name, zone.modulation_priority),
+            # The visible room priority is the house-level commitment: a
+            # larger configured value is more important (Wohnzimmer 91,
+            # Kinderzimmer 76, ...).  V2's coordinator uses lower numbers
+            # first, so translate it here instead of silently relying on the
+            # legacy per-room modulation field, which is often left at 50 for
+            # every room and consequently erases the intended ordering.
+            policy=RoomPolicy(zone.zone_id, zone.name, max(1, 101 - zone.priority)),
             snapshot=InputSnapshot(
                 observed_at=now,
                 room_temperature=_v2_numeric_input(
@@ -518,7 +524,15 @@ def _v2_room_inputs(
                 mode for mode in climate_state.attributes.get("fan_modes", ()) if isinstance(mode, str)
             ),
             pilot_min_target_temperature_c=zone.pilot_min_target_temperature,
-            pilot_max_target_temperature_c=zone.pilot_max_target_temperature,
+            # The native number entity has always presented these same safe
+            # defaults.  V2 must materialize them too: without an upper bound
+            # a running room (notably Speis) cannot raise a cold PV target for
+            # a calm no-PV wind-down.
+            pilot_max_target_temperature_c=(
+                zone.pilot_max_target_temperature
+                if zone.pilot_max_target_temperature is not None
+                else 24.0 if zone.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"} else 25.0
+            ),
             target_temperature_step_c=(
                 None if climate_state is None else _temperature_value(climate_state.attributes.get("target_temp_step"))
             ),
