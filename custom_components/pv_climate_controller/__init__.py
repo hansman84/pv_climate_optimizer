@@ -628,14 +628,27 @@ def _v2_sleeping_room_device_target(
 
 
 def _v2_sleeping_room_deadline_at_risk(controller, zone_name: str, local_now: datetime, forecast_c: float | None, comfort_c: float) -> bool:
-    """Reserve the shared budget only when a sleep deadline would otherwise slip."""
+    """Protect each sleep promise from its configured pre-cooling start.
+
+    A fixed final-three-hours window delayed the master bedroom unnecessarily
+    when its own quiet time was later than the child's.  The user-configured
+    start time is the actual promise boundary: from then until the respective
+    quiet/cutoff time, an above-target forecast may reserve one calm step even
+    without momentary export.
+    """
     normalized = zone_name.strip().casefold()
     if normalized not in {"schlafzimmer", "kinderzimmer"} or forecast_c is None:
         return False
-    deadline_value = controller.config.bedroom_quiet_time if normalized == "schlafzimmer" else controller.config.bedroom_cutoff_time
+    is_master = normalized == "schlafzimmer"
+    start_value = controller.config.bedroom_start_time if is_master else controller.config.child_bedroom_start_time
+    deadline_value = controller.config.bedroom_quiet_time if is_master else controller.config.bedroom_cutoff_time
+    start = _v2_schedule_time(start_value, time(15, 30))
     deadline = _v2_schedule_time(deadline_value, time(22, 0))
-    remaining_m = deadline.hour * 60 + deadline.minute - (local_now.hour * 60 + local_now.minute)
-    return 0 < remaining_m <= 180 and forecast_c > comfort_c + 0.5
+    now_minutes = local_now.hour * 60 + local_now.minute
+    start_minutes = start.hour * 60 + start.minute
+    deadline_minutes = deadline.hour * 60 + deadline.minute
+    in_pre_cooling_window = start_minutes <= now_minutes < deadline_minutes
+    return in_pre_cooling_window and forecast_c > comfort_c + 0.25
 
 
 def _v2_living_evening_comfort_active(
