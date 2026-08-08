@@ -48,11 +48,17 @@ class V2ShadowRunner:
     _LIVING_NO_PV_MIN_IRRADIANCE_W_M2 = 100.0
     _LIVING_NO_PV_COMFORT_GAP_C = 0.4
     _LIVING_NO_PV_URGENT_GAP_C = 1.0
+    # A momentary export spike must not wake a lower-priority compressor only
+    # to stop it again with the next cloud sample.  Normal room starts require
+    # five continuous minutes of real headroom; living-room comfort and sleep
+    # deadlines remain deliberate, visible exceptions.
+    _NORMAL_START_SURPLUS_STABLE_S = 5 * 60
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()
         self._clock = clock
         self._pv_missing_since: dict[str, float] = {}
+        self._pv_available_since: dict[str, float] = {}
 
     def evaluate(self, rooms: tuple[V2RoomInput, ...], *, available_budget_w: float) -> tuple[tuple[RoomCandidate, ...], HouseDecision]:
         candidates = tuple(self._candidate(room) for room in rooms)
@@ -143,6 +149,10 @@ class V2ShadowRunner:
             self._pv_missing_since.pop(room.policy.room_id, None)
         else:
             self._pv_missing_since.setdefault(room.policy.room_id, now)
+        if pv_available:
+            self._pv_available_since.setdefault(room.policy.room_id, now)
+        else:
+            self._pv_available_since.pop(room.policy.room_id, None)
         no_pv_for_s = 0.0 if usable_cooling_authority else now - self._pv_missing_since[room.policy.room_id]
         wind_down_s = (
             self._EVENING_WIND_DOWN_S
@@ -276,6 +286,25 @@ class V2ShadowRunner:
             and comfort_gap >= 0.4
             and usable_cooling_authority
         )
+        normal_start_surplus_stable = (
+            pv_available
+            and now - self._pv_available_since[room.policy.room_id] >= self._NORMAL_START_SURPLUS_STABLE_S
+        )
+        if (
+            room.observed_hvac_mode != "cool"
+            and not living_room_priority
+            and not living_no_pv_comfort
+            and not evening_comfort
+            and not deadline_priority
+            and pv_available
+            and not normal_start_surplus_stable
+        ):
+            remaining_s = int(self._NORMAL_START_SURPLUS_STABLE_S - (now - self._pv_available_since[room.policy.room_id]))
+            return V2ShadowRunner._hold(
+                room,
+                "pv_start_waiting_stable_surplus",
+                f"V2 wartet noch {max(1, (remaining_s + 59) // 60)} Min. auf stabilen PV-Überschuss, bevor ein nicht priorisierter Raum neu startet.",
+            )
         living_no_pv_target = None
         if living_no_pv_comfort:
             # At the first level, use the comfort target itself.  The indoor

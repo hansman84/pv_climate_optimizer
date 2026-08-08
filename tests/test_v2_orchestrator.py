@@ -575,6 +575,33 @@ def test_sunny_living_room_holds_comfort_without_export_but_not_full_power() -> 
     assert plan.target_temperature_c == 24.0
 
 
+def test_normal_room_needs_stable_surplus_before_a_new_start() -> None:
+    """A cloud spike must not start Speis before the priority rooms need it."""
+    base = _shadow_room(predicted=24.5, confidence=0.8, budget_w=300.0)
+    room = models.V2RoomInput(
+        models.RoomPolicy("pantry", "Speis", 96), base.snapshot,
+        models.RoomEstimate("pantry", 24.0, 0.2, 24.5, 0.8, -1.0, ("trend",), "forecast_ready"),
+        base.eligibility, 23.5, 26.0, 300.0,
+        observed_hvac_mode="off", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=22.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, solar_irradiance_w_m2=300.0,
+        pv_surplus_threshold_w=100.0,
+    )
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+
+    candidates, decision = runner.evaluate((room,), available_budget_w=500.0)
+
+    assert candidates[0].reason_code == "pv_start_waiting_stable_surplus"
+    assert decision.approved_room_ids == ()
+
+    clock[0] = 5 * 60 + 1
+    candidates, decision = runner.evaluate((room,), available_budget_w=500.0)
+
+    assert candidates[0].reason_code == "forecast_comfort_risk"
+    assert decision.approved_room_ids == ("pantry",)
+
+
 def test_living_no_pv_priority_is_disabled_during_evening_window() -> None:
     base = _shadow_room(predicted=24.6, confidence=0.8, budget_w=450.0)
     no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
