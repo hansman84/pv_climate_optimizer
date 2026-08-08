@@ -10,6 +10,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 
+from .command_adapter import is_climate_control_change
 from .const import DOMAIN
 from .controller import PVClimateController
 from .forecasting import contextual_temperature_forecast
@@ -122,6 +123,9 @@ def _handle_state_change(hass: HomeAssistant, controller: PVClimateController, s
                 store,
                 changed_entity_id=event.data.get("entity_id"),
                 user_initiated_change=bool(getattr(event.context, "user_id", None)),
+                climate_control_change=is_climate_control_change(
+                    event.data.get("old_state"), event.data.get("new_state")
+                ),
             )
         )
 
@@ -134,6 +138,7 @@ async def _async_refresh_controller(
     store: Store | None = None,
     changed_entity_id: str | None = None,
     user_initiated_change: bool = False,
+    climate_control_change: bool = False,
 ) -> None:
     """Refresh diagnostics from HA state; no service calls are made."""
     config = controller.config
@@ -201,6 +206,7 @@ async def _async_refresh_controller(
         if (
             config.manual_override_enabled
             and changed_entity_id == house_zone.climate_entity_id
+            and climate_control_change
             and controller.command_adapter.observe_climate_state(
                 house_zone.climate_entity_id,
                 hvac_mode=None if climate_state is None else climate_state.state,

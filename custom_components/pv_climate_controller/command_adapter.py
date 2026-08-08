@@ -11,6 +11,24 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
+def is_climate_control_change(old_state: Any, new_state: Any) -> bool:
+    """Return whether an observed update changed mode or temperature.
+
+    A cloud replay after startup is not manual control.  Manual takeover is
+    deliberately narrow: only the two room decisions a person meaningfully
+    owns (HVAC mode and target temperature) start or extend its timer.  Fan
+    and swing changes are left to the controller's comfort logic.
+    """
+    if old_state is None or new_state is None:
+        return False
+    if old_state.state in {"unknown", "unavailable"} or new_state.state in {"unknown", "unavailable"}:
+        return False
+    return (
+        old_state.state != new_state.state
+        or old_state.attributes.get("temperature") != new_state.attributes.get("temperature")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Command:
     """A normalized, deduplicatable desired state."""

@@ -210,6 +210,23 @@ def test_remote_start_immediately_after_our_night_stop_is_not_swallowed_by_ack_g
     ).status == "manual_override"
 
 
+def test_remote_takeover_recognizes_only_real_climate_control_changes() -> None:
+    from types import SimpleNamespace
+
+    def state(mode, **attributes):
+        return SimpleNamespace(state=mode, attributes=attributes)
+
+    # A startup/cloud replay must never create a two-hour manual hold.
+    assert not adapter.is_climate_control_change(None, state("off", temperature=24))
+    assert not adapter.is_climate_control_change(state("off", temperature=24), state("off", temperature=24))
+    assert not adapter.is_climate_control_change(state("unavailable"), state("off", temperature=24))
+
+    # The values the remote can actually change are a deliberate takeover.
+    assert adapter.is_climate_control_change(state("off", temperature=24), state("cool", temperature=24))
+    assert adapter.is_climate_control_change(state("cool", temperature=24), state("cool", temperature=23))
+    assert not adapter.is_climate_control_change(state("cool", fan_mode="auto"), state("cool", fan_mode="high"))
+
+
 def test_confirmed_controller_state_and_expired_remote_takeover_return_to_v2() -> None:
     clock = Clock()
     command_adapter = adapter.ClimateCommandAdapter(
