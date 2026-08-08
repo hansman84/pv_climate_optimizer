@@ -416,6 +416,9 @@ def _v2_room_inputs(
         forecast = controller.last_zone_forecasts.get(zone.zone_id)
         profile = controller.last_thermal_profiles.get(zone.zone_id)
         context = (contexts or {}).get(zone.zone_id, {})
+        evening_window_active = _v2_living_evening_window_active(
+            controller, zone.name, local_now.time(),
+        )
         evening_comfort_active = _v2_living_evening_comfort_active(
             controller,
             zone.name,
@@ -537,6 +540,7 @@ def _v2_room_inputs(
                 None if climate_state is None else _temperature_value(climate_state.attributes.get("target_temp_step"))
             ),
             evening_comfort_active=evening_comfort_active,
+            evening_window_active=evening_window_active,
             scheduled_target_temperature_c=_v2_sleeping_room_device_target(
                 controller, zone.name, local_now, effective_comfort_temperature,
                 contextual_forecast.predicted_temperature_60m_c,
@@ -643,10 +647,20 @@ def _v2_living_evening_comfort_active(
     """Keep the existing Wohnzimmer evening promise active in V2."""
     if zone_name.strip().casefold() != "wohnzimmer" or temperature_c is None:
         return False
+    return _v2_living_evening_window_active(controller, zone_name, local_time) and temperature_c > controller.config.living_evening_comfort_temperature + 0.25
+
+
+def _v2_living_evening_window_active(
+    controller: PVClimateController,
+    zone_name: str,
+    local_time: time,
+) -> bool:
+    """Return the whole configured living-room evening window."""
+    if zone_name.strip().casefold() != "wohnzimmer":
+        return False
     start = _v2_schedule_time(controller.config.living_evening_start_time, time(20, 30))
     end = _v2_schedule_time(controller.config.living_evening_end_time, time(23, 30))
-    in_window = start <= local_time < end if start <= end else local_time >= start or local_time < end
-    return in_window and temperature_c > controller.config.living_evening_comfort_temperature + 0.25
+    return start <= local_time < end if start <= end else local_time >= start or local_time < end
 
 
 def _v2_schedule_time(value: str, fallback: time) -> time:

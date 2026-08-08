@@ -156,6 +156,9 @@ class V2RoomInput:
     observed_fan_mode: str | None = None
     supported_fan_modes: tuple[str, ...] = ()
     evening_comfort_active: bool = False
+    # Unlike ``evening_comfort_active``, this stays true for the whole
+    # configured evening window, even when the room is already comfortable.
+    evening_window_active: bool = False
     scheduled_target_temperature_c: float | None = None
     deadline_at_risk: bool = False
     solar_irradiance_w_m2: float | None = None

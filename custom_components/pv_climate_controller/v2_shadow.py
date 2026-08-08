@@ -33,6 +33,12 @@ class V2ShadowRunner:
     # nuisance with no thermal advantage, so stop it promptly.
     _RELAXED_TARGET_STOP_S = 2 * 60
     _EVENING_IRRADIANCE_W_M2 = 50.0
+    # Meter failure must not leave a sunny, warming living room passive.  This
+    # is intentionally not a PV estimator: at most this one room may take a
+    # single mild step, and never during the occupied evening window.
+    _TELEMETRY_FALLBACK_IRRADIANCE_W_M2 = 250.0
+    _TELEMETRY_FALLBACK_COMFORT_GAP_C = 0.4
+    _TELEMETRY_FALLBACK_MIN_CONFIDENCE = 0.5
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()
@@ -95,12 +101,27 @@ class V2ShadowRunner:
             room.snapshot.pv_export_w.is_valid
             and float(room.snapshot.pv_export_w.value or 0.0) >= room.pv_surplus_threshold_w
         )
+        # A valid 0 W reading is an authoritative no-PV result.  The daylight
+        # fallback is possible only when the electrical source itself is
+        # missing, invalid, or stale.
+        predicted = room.estimate.predicted_temperature_60m_c
+        telemetry_fallback_active = (
+            not room.snapshot.pv_export_w.is_valid
+            and room.policy.display_name.strip().casefold() == "wohnzimmer"
+            and not room.evening_window_active
+            and room.solar_irradiance_w_m2 is not None
+            and room.solar_irradiance_w_m2 >= self._TELEMETRY_FALLBACK_IRRADIANCE_W_M2
+            and predicted is not None
+            and room.estimate.confidence >= self._TELEMETRY_FALLBACK_MIN_CONFIDENCE
+            and predicted - room.comfort_temperature_c >= self._TELEMETRY_FALLBACK_COMFORT_GAP_C
+        )
+        usable_cooling_authority = pv_available or telemetry_fallback_active
         now = self._clock()
-        if pv_available:
+        if usable_cooling_authority:
             self._pv_missing_since.pop(room.policy.room_id, None)
         else:
             self._pv_missing_since.setdefault(room.policy.room_id, now)
-        no_pv_for_s = 0.0 if pv_available else now - self._pv_missing_since[room.policy.room_id]
+        no_pv_for_s = 0.0 if usable_cooling_authority else now - self._pv_missing_since[room.policy.room_id]
         wind_down_s = (
             self._EVENING_WIND_DOWN_S
             if room.solar_irradiance_w_m2 is not None and room.solar_irradiance_w_m2 <= self._EVENING_IRRADIANCE_W_M2
@@ -108,7 +129,7 @@ class V2ShadowRunner:
         )
         if (
             room.observed_hvac_mode == "cool"
-            and not pv_available
+            and not usable_cooling_authority
             and temperature is not None
             and temperature < room.hard_max_temperature_c
             # A sleeping-room deadline is a comfort promise.  Once it is at
@@ -177,7 +198,6 @@ class V2ShadowRunner:
                 "pilot_target_floor_reached",
                 "V2 beobachtet weiter: das Klimagerät läuft bereits auf dem niedrigsten erlaubten Pilotsollwert.",
             )
-        predicted = room.estimate.predicted_temperature_60m_c
         if predicted is None or room.estimate.confidence <= 0.0:
             return V2ShadowRunner._hold(room, "forecast_insufficient", "V2 wartet: Temperaturprognose oder Konfidenz reicht noch nicht für eine Modulationsstufe.")
         comfort_gap = predicted - room.comfort_temperature_c
@@ -219,7 +239,7 @@ class V2ShadowRunner:
         # completed wind-down may only restart without surplus for the explicit
         # evening-comfort promise, a sleeping-room deadline, or the hard-limit
         # failsafe handled above.
-        if not pv_available and room.observed_hvac_mode != "cool" and not evening_comfort and not deadline_priority:
+        if not usable_cooling_authority and room.observed_hvac_mode != "cool" and not evening_comfort and not deadline_priority:
             return V2ShadowRunner._hold(
                 room,
                 "pv_start_blocked_no_surplus",
@@ -228,7 +248,7 @@ class V2ShadowRunner:
         living_room_priority = (
             room.policy.display_name.strip().casefold() == "wohnzimmer"
             and comfort_gap >= 0.4
-            and pv_available
+            and usable_cooling_authority
         )
         evening_target = None
         if evening_comfort and room.observed_hvac_mode == "cool":
@@ -243,16 +263,18 @@ class V2ShadowRunner:
             # An occupied evening promise and a hard limit may use the
             # available house capacity even when momentary export is zero.
             # They are still single, rate-limited device steps.
-            required_budget_w=0.0 if evening_comfort else room.required_budget_w,
+            required_budget_w=0.0 if evening_comfort or telemetry_fallback_active else room.required_budget_w,
             comfort_gap_c=comfort_gap,
             confidence=room.estimate.confidence,
-            reason_code=("evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
+            reason_code=("evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_telemetry_fallback" if telemetry_fallback_active else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
             reason_text=(
                 "V2 Abendkomfort: der Raum wird trotz fehlendem PV-Export zur vereinbarten Komforttemperatur geführt."
                 if evening_comfort
+                else "V2 Ersatzbetrieb: Wechselrichterdaten fehlen, aber hohe Einstrahlung und die belastbare Wohnzimmer-Prognose rechtfertigen genau eine milde Kühlstufe; außerhalb der Abendzeit."
+                if telemetry_fallback_active
                 else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
             ),
-            safety_override=evening_comfort or living_room_priority or deadline_priority,
+            safety_override=evening_comfort or living_room_priority or deadline_priority or telemetry_fallback_active,
             target_after_c=evening_target if evening_target is not None else scheduled,
         )
 

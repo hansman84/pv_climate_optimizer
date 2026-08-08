@@ -546,6 +546,68 @@ def test_stopped_living_room_does_not_restart_on_forecast_risk_without_usable_pv
     assert command_planner.V2CommandPlanner().plan(room, candidates[0], decision) is None
 
 
+def test_missing_inverter_telemetry_allows_only_sunny_daytime_living_room_fallback() -> None:
+    base = _shadow_room(predicted=24.7, confidence=0.8, budget_w=450.0)
+    missing_export = models.InputValue("sensor.export", None, "W", None, models.InputQuality.INVALID, "source_unavailable")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        missing_export, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, 450.0,
+        observed_hvac_mode="off", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, solar_irradiance_w_m2=700.0,
+        pv_surplus_threshold_w=100.0,
+    )
+
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+    plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
+
+    assert candidates[0].reason_code == "living_room_telemetry_fallback"
+    assert candidates[0].safety_override
+    assert decision.approved_room_ids == ("living",)
+    assert plan is not None and plan.action is models.CandidateAction.START
+    assert plan.target_temperature_c == 25.0
+
+
+def test_telemetry_fallback_never_overrides_measured_zero_or_evening_window() -> None:
+    base = _shadow_room(predicted=24.7, confidence=0.8, budget_w=450.0)
+    zero_export = models.InputValue("sensor.export", 0.0, "W", 1.0, models.InputQuality.VALID, "zero_export")
+    zero_snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        zero_export, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    missing_export = models.InputValue("sensor.export", None, "W", None, models.InputQuality.INVALID, "source_unavailable")
+    missing_snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        missing_export, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    common = dict(
+        observed_hvac_mode="off", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, solar_irradiance_w_m2=700.0,
+        pv_surplus_threshold_w=100.0,
+    )
+    measured_zero = models.V2RoomInput(base.policy, zero_snapshot, base.estimate, base.eligibility, base.comfort_temperature_c, base.hard_max_temperature_c, 450.0, **common)
+    evening = models.V2RoomInput(base.policy, missing_snapshot, base.estimate, base.eligibility, base.comfort_temperature_c, base.hard_max_temperature_c, 450.0, evening_window_active=True, **common)
+
+    zero_candidate, zero_decision = shadow.V2ShadowRunner().evaluate((measured_zero,), available_budget_w=0.0)
+    evening_candidate, evening_decision = shadow.V2ShadowRunner().evaluate((evening,), available_budget_w=0.0)
+
+    assert zero_candidate[0].reason_code == "pv_start_blocked_no_surplus"
+    assert zero_decision.approved_room_ids == ()
+    assert evening_candidate[0].reason_code == "pv_start_blocked_no_surplus"
+    assert evening_decision.approved_room_ids == ()
+
+
 def test_shadow_runner_stops_a_bedroom_that_runs_before_its_start_time() -> None:
     room = _shadow_room()
     room = models.V2RoomInput(
