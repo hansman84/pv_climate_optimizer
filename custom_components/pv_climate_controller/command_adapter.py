@@ -23,6 +23,12 @@ def is_climate_control_change(old_state: Any, new_state: Any) -> bool:
         return False
     if old_state.state in {"unknown", "unavailable"} or new_state.state in {"unknown", "unavailable"}:
         return False
+    # An off unit's target is regularly replayed by ConnectLife after a
+    # restart and after our own stop command.  That passive report must never
+    # create a two-hour room hold.  A deliberate manual *start* (or a target
+    # change while cooling) remains fully protected below.
+    if new_state.state == "off":
+        return False
     return (
         old_state.state != new_state.state
         or old_state.attributes.get("temperature") != new_state.attributes.get("temperature")

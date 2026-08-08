@@ -219,6 +219,8 @@ def test_remote_takeover_recognizes_only_real_climate_control_changes() -> None:
     # A startup/cloud replay must never create a two-hour manual hold.
     assert not adapter.is_climate_control_change(None, state("off", temperature=24))
     assert not adapter.is_climate_control_change(state("off", temperature=24), state("off", temperature=24))
+    assert not adapter.is_climate_control_change(state("cool", temperature=24), state("off", temperature=24))
+    assert not adapter.is_climate_control_change(state("off", temperature=24), state("off", temperature=23))
     assert not adapter.is_climate_control_change(state("unavailable"), state("off", temperature=24))
 
     # The values the remote can actually change are a deliberate takeover.
