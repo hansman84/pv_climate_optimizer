@@ -83,6 +83,10 @@ class ClimateCommandAdapter:
         remaining = self._manual_override_until.get(entity_id, 0.0) - self._clock()
         return max(0, int(remaining + 0.999))
 
+    def clear_manual_override(self, entity_id: str) -> None:
+        """Return exactly one room to the controller without touching its state."""
+        self._manual_override_until.pop(entity_id, None)
+
     def handoff_blockers(self, entity_id: str) -> tuple[str, ...]:
         """Return non-destructive reasons why a controller handoff is unsafe."""
         now = self._clock()

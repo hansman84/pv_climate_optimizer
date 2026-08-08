@@ -200,6 +200,24 @@ def test_confirmed_controller_state_and_expired_remote_takeover_return_to_v2() -
     assert command_adapter.manual_override_remaining_s("climate.child") == 0
 
 
+def test_room_manual_takeover_can_be_released_and_survives_controller_restart() -> None:
+    child = models.ZoneConfig("child", "Kinderzimmer", "climate.child", "sensor.child")
+    original = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, house_zones=(child,)),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    original.command_adapter.observe_external_change(adapter.Command("climate.child", "pilot_start", 22.0))
+    restored = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, house_zones=(child,)),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+    restored.restore_learning_state(original.export_learning_state())
+
+    assert restored.command_adapter.is_manual_override("climate.child")
+    assert restored.release_room_manual_takeover("child")
+    assert not restored.command_adapter.is_manual_override("climate.child")
+
+
 def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(

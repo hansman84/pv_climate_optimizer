@@ -412,12 +412,16 @@ class PVClimateController:
                 "schlafraeume": {zone_id: pilot.export_runtime_state() for zone_id, pilot in self.bedroom_pilots.items()},
             },
             "v2_room_authority": self.room_authority.export_state(),
+            "command_adapter": self.command_adapter.export_state(),
         }
 
     def restore_learning_state(self, state: object) -> None:
         """Restore only bounded numeric samples; malformed data is ignored."""
         if not isinstance(state, dict):
             return
+        adapter_state = state.get("command_adapter")
+        if isinstance(adapter_state, dict):
+            self.command_adapter.restore_state(adapter_state)
         now = monotonic()
         restored: dict[str, list[tuple[float, float]]] = {}
         raw_temperature_samples = state.get("temperature_samples", {})
@@ -797,6 +801,24 @@ class PVClimateController:
         self._ensure_bedroom_pilots()
         for room_pilot in (self.pilot, self.office_pilot, self.speis_pilot, *self.bedroom_pilots.values()):
             room_pilot.request_takeover()
+
+    def release_room_manual_takeover(self, zone_id: str) -> bool:
+        """Give one manually held room back to V2/V1 at its next safe step."""
+        zone = next((item for item in self.config.house_zones if item.zone_id == zone_id), None)
+        if zone is None:
+            return False
+        self.command_adapter.clear_manual_override(zone.climate_entity_id)
+        self._ensure_bedroom_pilots()
+        normalized = zone.name.strip().casefold()
+        room_pilot = (
+            self.pilot if normalized == "wohnzimmer" else
+            self.office_pilot if normalized == "spielzimmer" else
+            self.speis_pilot if normalized == "speis" else
+            self.bedroom_pilots.get(zone.zone_id)
+        )
+        if room_pilot is not None:
+            room_pilot.request_takeover()
+        return True
 
     def set_bedroom_mode_enabled(self, enabled: bool) -> None:
         """Enable or pause only the scheduled sleeping-room strategy."""

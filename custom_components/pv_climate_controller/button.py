@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         LivingRoomPilotTakeoverButton(controller, entry.entry_id, "living_room_pilot_takeover"),
         OfficePilotTakeoverButton(controller, entry.entry_id, "office_pilot_takeover"),
         SpeisPilotTakeoverButton(controller, entry.entry_id, "speis_pilot_takeover"),
+        *(RoomManualTakeoverReleaseButton(controller, entry.entry_id, zone.zone_id, zone.name) for zone in controller.config.house_zones),
     ])
 
 
@@ -83,3 +84,26 @@ class SpeisPilotTakeoverButton(ControllerEntity, ButtonEntity):
 
         store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
         await _async_refresh_controller(self.hass, self.controller, store)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
+
+
+class RoomManualTakeoverReleaseButton(ControllerEntity, ButtonEntity):
+    """Explicitly return one physical-remote session to the room pilot."""
+
+    _attr_icon = "mdi:robot-happy-outline"
+
+    def __init__(self, controller, entry_id: str, zone_id: str, room_name: str) -> None:
+        super().__init__(controller, entry_id, f"{zone_id}_v2_takeover_release")
+        self._zone_id = zone_id
+        self._attr_name = f"{room_name} wieder an V2 übergeben"
+
+    async def async_press(self) -> None:
+        if not self.controller.release_room_manual_takeover(self._zone_id):
+            return
+        from . import _async_refresh_controller
+
+        store = self.hass.data[DOMAIN].get("_learning_stores", {}).get(self._entry_id)
+        await _async_refresh_controller(self.hass, self.controller, store)
+        if store is not None:
+            await store.async_save(pack(self.controller.export_learning_state()))
