@@ -278,8 +278,8 @@ def test_shadow_runner_allows_one_adjustment_for_an_already_running_room() -> No
     assert decision.approved_room_ids == ("living",)
 
 
-def test_shadow_runner_winds_down_without_pv_then_stops_after_the_v1_window() -> None:
-    """A running room must not remain at a cold target after PV is gone."""
+def test_shadow_runner_stops_promptly_once_the_relaxed_target_is_confirmed() -> None:
+    """A room must not linger at 25 °C after wind-down has taken effect."""
     base = _shadow_room(budget_w=0.0)
     no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
     snapshot = models.InputSnapshot(
@@ -304,7 +304,7 @@ def test_shadow_runner_winds_down_without_pv_then_stops_after_the_v1_window() ->
     assert candidates[0].reason_code == "pv_wind_down"
     assert plan is not None and plan.target_temperature_c == 25.0
 
-    clock[0] = 30 * 60 + 1
+    clock[0] = 2 * 60 + 1
     relaxed_target = models.V2RoomInput(
         cold_target.policy, cold_target.snapshot, cold_target.estimate, cold_target.eligibility,
         cold_target.comfort_temperature_c, cold_target.hard_max_temperature_c, cold_target.required_budget_w,

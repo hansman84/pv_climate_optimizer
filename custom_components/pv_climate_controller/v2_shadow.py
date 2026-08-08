@@ -28,6 +28,10 @@ class V2ShadowRunner:
     # itself reevaluates every minute and a two-minute window filters one
     # transient meter update without letting indoor airflow remain annoying.
     _EVENING_WIND_DOWN_S = 2 * 60
+    # Once a unit has acknowledged its relaxed ceiling, keeping it running is
+    # no longer a useful anti-cloud-gap measure.  It is effectively fan-only
+    # nuisance with no thermal advantage, so stop it promptly.
+    _RELAXED_TARGET_STOP_S = 2 * 60
     _EVENING_IRRADIANCE_W_M2 = 50.0
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
@@ -123,18 +127,20 @@ class V2ShadowRunner:
                     reason_code="pv_wind_down", reason_text="V2 übernimmt V1-Auslauf: ohne PV wird der Gerätesollwert sofort auf die sparsame Auslaufstufe angehoben.",
                     safety_override=True, target_before_c=target, target_after_c=upper,
                 )
-            if not still_needs_evening_comfort and no_pv_for_s >= wind_down_s:
+            at_relaxed_target = upper is not None and target is not None and target >= upper
+            stop_after_s = self._RELAXED_TARGET_STOP_S if at_relaxed_target else wind_down_s
+            if not still_needs_evening_comfort and no_pv_for_s >= stop_after_s:
                 return RoomCandidate(
                     policy=room.policy, action=CandidateAction.STOP, required_budget_w=0.0,
                     comfort_gap_c=0.0, confidence=room.estimate.confidence,
-                    reason_code="pv_surplus_ended", reason_text=f"V2-Auslauf: PV-Überschuss bleibt seit {int(wind_down_s // 60)} Minuten aus; die Kühlung wird beendet.",
+                    reason_code="pv_surplus_ended", reason_text=f"V2-Auslauf: PV-Überschuss bleibt seit {int(stop_after_s // 60)} Minuten aus; die Kühlung wird beendet.",
                     safety_override=True,
                 )
             return RoomCandidate(
                 policy=room.policy, action=CandidateAction.HOLD, required_budget_w=0.0,
                 comfort_gap_c=max(0.0, temperature - room.comfort_temperature_c), confidence=room.estimate.confidence,
                 reason_code="pv_wind_down_waiting",
-                reason_text=f"V2-Auslauf: ohne PV läuft das Gerät nur auf der entspannten Stufe aus und wird nach {int(wind_down_s // 60)} Minuten abgeschaltet.",
+                reason_text=f"V2-Auslauf: ohne PV läuft das Gerät nur auf der entspannten Stufe aus und wird nach {int(stop_after_s // 60)} Minuten abgeschaltet.",
             )
         # A learned incremental demand is required only to *start* a new
         # compressor load.  It must never veto a no-PV wind-down or stop of
