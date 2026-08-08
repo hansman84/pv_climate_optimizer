@@ -6,6 +6,7 @@ unknown power estimates result in an explainable HOLD, never a guessed start.
 
 from __future__ import annotations
 
+from math import floor
 from time import monotonic
 
 from .v2_models import (
@@ -173,6 +174,9 @@ class V2ShadowRunner:
             # the trajectory branch below owns the device until the forecast
             # is safe again or the configured hard cutoff arrives.
             and not room.deadline_at_risk
+            # The living-room evening start is a deadline too.  Do not wind
+            # down a calm pre-cool step shortly before occupied comfort.
+            and not room.evening_deadline_at_risk
         ):
             upper = room.pilot_max_target_temperature_c
             target = room.observed_target_temperature_c
@@ -269,13 +273,14 @@ class V2ShadowRunner:
                     )
             return V2ShadowRunner._hold(room, "comfort_holding", "V2 beobachtet weiter: die Komfortgrenze wird innerhalb von 60 Minuten nicht überschritten.")
         evening_comfort = room.evening_comfort_active
+        evening_priority = evening_comfort or room.evening_deadline_at_risk
         deadline_priority = room.deadline_at_risk
         # The living room is first in the PV allocation, not a blanket right
         # to restart a stopped compressor after sunset.  A room that has just
         # completed wind-down may only restart without surplus for the explicit
         # evening-comfort promise, a sleeping-room deadline, or the hard-limit
         # failsafe handled above.
-        if not usable_cooling_authority and not living_no_pv_comfort and room.observed_hvac_mode != "cool" and not evening_comfort and not deadline_priority:
+        if not usable_cooling_authority and not living_no_pv_comfort and room.observed_hvac_mode != "cool" and not evening_priority and not deadline_priority:
             return V2ShadowRunner._hold(
                 room,
                 "pv_start_blocked_no_surplus",
@@ -294,7 +299,7 @@ class V2ShadowRunner:
             room.observed_hvac_mode != "cool"
             and not living_room_priority
             and not living_no_pv_comfort
-            and not evening_comfort
+            and not evening_priority
             and not deadline_priority
             and pv_available
             and not normal_start_surplus_stable
@@ -317,24 +322,29 @@ class V2ShadowRunner:
                 - (1.0 if comfort_gap >= self._LIVING_NO_PV_URGENT_GAP_C else 0.0),
             )
         evening_target = None
-        if evening_comfort and room.observed_hvac_mode == "cool":
+        if evening_priority:
             # An old PV-precool target (for example 20 C) must never leak
             # into occupied evening use.  V1 immediately hands the device to
             # its evening target; V2 carries that target explicitly so the
             # planner can make the same non-aggressive transition.
-            evening_target = room.comfort_temperature_c
+            evening_target = max(
+                room.pilot_min_target_temperature_c or room.comfort_temperature_c,
+                float(floor(room.comfort_temperature_c - 0.25)),
+            )
         return RoomCandidate(
             policy=room.policy,
             action=CandidateAction.ADJUST,
             # An occupied evening promise and a hard limit may use the
             # available house capacity even when momentary export is zero.
             # They are still single, rate-limited device steps.
-            required_budget_w=0.0 if evening_comfort or telemetry_fallback_active or living_no_pv_comfort else room.required_budget_w,
+            required_budget_w=0.0 if evening_priority or telemetry_fallback_active or living_no_pv_comfort else room.required_budget_w,
             comfort_gap_c=comfort_gap,
             confidence=room.estimate.confidence,
-            reason_code=("evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_comfort_priority_no_pv" if living_no_pv_comfort else "living_room_telemetry_fallback" if telemetry_fallback_active else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
+            reason_code=("evening_comfort_deadline_risk" if room.evening_deadline_at_risk else "evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_comfort_priority_no_pv" if living_no_pv_comfort else "living_room_telemetry_fallback" if telemetry_fallback_active else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
             reason_text=(
-                "V2 Abendkomfort: der Raum wird trotz fehlendem PV-Export zur vereinbarten Komforttemperatur geführt."
+                "V2 Abendkomfort-Deadline: die belastbare Prognose würde den Zielwert zum Beginn verfehlen; V2 startet deshalb eine ruhige Vorlaufstufe mit Auto-Lüfter."
+                if room.evening_deadline_at_risk
+                else "V2 Abendkomfort: der Raum wird trotz fehlendem PV-Export zur vereinbarten Komforttemperatur geführt."
                 if evening_comfort
                 else "V2 Ersatzbetrieb: Wechselrichterdaten fehlen, aber hohe Einstrahlung und die belastbare Wohnzimmer-Prognose rechtfertigen genau eine milde Kühlstufe; außerhalb der Abendzeit."
                 if telemetry_fallback_active
@@ -342,7 +352,7 @@ class V2ShadowRunner:
                 if living_no_pv_comfort
                 else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
             ),
-            safety_override=evening_comfort or living_room_priority or deadline_priority or telemetry_fallback_active or living_no_pv_comfort,
+            safety_override=evening_priority or living_room_priority or deadline_priority or telemetry_fallback_active or living_no_pv_comfort,
             target_after_c=evening_target if evening_target is not None else living_no_pv_target if living_no_pv_target is not None else scheduled,
         )
 

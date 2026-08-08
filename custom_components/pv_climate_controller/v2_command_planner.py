@@ -50,7 +50,7 @@ class V2CommandPlanner:
             start_target = upper if upper is not None else room.observed_target_temperature_c
             if candidate.target_after_c is not None:
                 start_target = max(lower, min(upper if upper is not None else candidate.target_after_c, candidate.target_after_c))
-            if room.evening_comfort_active and lower is not None:
+            if room.evening_comfort_active and candidate.target_after_c is None and lower is not None:
                 # Evening comfort is a real temperature promise, not a
                 # permission to start at the relaxed 25 C ceiling.
                 start_target = max(lower, min(upper if upper is not None else lower, floor(room.comfort_temperature_c)))

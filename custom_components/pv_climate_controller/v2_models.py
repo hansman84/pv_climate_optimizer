@@ -159,6 +159,10 @@ class V2RoomInput:
     # Unlike ``evening_comfort_active``, this stays true for the whole
     # configured evening window, even when the room is already comfortable.
     evening_window_active: bool = False
+    # The living-room evening promise can need a short, calm lead-in before
+    # the occupied window itself begins.  It is deliberately distinct from
+    # the active-window flag so ordinary daytime PV policy remains unchanged.
+    evening_deadline_at_risk: bool = False
     scheduled_target_temperature_c: float | None = None
     deadline_at_risk: bool = False
     solar_irradiance_w_m2: float | None = None

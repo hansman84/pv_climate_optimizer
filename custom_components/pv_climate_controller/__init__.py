@@ -541,6 +541,10 @@ def _v2_room_inputs(
             ),
             evening_comfort_active=evening_comfort_active,
             evening_window_active=evening_window_active,
+            evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
+                controller, zone.name, local_now.time(),
+                contextual_forecast.predicted_temperature_60m_c,
+            ),
             scheduled_target_temperature_c=_v2_sleeping_room_device_target(
                 controller, zone.name, local_now, effective_comfort_temperature,
                 contextual_forecast.predicted_temperature_60m_c,
@@ -674,6 +678,30 @@ def _v2_living_evening_window_active(
     start = _v2_schedule_time(controller.config.living_evening_start_time, time(20, 30))
     end = _v2_schedule_time(controller.config.living_evening_end_time, time(23, 30))
     return start <= local_time < end if start <= end else local_time >= start or local_time < end
+
+
+def _v2_living_evening_deadline_at_risk(
+    controller: PVClimateController,
+    zone_name: str,
+    local_time: time,
+    forecast_c: float | None,
+) -> bool:
+    """Start a calm living-room lead-in when the evening promise would slip.
+
+    The configured start is a comfort deadline, not the first instant at
+    which cooling becomes permissible.  One hour is enough for a single,
+    low-noise device step while avoiding a late-afternoon full-power action.
+    """
+    if zone_name.strip().casefold() != "wohnzimmer" or forecast_c is None:
+        return False
+    start = _v2_schedule_time(controller.config.living_evening_start_time, time(20, 30))
+    now_minutes = local_time.hour * 60 + local_time.minute
+    start_minutes = start.hour * 60 + start.minute
+    lead_in_active = start_minutes - 60 <= now_minutes < start_minutes
+    return (
+        lead_in_active
+        and forecast_c > controller.config.living_evening_comfort_temperature + 0.25
+    )
 
 
 def _v2_schedule_time(value: str, fallback: time) -> time:
