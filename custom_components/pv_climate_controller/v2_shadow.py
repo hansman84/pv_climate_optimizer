@@ -61,6 +61,16 @@ class V2ShadowRunner:
         self._pv_missing_since: dict[str, float] = {}
         self._pv_available_since: dict[str, float] = {}
 
+    def reset_room_wind_down(self, room_id: str) -> None:
+        """Begin a newly adopted room's PV observation window from zero.
+
+        A manual session can outlive the old PV surplus by hours.  Returning
+        that still-running unit to V2 must not inherit the old no-PV timer and
+        immediately send a stop; V2 first observes it at its relaxed target.
+        """
+        self._pv_missing_since.pop(room_id, None)
+        self._pv_available_since.pop(room_id, None)
+
     def evaluate(self, rooms: tuple[V2RoomInput, ...], *, available_budget_w: float) -> tuple[tuple[RoomCandidate, ...], HouseDecision]:
         candidates = tuple(self._candidate(room) for room in rooms)
         decision = self._coordinator.decide(candidates, available_budget_w=available_budget_w)

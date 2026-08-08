@@ -808,6 +808,10 @@ class PVClimateController:
         if zone is None:
             return False
         self.command_adapter.clear_manual_override(zone.climate_entity_id)
+        # A room returned from manual control is a new V2 ownership session.
+        # Do not apply a stale no-PV timer from before that manual session;
+        # first use the normal quiet wind-down observation window.
+        self.v2_shadow_runner.reset_room_wind_down(zone.zone_id)
         self._ensure_bedroom_pilots()
         normalized = zone.name.strip().casefold()
         room_pilot = (

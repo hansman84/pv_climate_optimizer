@@ -259,8 +259,10 @@ def test_room_manual_takeover_can_be_released_and_survives_controller_restart() 
     restored.restore_learning_state(original.export_learning_state())
 
     assert restored.command_adapter.is_manual_override("climate.child")
+    restored.v2_shadow_runner._pv_missing_since["child"] = 1.0
     assert restored.release_room_manual_takeover("child")
     assert not restored.command_adapter.is_manual_override("climate.child")
+    assert "child" not in restored.v2_shadow_runner._pv_missing_since
 
 
 def test_v2_command_uses_the_existing_adapter_only_after_v2_authority() -> None:

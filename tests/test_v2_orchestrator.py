@@ -318,6 +318,35 @@ def test_shadow_runner_stops_promptly_once_the_relaxed_target_is_confirmed() -> 
     assert decision.approved_room_ids == ("living",)
 
 
+def test_shadow_runner_restarts_wind_down_timer_when_a_room_is_returned_to_v2() -> None:
+    """Manual handover must not inherit a stale no-PV stop deadline."""
+    base = _shadow_room(budget_w=0.0)
+    no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        no_pv, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    runner.evaluate((room,), available_budget_w=0.0)
+    clock[0] = 2 * 60 + 1
+
+    assert runner.evaluate((room,), available_budget_w=0.0)[0][0].reason_code == "pv_surplus_ended"
+
+    runner.reset_room_wind_down("living")
+
+    assert runner.evaluate((room,), available_budget_w=0.0)[0][0].reason_code == "pv_wind_down_waiting"
+
+
 def test_shadow_runner_winds_down_without_pv_even_before_power_learning_is_complete() -> None:
     """Unknown demand can block a start, never trap a running unit after sunset."""
     base = _shadow_room(budget_w=None)
