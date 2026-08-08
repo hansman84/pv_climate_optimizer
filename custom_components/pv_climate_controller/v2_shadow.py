@@ -39,6 +39,15 @@ class V2ShadowRunner:
     _TELEMETRY_FALLBACK_IRRADIANCE_W_M2 = 250.0
     _TELEMETRY_FALLBACK_COMFORT_GAP_C = 0.4
     _TELEMETRY_FALLBACK_MIN_CONFIDENCE = 0.5
+    # The living room is the household's occupied comfort priority.  A valid
+    # zero export therefore does not force it to overheat on a bright day:
+    # V2 may first hold the room at its comfort target using the inverter's
+    # own gentle modulation.  A second, cooler target step is reserved for a
+    # clearly larger predicted breach.  This exception is never active in the
+    # configured evening window; evening comfort keeps its separate promise.
+    _LIVING_NO_PV_MIN_IRRADIANCE_W_M2 = 100.0
+    _LIVING_NO_PV_COMFORT_GAP_C = 0.4
+    _LIVING_NO_PV_URGENT_GAP_C = 1.0
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()
@@ -115,6 +124,19 @@ class V2ShadowRunner:
             and room.estimate.confidence >= self._TELEMETRY_FALLBACK_MIN_CONFIDENCE
             and predicted - room.comfort_temperature_c >= self._TELEMETRY_FALLBACK_COMFORT_GAP_C
         )
+        living_no_pv_comfort = (
+            # This is deliberately a real, observed zero-export policy.  A
+            # failed meter has its own separately labelled fallback above.
+            room.snapshot.pv_export_w.is_valid
+            and not pv_available
+            and room.policy.display_name.strip().casefold() == "wohnzimmer"
+            and not room.evening_window_active
+            and room.solar_irradiance_w_m2 is not None
+            and room.solar_irradiance_w_m2 >= self._LIVING_NO_PV_MIN_IRRADIANCE_W_M2
+            and predicted is not None
+            and room.estimate.confidence >= self._TELEMETRY_FALLBACK_MIN_CONFIDENCE
+            and predicted - room.comfort_temperature_c >= self._LIVING_NO_PV_COMFORT_GAP_C
+        )
         usable_cooling_authority = pv_available or telemetry_fallback_active
         now = self._clock()
         if usable_cooling_authority:
@@ -132,6 +154,10 @@ class V2ShadowRunner:
             and not usable_cooling_authority
             and temperature is not None
             and temperature < room.hard_max_temperature_c
+            # The daytime living-room comfort priority owns the unit while a
+            # bright-day forecast still exceeds comfort.  Once that forecast
+            # recovers, this branch resumes the normal no-PV wind-down.
+            and not living_no_pv_comfort
             # A sleeping-room deadline is a comfort promise.  Once it is at
             # risk, do not oscillate between no-PV stop and a deadline start;
             # the trajectory branch below owns the device until the forecast
@@ -239,7 +265,7 @@ class V2ShadowRunner:
         # completed wind-down may only restart without surplus for the explicit
         # evening-comfort promise, a sleeping-room deadline, or the hard-limit
         # failsafe handled above.
-        if not usable_cooling_authority and room.observed_hvac_mode != "cool" and not evening_comfort and not deadline_priority:
+        if not usable_cooling_authority and not living_no_pv_comfort and room.observed_hvac_mode != "cool" and not evening_comfort and not deadline_priority:
             return V2ShadowRunner._hold(
                 room,
                 "pv_start_blocked_no_surplus",
@@ -250,6 +276,17 @@ class V2ShadowRunner:
             and comfort_gap >= 0.4
             and usable_cooling_authority
         )
+        living_no_pv_target = None
+        if living_no_pv_comfort:
+            # At the first level, use the comfort target itself.  The indoor
+            # unit stays in Auto fan mode and can modulate quietly instead of
+            # receiving a binary full-power request.  Only a forecast more
+            # than 1 C above comfort earns one additional cooling degree.
+            living_no_pv_target = max(
+                room.pilot_min_target_temperature_c or room.comfort_temperature_c,
+                float(int(room.comfort_temperature_c))
+                - (1.0 if comfort_gap >= self._LIVING_NO_PV_URGENT_GAP_C else 0.0),
+            )
         evening_target = None
         if evening_comfort and room.observed_hvac_mode == "cool":
             # An old PV-precool target (for example 20 C) must never leak
@@ -263,19 +300,21 @@ class V2ShadowRunner:
             # An occupied evening promise and a hard limit may use the
             # available house capacity even when momentary export is zero.
             # They are still single, rate-limited device steps.
-            required_budget_w=0.0 if evening_comfort or telemetry_fallback_active else room.required_budget_w,
+            required_budget_w=0.0 if evening_comfort or telemetry_fallback_active or living_no_pv_comfort else room.required_budget_w,
             comfort_gap_c=comfort_gap,
             confidence=room.estimate.confidence,
-            reason_code=("evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_telemetry_fallback" if telemetry_fallback_active else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
+            reason_code=("evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_comfort_priority_no_pv" if living_no_pv_comfort else "living_room_telemetry_fallback" if telemetry_fallback_active else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),
             reason_text=(
                 "V2 Abendkomfort: der Raum wird trotz fehlendem PV-Export zur vereinbarten Komforttemperatur geführt."
                 if evening_comfort
                 else "V2 Ersatzbetrieb: Wechselrichterdaten fehlen, aber hohe Einstrahlung und die belastbare Wohnzimmer-Prognose rechtfertigen genau eine milde Kühlstufe; außerhalb der Abendzeit."
                 if telemetry_fallback_active
+                else "V2 Wohnzimmer-Priorität: trotz aktuell fehlender Einspeisung wird eine prognostizierte Komfortüberschreitung tagsüber mit einer milden, Auto-geregelten Stufe abgefangen."
+                if living_no_pv_comfort
                 else "V2 Shadow: Prognose zeigt eine vermeidbare Komfortüberschreitung; eine sanfte Stufe wird angefragt."
             ),
-            safety_override=evening_comfort or living_room_priority or deadline_priority or telemetry_fallback_active,
-            target_after_c=evening_target if evening_target is not None else scheduled,
+            safety_override=evening_comfort or living_room_priority or deadline_priority or telemetry_fallback_active or living_no_pv_comfort,
+            target_after_c=evening_target if evening_target is not None else living_no_pv_target if living_no_pv_target is not None else scheduled,
         )
 
     @staticmethod
