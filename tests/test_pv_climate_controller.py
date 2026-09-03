@@ -627,6 +627,30 @@ def test_reentrant_state_callback_cannot_issue_a_second_command_before_the_first
     assert nested_results[0].status == "deferred"
 
 
+def test_urgent_stop_supersedes_an_unacknowledged_adjustment_at_room_cutoff() -> None:
+    """A quiet-time stop must not wait forever for a cloud target echo."""
+    clock = Clock()
+    calls = []
+
+    async def fake_executor(command):
+        calls.append(command)
+        return True
+
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock,
+        global_interval_s=0, per_entity_interval_s=300,
+    )
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.child", "pilot_adjust", 25.0), fake_executor,
+    )).status == "sent"
+
+    assert asyncio.run(command_adapter.async_request(
+        adapter.Command("climate.child", "pilot_stop", urgent=True), fake_executor,
+    )).status == "sent"
+    assert [command.action for command in calls] == ["pilot_adjust", "pilot_stop"]
+    assert "command_ack_pending" in command_adapter.handoff_blockers("climate.child")
+
+
 def test_urgent_command_does_not_bypass_pending_device_confirmation() -> None:
     clock = Clock()
     calls = []

@@ -258,8 +258,17 @@ class ClimateCommandAdapter:
             return CommandResult("backoff", "Gerät befindet sich nach Fehler in Backoff.")
         if self._last_signature.get(command.entity_id) == command.signature:
             return CommandResult("noop", "Identischer bestätigter Befehl wird nicht wiederholt.")
-        if command.entity_id in self._pending:
-            return CommandResult("deferred", "Gerätebestätigung für den vorherigen Befehl steht noch aus.")
+        pending = self._pending.get(command.entity_id)
+        if pending is not None:
+            # A pending cloud echo for a setpoint/start must never keep a room
+            # running past its explicit quiet-time cutoff.  ``pilot_stop`` is
+            # idempotent and safer than the still-unconfirmed cooling command;
+            # it replaces only a different pending command.  A duplicate stop
+            # remains deferred until the device confirms ``off``.
+            if command.action == "pilot_stop" and pending[0][1] != "pilot_stop":
+                self._pending.pop(command.entity_id, None)
+            else:
+                return CommandResult("deferred", "Gerätebestätigung für den vorherigen Befehl steht noch aus.")
         if not command.batch_window and self._last_global_at is not None and now - self._last_global_at < self._global_interval_s:
             return CommandResult("deferred", "Globales Befehlsintervall noch nicht erreicht.")
         if not command.urgent and now - self._last_entity_at.get(command.entity_id, float("-inf")) < self._per_entity_interval_s:
