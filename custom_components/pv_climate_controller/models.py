@@ -126,6 +126,11 @@ class ControllerConfig:
     living_evening_comfort_temperature: float = 24.5
     living_evening_start_time: str = "20:30"
     living_evening_end_time: str = "23:30"
+    weather_forecast_entity_id: str | None = None
+    outdoor_relaxation_band_c: float = 1.5
+    outdoor_no_active_cooling_c: float = 0.5
+    outdoor_rain_hold_probability_pct: float = 60.0
+    outdoor_pv_boost_extra_w: float = 2000.0
     solar_irradiance_entity_id: str | None = None
     sun_entity_id: str | None = None
     bedroom_mode_enabled: bool = True

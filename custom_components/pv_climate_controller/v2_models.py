@@ -156,6 +156,7 @@ class V2RoomInput:
     observed_fan_mode: str | None = None
     supported_fan_modes: tuple[str, ...] = ()
     evening_comfort_active: bool = False
+    outdoor_cooling_gate: object = None  # optional OutdoorGateDecision or None
     # Unlike ``evening_comfort_active``, this stays true for the whole
     # configured evening window, even when the room is already comfortable.
     evening_window_active: bool = False

@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ControllerStateSensor(controller, entry.entry_id, "controller_state"),
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
         PilotActionSensor(controller, entry.entry_id, "pilot_action"),
+        WohnzimmerOutdoorCoolingGateSensor(controller, entry.entry_id, "wohnzimmer_outdoor_cooling_gate"),
         LivingRoomOutdoorComfortSensor(controller, entry.entry_id, "living_room_outdoor_comfort"),
         BedroomOutdoorComfortSensor(controller, entry.entry_id, "bedroom_outdoor_comfort"),
         OfficePilotActionSensor(controller, entry.entry_id, "office_pilot_action"),
@@ -303,6 +304,68 @@ class PilotActionSensor(ControllerEntity, SensorEntity):
             "comfort_temperature_c": None if zone is None else zone.comfort_temperature,
             "hard_temperature_limit_c": None if zone is None else zone.hard_max_temperature,
             "effective_comfort_temperature_c": self.controller.effective_living_room_comfort_temperature,
+        }
+
+
+async def _async_update_wohnzimmer_weather_forecast(hass, weather_entity_id: str) -> None:
+    """Refresh the visible forecast list of the configured weather entity.
+
+    The outdoor cooling gate reads the live state and ``attributes.forecast``.
+    HA weather integrations that publish only hourly entries normally refresh
+    those entries on a 15-minute cadence.  This helper explicitly requests a
+    forecast refresh via the official ``weather.get_forecasts`` service so the
+    gate never depends on a passive cache hit.  Failures are logged and
+    silently tolerated: missing data simply keeps the gate in its conservative
+    state.
+    """
+    if not weather_entity_id:
+        return
+    try:
+        await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": weather_entity_id, "type": "hourly"},
+            blocking=False,
+            return_response=False,
+        )
+    except Exception:  # noqa: BLE001 - logging only; gate must keep working
+        _LOGGER.debug("wohnzimmer outdoor cooling gate: forecast refresh failed", exc_info=True)
+
+
+class WohnzimmerOutdoorCoolingGateSensor(ControllerEntity, SensorEntity):
+    """Transparent Wohnzimmer weather/forecast gate, read-only, never a command."""
+
+    _attr_name = "Wohnzimmer-Außenkühl-Gate"
+    _attr_icon = "mdi:weather-partly-cloudy"
+
+    @property
+    def native_value(self) -> str:
+        status = self.controller.living_room_outdoor_cooling_gate_status()
+        if status is None:
+            return "kein Wetter-Gate konfiguriert"
+        return str(status["decision"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        status = self.controller.living_room_outdoor_cooling_gate_status()
+        if status is None:
+            return {
+                "source_entity_id": None,
+                "decision": None,
+                "reason_code": None,
+                "reason_text": None,
+                "relaxation_target_c": None,
+                "today_max_outdoor_c": None,
+                "gates": None,
+            }
+        return {
+            "source_entity_id": status.get("source_entity_id"),
+            "decision": status.get("decision"),
+            "reason_code": status.get("reason_code"),
+            "reason_text": status.get("reason_text"),
+            "relaxation_target_c": status.get("relaxation_target_c"),
+            "today_max_outdoor_c": status.get("today_max_outdoor_c"),
+            "gates": status.get("gates"),
         }
 
 

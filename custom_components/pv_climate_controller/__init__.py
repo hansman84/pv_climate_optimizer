@@ -232,9 +232,18 @@ async def _async_refresh_controller(
             if state[1] not in {"unknown", "unavailable"}
         })
     controller.evaluate_house(house_states, contexts)
+    if config.v2_shadow_enabled and getattr(config, "weather_forecast_entity_id", None):
+        # Refresh the visible forecast list every coordinator tick.  HA weather
+        # integrations are rate-limited, the call is fire-and-forget, and
+        # missing data simply leaves the gate in its conservative state.
+        from .sensor import _async_update_wohnzimmer_weather_forecast
+        hass.async_create_task(
+            _async_update_wohnzimmer_weather_forecast(hass, config.weather_forecast_entity_id)
+        )
     if config.v2_shadow_enabled:
+        gate_decision = _v2_outdoor_cooling_gate(hass, controller, house_states)
         controller.evaluate_v2_shadow(
-            _v2_room_inputs(hass, controller, house_states, contexts),
+            _v2_room_inputs(hass, controller, house_states, contexts, outdoor_cooling_gate=gate_decision),
             # V2 cannot treat total PV as capacity.  Until a V2 house-budget
             # source is configured, only observed positive export is exposed
             # as an upper bound and unknown room power keeps every candidate
@@ -420,11 +429,52 @@ def _temperature_value(value: object) -> float | None:
         return None
 
 
+
+def _v2_outdoor_cooling_gate(
+    hass: HomeAssistant,
+    controller: PVClimateController,
+    house_states: dict,
+) -> object:
+    """Resolve the Wohnzimmer outdoor cooling gate for the current tick.
+
+    Returns the gate's :class:`OutdoorGateDecision` or ``None`` when the
+    controller has no weather entity configured or the live state is missing.
+    The decision is only meaningful for the Wohnzimmer zone; the shadow runner
+    applies it as a transparent hold and leaves all other V2 reasoning intact.
+    """
+    weather_entity_id = getattr(controller.config, "weather_forecast_entity_id", None)
+    if not weather_entity_id:
+        return None
+    weather_state = hass.states.get(weather_entity_id)
+    if weather_state is None:
+        return None
+    living_zone = next(
+        (zone for zone in controller.config.house_zones
+         if zone.name.strip().casefold() == "wohnzimmer"),
+        None,
+    )
+    if living_zone is None:
+        return None
+    sample = house_states.get(living_zone.zone_id)
+    room_temperature_c = sample[0].temperature_c if sample is not None else None
+    pv_forecast_w = controller.last_energy.pv_forecast_power_w
+    result = controller.evaluate_outdoor_cooling_gate(
+        weather_state,
+        room_temperature_c=room_temperature_c,
+        pv_forecast_w=pv_forecast_w,
+    )
+    if result is None:
+        return None
+    decision, _snapshot = result
+    return decision
+
+
 def _v2_room_inputs(
     hass: HomeAssistant,
     controller: PVClimateController,
     house_states: dict,
     contexts: dict[str, dict[str, object]] | None = None,
+    outdoor_cooling_gate: object = None,
 ) -> tuple[V2RoomInput, ...]:
     """Build V2's read-only inputs from the same explicit zone sources as V1.
 
@@ -481,7 +531,7 @@ def _v2_room_inputs(
             eligibility = EligibilityDecision(False, "cooling_season_inactive", "V2 Shadow: automatische Kühlung ist außerhalb der Saison gesperrt.")
         else:
             eligibility = _v2_bedroom_schedule_eligibility(controller, zone.name, local_now.time())
-        result.append(V2RoomInput(
+                built = V2RoomInput(
             # The visible room priority is the house-level commitment: a
             # larger configured value is more important (Wohnzimmer 91,
             # Kinderzimmer 76, ...).  V2's coordinator uses lower numbers
@@ -588,7 +638,9 @@ def _v2_room_inputs(
                 else None
             ),
             pv_surplus_threshold_w=controller.config.min_pv_surplus_w,
-        ))
+        )
+        result.append(replace(built, outdoor_cooling_gate=outdoor_cooling_gate))
+)
     return tuple(result)
 
 

@@ -8,9 +8,10 @@ from datetime import datetime, time
 from time import monotonic
 
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy, CONF_OUTDOOR_NO_ACTIVE_COOLING_C, CONF_OUTDOOR_PV_BOOST_EXTRA_W, CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, CONF_OUTDOOR_RELAXATION_BAND_C, CONF_WEATHER_FORECAST_ENTITY_ID
 from .ems_adapter import parse_grant, requested_stages
 from .evaluator import evaluate_zone
+from .outdoor_cooling_snapshot import build_outdoor_cooling_inputs
 from .forecasting import predicted_temperature_60m, temperature_trend_c_per_h
 from .house import HousePlan, ZoneTelemetry, build_house_plan
 from .house_learning import HouseLearningModel
@@ -113,6 +114,10 @@ class PVClimateController:
     _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
     _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = field(default_factory=dict)
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
+    last_outdoor_gate_decision: object = None
+    last_outdoor_gate_snapshot: object = None
+    last_outdoor_gate_evaluated_at: float | None = None
+    last_outdoor_gate_source_entity_id: str | None = None
     power_learner: OutdoorPowerLearner = field(default_factory=OutdoorPowerLearner)
     last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
     house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
@@ -222,6 +227,11 @@ class PVClimateController:
             bedroom_quiet_enabled=bool(options.get(CONF_BEDROOM_QUIET_ENABLED, data.get(CONF_BEDROOM_QUIET_ENABLED, True))),
             bedroom_quiet_time=str(options.get(CONF_BEDROOM_QUIET_TIME, data.get(CONF_BEDROOM_QUIET_TIME, "18:30"))),
             bedroom_target_temperature=float(options.get(CONF_BEDROOM_TARGET_TEMPERATURE, data.get(CONF_BEDROOM_TARGET_TEMPERATURE, 22.5))),
+            weather_forecast_entity_id=_optional_entity(options, data, CONF_WEATHER_FORECAST_ENTITY_ID),
+            outdoor_relaxation_band_c=float(options.get(CONF_OUTDOOR_RELAXATION_BAND_C, data.get(CONF_OUTDOOR_RELAXATION_BAND_C, 1.5))),
+            outdoor_no_active_cooling_c=float(options.get(CONF_OUTDOOR_NO_ACTIVE_COOLING_C, data.get(CONF_OUTDOOR_NO_ACTIVE_COOLING_C, 0.5))),
+            outdoor_rain_hold_probability_pct=float(options.get(CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, data.get(CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, 60.0))),
+            outdoor_pv_boost_extra_w=float(options.get(CONF_OUTDOOR_PV_BOOST_EXTRA_W, data.get(CONF_OUTDOOR_PV_BOOST_EXTRA_W, 2000.0))),
         )
         if config.v2_house_control_enabled:
             v2_zones = tuple(replace(item, pilot_enabled=False) for item in config.house_zones)
@@ -1086,6 +1096,55 @@ class PVClimateController:
             self.effective_living_room_comfort_temperature = candidate
             self.outdoor_comfort_candidate_since = None
         return replace(zone, comfort_temperature=self.effective_living_room_comfort_temperature)
+
+    def evaluate_outdoor_cooling_gate(self, weather_state, *, room_temperature_c: float | None, pv_forecast_w: float | None) -> object:
+        """Evaluate the outdoor cooling gate for the Wohnzimmer pilot.
+
+        Returns a tuple ``(decision, snapshot)`` where ``decision`` is the
+        pure :class:`OutdoorGateDecision` and ``snapshot`` carries the field
+        provenance for the dashboard.  Both are ``None`` only if the gate
+        itself cannot be constructed.
+        """
+        from time import monotonic as _monotonic
+        from .outdoor_cooling_gate import evaluate_outdoor_cooling_gate as _eval
+
+        if weather_state is None or self.config.weather_forecast_entity_id is None:
+            return None
+        if weather_state.entity_id != self.config.weather_forecast_entity_id:
+            # We are not the source of truth; a newer coordinator tick owns it.
+            return None
+        snapshot = build_outdoor_cooling_inputs(
+            weather_state=weather_state,
+            room_temperature_c=room_temperature_c,
+            comfort_temperature_c=self.config.living_evening_comfort_temperature,
+            relaxation_band_c=self.config.outdoor_relaxation_band_c,
+            no_active_cooling_c=self.config.outdoor_no_active_cooling_c,
+            rain_hold_probability_pct=self.config.outdoor_rain_hold_probability_pct,
+            pv_forecast_w=pv_forecast_w,
+            pv_boost_extra_w=self.config.outdoor_pv_boost_extra_w,
+        )
+        if snapshot.inputs is None:
+            return None
+        decision = _eval(snapshot.inputs)
+        self.last_outdoor_gate_decision = decision
+        self.last_outdoor_gate_evaluated_at = _monotonic()
+        self.last_outdoor_gate_source_entity_id = self.config.weather_forecast_entity_id
+        return decision, snapshot
+
+    def living_room_outdoor_cooling_gate_status(self) -> dict[str, object] | None:
+        """Read-only view of the most recent gate decision for the dashboard."""
+        decision = self.last_outdoor_gate_decision
+        if decision is None:
+            return None
+        return {
+            "decision": decision.decision,
+            "reason_code": decision.reason_code,
+            "reason_text": decision.reason_text,
+            "relaxation_target_c": decision.relaxation_target_c,
+            "today_max_outdoor_c": decision.today_max_outdoor_c,
+            "gates": decision.gates,
+            "source_entity_id": self.last_outdoor_gate_source_entity_id,
+        }
 
     def living_room_outdoor_comfort_status(self) -> dict[str, float | int | str | None]:
         """Return the complete, dashboard-friendly state of the comfort profile."""

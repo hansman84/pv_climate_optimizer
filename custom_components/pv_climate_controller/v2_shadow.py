@@ -77,6 +77,34 @@ class V2ShadowRunner:
         return candidates, decision
 
     def _candidate(self, room: V2RoomInput) -> RoomCandidate:
+        # The outdoor cooling gate is a transparent, weather-aware pause that
+        # lives between the hard failsafe and the bedroom quiet-time handling.
+        # The hard failsafe, manual takeover and bedroom rules are unaffected;
+        # this only suppresses normal comfort starts while keeping all other
+        # V2 reasoning visible.
+        gate = getattr(room, "outdoor_cooling_gate", None)
+        if gate is not None and getattr(gate, "decision", None) == "hold":
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.HOLD,
+                required_budget_w=0.0,
+                comfort_gap_c=0.0,
+                confidence=room.estimate.confidence,
+                reason_code="outdoor_cooling_gate_hold",
+                reason_text=f"V2 Outdoor-Cooling-Gate hält: {gate.reason_text}",
+                safety_override=False,
+            )
+        if gate is not None and getattr(gate, "decision", None) == "rain_hold":
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.HOLD,
+                required_budget_w=0.0,
+                comfort_gap_c=0.0,
+                confidence=room.estimate.confidence,
+                reason_code="outdoor_cooling_gate_rain_hold",
+                reason_text=f"V2 Outdoor-Cooling-Gate: {gate.reason_text}",
+                safety_override=False,
+            )
         if room.eligibility.reason_code in {"bedroom_schedule_pending", "bedroom_quiet_time"}:
             if room.observed_hvac_mode == "cool":
                 return RoomCandidate(
