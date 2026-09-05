@@ -531,7 +531,7 @@ def _v2_room_inputs(
             eligibility = EligibilityDecision(False, "cooling_season_inactive", "V2 Shadow: automatische Kühlung ist außerhalb der Saison gesperrt.")
         else:
             eligibility = _v2_bedroom_schedule_eligibility(controller, zone.name, local_now.time())
-                built = V2RoomInput(
+        built = V2RoomInput(
             # The visible room priority is the house-level commitment: a
             # larger configured value is more important (Wohnzimmer 91,
             # Kinderzimmer 76, ...).  V2's coordinator uses lower numbers
@@ -640,7 +640,6 @@ def _v2_room_inputs(
             pv_surplus_threshold_w=controller.config.min_pv_surplus_w,
         )
         result.append(replace(built, outdoor_cooling_gate=outdoor_cooling_gate))
-)
     return tuple(result)
 
 
