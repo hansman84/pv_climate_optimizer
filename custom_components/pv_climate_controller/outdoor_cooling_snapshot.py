@@ -41,6 +41,7 @@ def build_outdoor_cooling_inputs(
     rain_hold_probability_pct: float,
     pv_forecast_w: float | None,
     pv_boost_extra_w: float,
+    forecast_hours: tuple[dict[str, Any], ...] | None = None,
 ) -> OutdoorCoolingSnapshot:
     """Build the gate inputs from raw HA values, never raising."""
 
@@ -53,9 +54,18 @@ def build_outdoor_cooling_inputs(
     cloud = _float_or_none(attributes.get("cloud_coverage"))
 
     forecast_hours_raw: list[dict[str, Any]] = []
-    forecast = attributes.get("forecast")
-    if isinstance(forecast, list):
-        for entry in forecast[:48]:
+    # Prefer the hourly forecast explicitly fetched via ``weather.get_forecasts``
+    # (controller cache).  Fall back to a weather entity that publishes
+    # ``attributes.forecast`` itself — non-standard, but kept for compatibility.
+    raw_forecast: Any = None
+    if forecast_hours:
+        raw_forecast = forecast_hours
+    else:
+        attributes_forecast = attributes.get("forecast")
+        if isinstance(attributes_forecast, list):
+            raw_forecast = attributes_forecast
+    if isinstance(raw_forecast, (list, tuple)):
+        for entry in raw_forecast[:48]:
             if not isinstance(entry, dict):
                 continue
             forecast_hours_raw.append(
@@ -91,8 +101,10 @@ def build_outdoor_cooling_inputs(
 
     if not forecast_hours_raw:
         field_provenance["forecast"] = "weather_forecast_missing"
+    elif forecast_hours:
+        field_provenance["forecast"] = f"weather_forecast_service_{len(forecast_hours_raw)}h"
     else:
-        field_provenance["forecast"] = f"weather_forecast_fresh_{len(forecast_hours_raw)}h"
+        field_provenance["forecast"] = f"weather_forecast_attributes_{len(forecast_hours_raw)}h"
 
     if pv_forecast_w is None:
         field_provenance["pv_forecast_w"] = "pv_forecast_missing"

@@ -60,7 +60,7 @@ def test_snapshot_with_forecast_returns_filled_inputs() -> None:
     assert snap.inputs is not None
     assert snap.inputs.live.temperature_c == 22.0
     assert snap.inputs.forecast.hours[0]["temperature"] == 28.0
-    assert snap.field_provenance["forecast"] == "weather_forecast_fresh_2h"
+    assert snap.field_provenance["forecast"] == "weather_forecast_attributes_2h"
     decision = gate.evaluate_outdoor_cooling_gate(snap.inputs)
     assert decision.decision == "pv_boosted"
 
@@ -83,3 +83,63 @@ def test_snapshot_without_weather_state_returns_provenance() -> None:
     # Without any source the gate must not invent a value: it falls back to
     # the conservative comfort-active state.
     assert decision.decision in {"comfort", "hold"}
+
+
+def test_snapshot_prefers_service_forecast_hours_over_attributes() -> None:
+    state = _FakeState(
+        "weather.test",
+        {
+            "temperature": 22.0,
+            "forecast": [
+                {"datetime": "2026-09-04T10:00:00", "temperature": 30.0},
+            ],
+        },
+    )
+    snap = snapshot_module.build_outdoor_cooling_inputs(
+        weather_state=state,
+        room_temperature_c=24.0,
+        comfort_temperature_c=23.5,
+        relaxation_band_c=1.5,
+        no_active_cooling_c=0.5,
+        rain_hold_probability_pct=60.0,
+        pv_forecast_w=None,
+        pv_boost_extra_w=2000.0,
+        forecast_hours=(
+            {"datetime": "2026-09-04T09:00:00", "temperature": 21.0},
+            {"datetime": "2026-09-04T10:00:00", "temperature": 22.0},
+        ),
+    )
+    assert snap.inputs is not None
+    # Service-provided hours win over attributes.forecast.
+    assert snap.inputs.forecast.hours[0]["temperature"] == 21.0
+    assert len(snap.inputs.forecast.hours) == 2
+    assert snap.field_provenance["forecast"] == "weather_forecast_service_2h"
+
+
+def test_service_forecast_hours_enable_mild_day_hold() -> None:
+    """A mild today-maximum from the service forecast must hold the room."""
+    state = _FakeState(
+        "weather.test",
+        {
+            "temperature": 21.0,
+        },
+    )
+    snap = snapshot_module.build_outdoor_cooling_inputs(
+        weather_state=state,
+        room_temperature_c=24.0,
+        comfort_temperature_c=23.5,
+        relaxation_band_c=1.5,
+        no_active_cooling_c=0.5,
+        rain_hold_probability_pct=60.0,
+        pv_forecast_w=3000.0,
+        pv_boost_extra_w=2000.0,
+        forecast_hours=(
+            {"datetime": "2026-09-04T12:00:00", "temperature": 21.0},
+            {"datetime": "2026-09-04T13:00:00", "temperature": 22.0},
+            {"datetime": "2026-09-04T14:00:00", "temperature": 22.5},
+        ),
+    )
+    assert snap.inputs is not None
+    decision = gate.evaluate_outdoor_cooling_gate(snap.inputs)
+    assert decision.decision == "hold"
+    assert decision.gates["today_cool_enough"] is True

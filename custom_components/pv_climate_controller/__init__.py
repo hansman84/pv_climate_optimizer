@@ -234,13 +234,10 @@ async def _async_refresh_controller(
         })
     controller.evaluate_house(house_states, contexts)
     if config.v2_shadow_enabled and getattr(config, "weather_forecast_entity_id", None):
-        # Refresh the visible forecast list every coordinator tick.  HA weather
-        # integrations are rate-limited, the call is fire-and-forget, and
-        # missing data simply leaves the gate in its conservative state.
-        from .sensor import _async_update_wohnzimmer_weather_forecast
-        hass.async_create_task(
-            _async_update_wohnzimmer_weather_forecast(hass, config.weather_forecast_entity_id)
-        )
+        # Fetch the hourly forecast via weather.get_forecasts (throttled) so
+        # the gate sees a real today-maximum; HA does not expose forecasts in
+        # state attributes.
+        await _async_refresh_outdoor_forecast(hass, controller, config.weather_forecast_entity_id)
     if config.v2_shadow_enabled:
         gate_decision = _v2_outdoor_cooling_gate(hass, controller, house_states)
         controller.evaluate_v2_shadow(
@@ -429,6 +426,48 @@ def _temperature_value(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
+
+async def _async_refresh_outdoor_forecast(
+    hass: HomeAssistant,
+    controller: PVClimateController,
+    weather_entity_id: str | None,
+) -> None:
+    """Fetch hourly forecast hours for the gate via ``weather.get_forecasts``.
+
+    Throttled to one successful fetch per 15 minutes.  Failures (rate limits,
+    unsupported providers, timeouts) are silent: the gate keeps its previous
+    cache or falls back to its conservative missing-forecast state.
+    """
+    from time import monotonic
+
+    if not weather_entity_id:
+        return
+    last = controller.last_outdoor_forecast_fetched_at
+    if last is not None and monotonic() - last < 15 * 60:
+        return
+    try:
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": weather_entity_id, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+    except Exception:  # noqa: BLE001 - gate must keep working; silent by design
+        return
+    hours: list[dict] = []
+    if isinstance(response, dict):
+        entry = response.get(weather_entity_id)
+        if isinstance(entry, dict):
+            forecast = entry.get("forecast")
+            if isinstance(forecast, list):
+                hours = [h for h in forecast if isinstance(h, dict)]
+    # A successful call (even an empty forecast list) refreshes the throttle;
+    # only replace the cache when new hours actually arrived.
+    controller.last_outdoor_forecast_fetched_at = monotonic()
+    if hours:
+        controller.last_outdoor_forecast_hours = tuple(hours[:48])
 
 
 def _v2_outdoor_cooling_gate(

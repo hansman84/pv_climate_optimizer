@@ -118,6 +118,8 @@ class PVClimateController:
     last_outdoor_gate_snapshot: object = None
     last_outdoor_gate_evaluated_at: float | None = None
     last_outdoor_gate_source_entity_id: str | None = None
+    last_outdoor_forecast_hours: tuple[dict, ...] = ()
+    last_outdoor_forecast_fetched_at: float | None = None
     power_learner: OutdoorPowerLearner = field(default_factory=OutdoorPowerLearner)
     last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
     house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
@@ -1122,6 +1124,7 @@ class PVClimateController:
             rain_hold_probability_pct=self.config.outdoor_rain_hold_probability_pct,
             pv_forecast_w=pv_forecast_w,
             pv_boost_extra_w=self.config.outdoor_pv_boost_extra_w,
+            forecast_hours=self.last_outdoor_forecast_hours or None,
         )
         if snapshot.inputs is None:
             return None
@@ -1144,6 +1147,7 @@ class PVClimateController:
             "today_max_outdoor_c": decision.today_max_outdoor_c,
             "gates": decision.gates,
             "source_entity_id": self.last_outdoor_gate_source_entity_id,
+            "forecast_hours_count": len(self.last_outdoor_forecast_hours),
         }
 
     def living_room_outdoor_comfort_status(self) -> dict[str, float | int | str | None]:
