@@ -78,7 +78,7 @@ def test_adjust_carry_low_fan_when_room_in_control():
     assert plan.fan_mode == "low"
 
 
-def test_persistent_large_gap_steps_up_to_middle_low():
+def test_persistent_large_gap_keeps_quiet_until_setpoint_at_floor():
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
     room = _Room("r2", measured=24.5, observed_fan="auto")  # gap ~2.0 vs target 22.5
@@ -86,7 +86,9 @@ def test_persistent_large_gap_steps_up_to_middle_low():
         planner.plan(room, _candidate(), _house(["r2"]))
         clock.t += 15 * 60  # two 15-min ticks => 30 min gap stable
     plan = planner.plan(room, _candidate(), _house(["r2"]))
-    assert plan is not None and plan.fan_mode == "middle_low"
+    # Target (23.0) is still above the comfort floor (22.5): capacity must come
+    # from the compressor, so the fan stays quiet until the setpoint reaches it.
+    assert plan is not None and plan.fan_mode == "low"
 
 
 def test_stop_plan_carries_no_fan_command():

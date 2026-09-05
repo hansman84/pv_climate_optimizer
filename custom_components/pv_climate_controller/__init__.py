@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from datetime import datetime, time, timedelta
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -261,13 +264,16 @@ async def _async_refresh_controller(
             plan = controller.v2_command_plan_for(house_zone.zone_id)
             if plan is None:
                 # Zugluftschutz: an already-cooling room without a target step
-                # still settles on the quiet fan stage (fan-only adjust).
+                # still settles on the quiet fan stage / comfort target.
                 room_input = inputs_by_id.get(house_zone.zone_id)
                 if room_input is not None:
                     plan = controller.v2_command_planner.settle_plan(room_input)
+                    if plan is not None:
+                        _LOGGER.warning("v2 settle %s -> %s (%s)", house_zone.name, plan.action.value, plan.reason_code)
                 if plan is None:
                     continue
             result = await controller.async_apply_v2_command(plan, _pilot_service_executor(hass))
+            _LOGGER.warning("v2 apply %s -> %s (%s)", house_zone.name, plan.action.value, result.status)
             if result.status == "failed":
                 controller.failback_v2_to_v1(house_zone.zone_id)
                 if store is not None:

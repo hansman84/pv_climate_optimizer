@@ -25,13 +25,26 @@ def _load():
 fan = _load()
 
 
-def _decide(gap_c, stable_s, boost=False, hard=False, stop=False, current="low", changed_s=9999.0):
+def _decide(gap_c, stable_s, boost=False, hard=False, stop=False, current="low", changed_s=9999.0, floor=True):
     features = fan.FanFeatures(
         gap_c=gap_c, gap_stable_s=stable_s, boost_active=boost,
         hard_limit_exceeded=hard, action_stop=stop,
+        target_at_capacity_floor=floor,
     )
     state = fan.FanState(current_stage=current, fan_changed_recently_s=changed_s)
     return fan.evaluate_fan_stage(features, state)
+
+
+def test_fan_stays_quiet_until_setpoint_at_capacity_floor():
+    # Big persistent gap but the setpoint can still be lowered: capacity comes
+    # from the compressor, not the fan.
+    d = _decide(gap_c=2.8, stable_s=30 * 60, current="low", changed_s=9999, floor=False)
+    assert d.stage == "low" and d.reason_code == "capacity_via_target"
+
+
+def test_fan_steps_up_once_setpoint_at_floor():
+    d = _decide(gap_c=2.8, stable_s=30 * 60, current="low", changed_s=9999, floor=True)
+    assert d.stage == "middle_low" and d.reason_code == "step_once"
 
 
 def test_small_gap_stays_quiet():

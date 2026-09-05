@@ -9,6 +9,9 @@ from typing import Callable
 from .quiet_fan_control import (
     FAN_AUTO,
     FAN_QUIET,
+    STEP_UP_GAP_C,
+    STEP_UP_GRACE_S,
+    STEP_UP_HARD_GAP_C,
     FanFeatures,
     FanRuntime,
     FanState,
@@ -19,6 +22,7 @@ from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandP
 
 SETTLE_STOP_RESERVE_C = 0.6    # stop once the room is this far below comfort
 SETTLE_TARGET_TOL_C = 0.1      # allowed setpoint deviation from comfort
+CAPACITY_FLOOR_DELTA_C = 1.0   # compressor floor: comfort - 1 K before the fan may step up
 
 
 class V2CommandPlanner:
@@ -73,6 +77,7 @@ class V2CommandPlanner:
             boost_active=candidate.reason_code in {"outdoor_pv_boost", "pv_boosted", "hard_temperature_limit_failsafe"},
             hard_limit_exceeded=hard,
             action_stop=candidate.action is CandidateAction.STOP,
+            target_at_capacity_floor=hard or (target is not None and target <= room.comfort_temperature_c - CAPACITY_FLOOR_DELTA_C),
             supported_stages=supported,
         )
         decision = evaluate_fan_stage(features, FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s))
@@ -131,12 +136,37 @@ class V2CommandPlanner:
             if new_target < target:
                 return _fan_plan(new_target, "v2_comfort_converge_down",
                                  f"V2 senkt den Sollwert auf das Komfortziel {comfort:.1f} °C, damit der Raum es erreicht.")
-        if target is None:
-            return None
-        # Target is already at comfort: only the fan may need settling.
-        if quiet is None or quiet == room.observed_fan_mode:
-            return None
+
+        # ---- Capacity guard: comfort must stay reachable. ----
         if measured is None:
+            return None
+        now_s = self._now_fn()
+        runtime = self._fan_runtimes.setdefault(room.policy.room_id, FanRuntime())
+        runtime, stable_s, _changed_s = tick_fan_runtime(runtime, measured - comfort, now_s)
+        self._fan_runtimes[room.policy.room_id] = runtime
+        floor_target = comfort - CAPACITY_FLOOR_DELTA_C
+        if room.pilot_min_target_temperature_c is not None:
+            floor_target = max(floor_target, room.pilot_min_target_temperature_c)
+        at_floor = target <= floor_target + SETTLE_TARGET_TOL_C
+        if (not at_floor) and (measured - comfort) >= STEP_UP_GAP_C and stable_s >= STEP_UP_GRACE_S:
+            # Compressor first: one setpoint step towards the comfort floor
+            # (fan stays on the quiet stage).
+            new_target = max(floor_target, target - step)
+            if new_target < target:
+                return _fan_plan(new_target, "v2_capacity_target_boost",
+                                 f"V2 erhöht die Kälteleistung über den Sollwert ({new_target:.1f} °C, Kompressor) – der Lüfter bleibt leise.")
+            at_floor = True
+        if at_floor and (measured - comfort) >= STEP_UP_HARD_GAP_C and stable_s >= STEP_UP_GRACE_S:
+            # Last resort: setpoint already at the comfort floor, still too warm.
+            fan_step = modes.get("middle_low")
+            if fan_step is not None and fan_step != room.observed_fan_mode:
+                return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, target, "v2_capacity_fan_boost",
+                                     "V2 hebt den Lüfter eine Stufe an (Sollwert bereits am Komfort-Boden, Leistung reicht sonst nicht).", fan_step)
+        if (not at_floor) and stable_s < STEP_UP_GRACE_S and (measured - comfort) >= STEP_UP_GAP_C:
+            return None  # grace period: observe before boosting capacity
+
+        # Target is at comfort (or in its grace window): only the fan may need settling.
+        if quiet is None or quiet == room.observed_fan_mode:
             return None
         if measured <= comfort + 0.5:
             return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, target, "v2_fan_normalize",

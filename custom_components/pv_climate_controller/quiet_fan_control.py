@@ -46,6 +46,7 @@ class FanFeatures:
     boost_active: bool = False
     hard_limit_exceeded: bool = False
     action_stop: bool = False
+    target_at_capacity_floor: bool = False  # setpoint already ~1 K below comfort (max compressor)
     supported_stages: tuple[str, ...] = (FAN_AUTO, FAN_QUIET, FAN_STEP, FAN_MEDIUM, "middle_high", FAN_HIGH)
 
 
@@ -136,6 +137,13 @@ def evaluate_fan_stage(features: FanFeatures, state: FanState) -> FanDecision:
     else:
         desired_index = 0
         reason = ("gap_small", "Raum im Griff: leichte Lüfterstufe.")
+
+    # 4a. Capacity gate: raise the fan only after the setpoint already uses the
+    # compressor at its comfort floor.  While the target can still go lower,
+    # extra capacity must come from the compressor (quieter), not the fan.
+    if desired_index > 0 and not features.target_at_capacity_floor:
+        desired_index = 0
+        reason = ("capacity_via_target", "Mehr Kälteleistung über den Sollwert (Kompressor), Lüfter bleibt leise.")
 
     # 5. Step discipline: at most one step up per interval; step down freely.
     if desired_index > current_index:
