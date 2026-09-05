@@ -945,7 +945,7 @@ def test_command_planner_keeps_auto_airflow_for_material_comfort_risk() -> None:
     assert plan.fan_mode is None
 
 
-def test_command_planner_restores_auto_airflow_when_relaxing() -> None:
+def test_command_planner_keeps_quiet_airflow_when_relaxing() -> None:
     room = _shadow_room(predicted=23.0)
     room = models.V2RoomInput(
         room.policy, room.snapshot, room.estimate, room.eligibility,
@@ -961,4 +961,5 @@ def test_command_planner_restores_auto_airflow_when_relaxing() -> None:
 
     assert plan is not None
     assert plan.target_temperature_c == 22.0
-    assert plan.fan_mode == "auto"
+    # Zugluftschutz: beim Entspannen auf die leise Stufe statt Auto zurück.
+    assert plan.fan_mode == "low"

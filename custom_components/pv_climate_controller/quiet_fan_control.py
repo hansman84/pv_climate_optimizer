@@ -66,6 +66,33 @@ class FanDecision:
     reason_text: str
 
 
+@dataclass(frozen=True, slots=True)
+class FanRuntime:
+    """Per-zone runtime kept by the caller across ticks (monotonic seconds)."""
+
+    current_stage: str = FAN_QUIET
+    last_change_at_s: float = -1e9   # a large negative value => "never changed yet"
+    band_since_at_s: float | None = None  # when the current gap band started
+
+
+def tick_fan_runtime(runtime: FanRuntime, gap_c: float, now_s: float) -> tuple[FanRuntime, float, float]:
+    """Advance the gap-band bookkeeping; return (runtime, gap_stable_s, changed_ago_s)."""
+    band_since = runtime.band_since_at_s
+    if gap_c >= STEP_UP_GAP_C:
+        if band_since is None:
+            band_since = now_s
+        stable_s = max(0.0, now_s - band_since)
+    else:
+        band_since = None
+        stable_s = 0.0
+    updated = FanRuntime(
+        current_stage=runtime.current_stage,
+        last_change_at_s=runtime.last_change_at_s,
+        band_since_at_s=band_since,
+    )
+    return updated, stable_s, max(0.0, now_s - runtime.last_change_at_s)
+
+
 def _clamp_to_supported(supported: tuple[str, ...], wanted_index: int) -> str:
     """Return the highest supported stage at or below the wanted index."""
     for index in range(wanted_index, -1, -1):

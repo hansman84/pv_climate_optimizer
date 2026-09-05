@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 from math import floor
+from time import monotonic
+from typing import Callable
 
+from .quiet_fan_control import (
+    FAN_AUTO,
+    FAN_QUIET,
+    FanFeatures,
+    FanRuntime,
+    FanState,
+    evaluate_fan_stage,
+    tick_fan_runtime,
+)
 from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
 
 
@@ -14,19 +25,65 @@ class V2CommandPlanner:
     has no explicit pilot bounds or climate capabilities.
     """
 
-    @staticmethod
-    def _fan_mode(room: V2RoomInput, candidate: RoomCandidate, target: float | None) -> str | None:
-        """Always restore automatic fan control alongside a real target step.
+    def __init__(self, now_fn: Callable[[], float] = monotonic) -> None:
+        self._now_fn = now_fn
+        self._fan_runtimes: dict[str, FanRuntime] = {}
 
-        Compressor target is the sole modulation axis.  V2 must never create
-        an audible high/low fan intervention; Auto lets the indoor unit choose
-        the quietest viable airflow and keeps dashboard plans truthful.
+    @staticmethod
+    def _measured_room_temp_c(room: V2RoomInput) -> float | None:
+        value = room.snapshot.room_temperature.value
+        if isinstance(value, (int, float)) and room.snapshot.room_temperature.is_valid:
+            return float(value)
+        return None
+
+    def _fan_mode(self, room: V2RoomInput, candidate: RoomCandidate, target: float | None) -> str | None:
+        """Draft-minimising fan stage for a real target step (quiet first).
+
+        The indoor fan follows the cooling gap: ``low`` by default, stepping
+        up only when the gap persists (grace period), one step per interval.
+        ``high`` is reserved for hard-limit protection.  Stop/wind-down plans
+        never carry a fan command.
         """
         if target is None or not room.supported_fan_modes:
             return None
+        measured = self._measured_room_temp_c(room)
+        if measured is None:
+            return None
         modes = {mode.casefold(): mode for mode in room.supported_fan_modes}
-        selected = modes.get("auto")
-        return None if selected is None or selected == room.observed_fan_mode else selected
+        supported = tuple(
+            modes[mode] for mode in (FAN_AUTO, FAN_QUIET, "middle_low", "medium", "middle_high", "high") if mode in modes
+        )
+        if not supported:
+            return None
+
+        target_for_gap = target if target is not None else room.comfort_temperature_c
+        gap_c = measured - target_for_gap
+        now_s = self._now_fn()
+        runtime = self._fan_runtimes.setdefault(room.policy.room_id, FanRuntime())
+        runtime, stable_s, changed_s = tick_fan_runtime(runtime, gap_c, now_s)
+        self._fan_runtimes[room.policy.room_id] = runtime
+
+        hard = room.hard_max_temperature_c is not None and measured >= room.hard_max_temperature_c
+        features = FanFeatures(
+            gap_c=gap_c,
+            gap_stable_s=stable_s,
+            boost_active=candidate.reason_code in {"outdoor_pv_boost", "pv_boosted", "hard_temperature_limit_failsafe"},
+            hard_limit_exceeded=hard,
+            action_stop=candidate.action is CandidateAction.STOP,
+            supported_stages=supported,
+        )
+        decision = evaluate_fan_stage(features, FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s))
+        if decision.stage != runtime.current_stage:
+            self._fan_runtimes[room.policy.room_id] = FanRuntime(
+                current_stage=decision.stage, last_change_at_s=now_s, band_since_at_s=runtime.band_since_at_s
+            )
+        observed = room.observed_fan_mode
+        if decision.stage == FAN_AUTO:
+            return None if observed in {None, FAN_AUTO} else modes.get(FAN_AUTO)
+        selected = modes.get(decision.stage)
+        if selected is None or selected == observed:
+            return None
+        return selected
 
     def _plan(self, room: V2RoomInput, candidate: RoomCandidate, action: CandidateAction, target: float | None, reason_code: str, reason_text: str) -> V2CommandPlan:
         return V2CommandPlan(room.policy.room_id, action, target, reason_code, reason_text, self._fan_mode(room, candidate, target))

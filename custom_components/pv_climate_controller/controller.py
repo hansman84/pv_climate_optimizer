@@ -1398,7 +1398,7 @@ class PVClimateController:
             action,
             plan.target_temperature_c,
             urgent=True,
-            fan_mode="auto" if plan.action is not CandidateAction.STOP else None,
+            fan_mode=plan.fan_mode or ("auto" if plan.action is not CandidateAction.STOP else None),
             batch_window=True,
         )
         # ConnectLife can accept a command yet later report its previous
