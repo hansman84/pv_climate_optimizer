@@ -95,3 +95,17 @@ def test_stop_plan_carries_no_fan_command():
     room = _Room("r3", measured=22.0)
     plan = planner.plan(room, _candidate(action="stop", target_after=None, reason="pv_surplus_ended"), _house(["r3"]))
     assert plan is not None and plan.fan_mode is None
+
+
+def test_normalize_fan_plan_quiets_running_room_without_target_change():
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    room = _Room("r4", measured=23.0, observed_target=23.0, observed_fan="auto")
+    plan = planner.normalize_fan_plan(room)
+    assert plan is not None
+    assert plan.action.value == "adjust" and plan.target_temperature_c == 23.0
+    assert plan.fan_mode == "low"
+    assert plan.reason_code == "v2_fan_normalize"
+    # Once the device reports the quiet stage, no further command is emitted.
+    quiet = _Room("r4", measured=23.0, observed_target=23.0, observed_fan="low")
+    assert planner.normalize_fan_plan(quiet) is None

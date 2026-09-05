@@ -85,6 +85,51 @@ class V2CommandPlanner:
             return None
         return selected
 
+    def normalize_fan_plan(self, room: V2RoomInput) -> V2CommandPlan | None:
+        """Quiet-fan normalisation for an already-cooling room.
+
+        A room that V2 holds or takes over (external start, no target step
+        needed) must still settle on the draft-minimising fan stage.  Emits a
+        fan-only adjust plan (same target) at most once per stage interval.
+        """
+        if room.observed_hvac_mode != "cool" or not room.supported_fan_modes:
+            return None
+        measured = self._measured_room_temp_c(room)
+        target = room.observed_target_temperature_c
+        if measured is None or target is None:
+            return None
+        modes = {mode.casefold(): mode for mode in room.supported_fan_modes}
+        supported = tuple(
+            modes[mode] for mode in (FAN_AUTO, FAN_QUIET, "middle_low", "medium", "middle_high", "high") if mode in modes
+        )
+        if not supported:
+            return None
+        gap_c = measured - target
+        now_s = self._now_fn()
+        runtime = self._fan_runtimes.setdefault(room.policy.room_id, FanRuntime())
+        runtime, stable_s, changed_s = tick_fan_runtime(runtime, gap_c, now_s)
+        self._fan_runtimes[room.policy.room_id] = runtime
+        hard = room.hard_max_temperature_c is not None and measured >= room.hard_max_temperature_c
+        features = FanFeatures(
+            gap_c=gap_c, gap_stable_s=stable_s, boost_active=False,
+            hard_limit_exceeded=hard, action_stop=False, supported_stages=supported,
+        )
+        decision = evaluate_fan_stage(features, FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s))
+        observed = room.observed_fan_mode
+        if decision.stage == FAN_AUTO:
+            return None if observed in {None, FAN_AUTO} else None
+        selected = modes.get(decision.stage)
+        if selected is None or selected == observed:
+            return None
+        if decision.stage != runtime.current_stage:
+            self._fan_runtimes[room.policy.room_id] = FanRuntime(
+                current_stage=decision.stage, last_change_at_s=now_s, band_since_at_s=runtime.band_since_at_s
+            )
+        return V2CommandPlan(
+            room.policy.room_id, CandidateAction.ADJUST, target, "v2_fan_normalize",
+            "V2 normalisiert den Lüfter auf die zugluftarme Stufe (gleicher Sollwert).", selected,
+        )
+
     def _plan(self, room: V2RoomInput, candidate: RoomCandidate, action: CandidateAction, target: float | None, reason_code: str, reason_text: str) -> V2CommandPlan:
         return V2CommandPlan(room.policy.room_id, action, target, reason_code, reason_text, self._fan_mode(room, candidate, target))
 

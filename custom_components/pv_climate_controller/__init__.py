@@ -240,8 +240,9 @@ async def _async_refresh_controller(
         await _async_refresh_outdoor_forecast(hass, controller, config.weather_forecast_entity_id)
     if config.v2_shadow_enabled:
         gate_decision = _v2_outdoor_cooling_gate(hass, controller, house_states)
+        room_inputs = _v2_room_inputs(hass, controller, house_states, contexts, outdoor_cooling_gate=gate_decision)
         controller.evaluate_v2_shadow(
-            _v2_room_inputs(hass, controller, house_states, contexts, outdoor_cooling_gate=gate_decision),
+            room_inputs,
             # V2 cannot treat total PV as capacity.  Until a V2 house-budget
             # source is configured, only observed positive export is exposed
             # as an upper bound and unknown room power keeps every candidate
@@ -252,13 +253,20 @@ async def _async_refresh_controller(
         # handoff.  A failed transport immediately returns that room to V1;
         # no retrying V2 loop or second climate executor is introduced here.
         zones_by_id = {zone.zone_id: zone for zone in config.house_zones}
+        inputs_by_id = {room_input.policy.room_id: room_input for room_input in room_inputs}
         for zone_id in controller.v2_execution_order():
             house_zone = zones_by_id[zone_id]
             if not controller.v2_authority_for(house_zone.zone_id).v2_may_write:
                 continue
             plan = controller.v2_command_plan_for(house_zone.zone_id)
             if plan is None:
-                continue
+                # Zugluftschutz: an already-cooling room without a target step
+                # still settles on the quiet fan stage (fan-only adjust).
+                room_input = inputs_by_id.get(house_zone.zone_id)
+                if room_input is not None:
+                    plan = controller.v2_command_planner.normalize_fan_plan(room_input)
+                if plan is None:
+                    continue
             result = await controller.async_apply_v2_command(plan, _pilot_service_executor(hass))
             if result.status == "failed":
                 controller.failback_v2_to_v1(house_zone.zone_id)
