@@ -120,21 +120,6 @@ class PVClimateController:
     last_outdoor_gate_source_entity_id: str | None = None
     last_outdoor_forecast_hours: tuple[dict, ...] = ()
     last_outdoor_forecast_fetched_at: float | None = None
-    # Learnt per-room offset between the climate device's own temperature
-    # sensor and the configured free-air room sensor (WZ: AirQuality at the
-    # sofa).  Device targets are shifted by this offset so the unit stops
-    # exactly when the real room air reaches comfort (0.4.49).
-    device_sensor_offsets: dict[str, float] = field(default_factory=dict)
-
-    def update_device_sensor_offset(self, room_id: str, device_temperature_c: float | None, air_temperature_c: float | None) -> None:
-        """EMA-update one room's device-vs-air sensor offset (pure-ish)."""
-        if device_temperature_c is None or air_temperature_c is None:
-            return
-        raw = device_temperature_c - air_temperature_c
-        if raw < -0.2 or raw > 3.0:
-            return  # transient / implausible sample
-        prev = self.device_sensor_offsets.get(room_id)
-        self.device_sensor_offsets[room_id] = round(raw if prev is None else 0.2 * raw + 0.8 * prev, 2)
     power_learner: OutdoorPowerLearner = field(default_factory=OutdoorPowerLearner)
     last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
     house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
@@ -1409,11 +1394,6 @@ class PVClimateController:
             CandidateAction.STOP: "pilot_stop",
         }[plan.action]
         device_target = plan.target_temperature_c
-        if device_target is not None and plan.action is not CandidateAction.STOP:
-            offset = self.device_sensor_offsets.get(plan.room_id, 0.0)
-            if 0.15 < offset <= 2.5:
-                upper_limit = getattr(zone, "hard_max_temperature", 30.0) - 0.5
-                device_target = min(upper_limit, max(16.0, device_target + offset))
         command = Command(
             zone.climate_entity_id,
             action,

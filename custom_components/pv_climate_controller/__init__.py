@@ -542,14 +542,6 @@ def _v2_room_inputs(
     for zone in controller.config.house_zones:
         temperature_state = hass.states.get(zone.temperature_entity_id)
         climate_state = hass.states.get(zone.climate_entity_id)
-        if zone.temperature_entity_id != zone.climate_entity_id and temperature_state is not None and climate_state is not None:
-            try:
-                air_c = float(temperature_state.state)
-                dev_c = (climate_state.attributes or {}).get("current_temperature")
-                if dev_c is not None:
-                    controller.update_device_sensor_offset(zone.zone_id, float(dev_c), air_c)
-            except (TypeError, ValueError):
-                pass
         forecast = controller.last_zone_forecasts.get(zone.zone_id)
         profile = controller.last_thermal_profiles.get(zone.zone_id)
         context = (contexts or {}).get(zone.zone_id, {})
