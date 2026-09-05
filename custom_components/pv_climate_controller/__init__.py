@@ -257,10 +257,7 @@ async def _async_refresh_controller(
         # no retrying V2 loop or second climate executor is introduced here.
         zones_by_id = {zone.zone_id: zone for zone in config.house_zones}
         inputs_by_id = {room_input.policy.room_id: room_input for room_input in room_inputs}
-        _exec_order = list(controller.v2_execution_order())
-        _auth = {zone_id: controller.v2_authority_for(zone_id).authority.value for zone_id in _exec_order}
-        _LOGGER.warning("v2 exec tick: rooms=%d auth=%s", len(_exec_order), _auth)
-        for zone_id in _exec_order:
+        for zone_id in controller.v2_execution_order():
             house_zone = zones_by_id[zone_id]
             if not controller.v2_authority_for(house_zone.zone_id).v2_may_write:
                 continue
