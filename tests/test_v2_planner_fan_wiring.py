@@ -97,15 +97,49 @@ def test_stop_plan_carries_no_fan_command():
     assert plan is not None and plan.fan_mode is None
 
 
-def test_normalize_fan_plan_quiets_running_room_without_target_change():
+def test_settle_raises_over_eager_setpoint_towards_comfort():
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
-    room = _Room("r4", measured=23.0, observed_target=23.0, observed_fan="auto")
-    plan = planner.normalize_fan_plan(room)
+    # measured 23.2 below comfort 23.5, setpoint 21 -> raise towards comfort.
+    room = _Room("s1", measured=23.2, comfort=23.5, observed_target=21.0, observed_fan="auto")
+    plan = planner.settle_plan(room)
     assert plan is not None
-    assert plan.action.value == "adjust" and plan.target_temperature_c == 23.0
+    assert plan.action.value == "adjust" and plan.target_temperature_c == 22.0
+    assert plan.reason_code == "v2_comfort_converge_up"
+    assert plan.fan_mode == "low"
+
+
+def test_settle_lowers_warm_setpoint_to_reach_comfort():
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    # Room 24.7 still above comfort 24, setpoint 25 -> step down to comfort.
+    room = _Room("s2", measured=24.7, comfort=24.0, observed_target=25.0, observed_fan="low")
+    plan = planner.settle_plan(room)
+    assert plan is not None
+    assert plan.action.value == "adjust" and plan.target_temperature_c == 24.0
+    assert plan.reason_code == "v2_comfort_converge_down"
+
+
+def test_settle_stops_when_room_below_comfort_reserve():
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    # Room 22.9 < comfort 23.5 - 0.6 => comfort reached -> stop, no cold hold.
+    room = _Room("s3", measured=22.9, comfort=23.5, observed_target=21.0, observed_fan="auto")
+    plan = planner.settle_plan(room)
+    assert plan is not None
+    assert plan.action.value == "stop"
+    assert plan.reason_code == "v2_comfort_reached"
+
+
+def test_settle_quiets_fan_when_target_already_at_comfort():
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    room = _Room("s4", measured=24.2, comfort=24.0, observed_target=24.0, observed_fan="auto")
+    plan = planner.settle_plan(room)
+    assert plan is not None
+    assert plan.action.value == "adjust" and plan.target_temperature_c == 24.0
     assert plan.fan_mode == "low"
     assert plan.reason_code == "v2_fan_normalize"
     # Once the device reports the quiet stage, no further command is emitted.
-    quiet = _Room("r4", measured=23.0, observed_target=23.0, observed_fan="low")
-    assert planner.normalize_fan_plan(quiet) is None
+    quiet = _Room("s4", measured=24.2, comfort=24.0, observed_target=24.0, observed_fan="low")
+    assert planner.settle_plan(quiet) is None

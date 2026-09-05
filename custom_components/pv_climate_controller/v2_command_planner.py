@@ -17,6 +17,9 @@ from .quiet_fan_control import (
 )
 from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
 
+SETTLE_STOP_RESERVE_C = 0.6    # stop once the room is this far below comfort
+SETTLE_TARGET_TOL_C = 0.1      # allowed setpoint deviation from comfort
+
 
 class V2CommandPlanner:
     """Plan no more than one safe existing-device target step.
@@ -85,50 +88,60 @@ class V2CommandPlanner:
             return None
         return selected
 
-    def normalize_fan_plan(self, room: V2RoomInput) -> V2CommandPlan | None:
-        """Quiet-fan normalisation for an already-cooling room.
+    def settle_plan(self, room: V2RoomInput) -> V2CommandPlan | None:
+        """Idle convergence for a running room under V2 authority.
 
-        A room that V2 holds or takes over (external start, no target step
-        needed) must still settle on the draft-minimising fan stage.  Emits a
-        fan-only adjust plan (same target) at most once per stage interval.
+        Ensures the comfort target is reached without draft and without
+        overcooling: raise an over-eager setpoint up to comfort, lower a too
+        warm setpoint towards comfort while the room is still above it, stop
+        as soon as the room is comfortably below comfort, and otherwise keep
+        the fan on the quiet stage.  One gentle step per tick.
         """
-        if room.observed_hvac_mode != "cool" or not room.supported_fan_modes:
+        if room.observed_hvac_mode != "cool":
             return None
         measured = self._measured_room_temp_c(room)
         target = room.observed_target_temperature_c
-        if measured is None or target is None:
-            return None
+        step = room.target_temperature_step_c or 1.0
+        comfort = room.comfort_temperature_c
         modes = {mode.casefold(): mode for mode in room.supported_fan_modes}
         supported = tuple(
             modes[mode] for mode in (FAN_AUTO, FAN_QUIET, "middle_low", "medium", "middle_high", "high") if mode in modes
         )
-        if not supported:
+        quiet = modes.get(FAN_QUIET) if modes.get(FAN_QUIET) else None
+
+        def _fan_plan(new_target: float, reason_code: str, reason_text: str) -> V2CommandPlan:
+            fan = quiet if quiet and quiet != room.observed_fan_mode else None
+            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, round(new_target, 2), reason_code, reason_text, fan)
+
+        if target is None:
             return None
-        gap_c = measured - target
-        now_s = self._now_fn()
-        runtime = self._fan_runtimes.setdefault(room.policy.room_id, FanRuntime())
-        runtime, stable_s, changed_s = tick_fan_runtime(runtime, gap_c, now_s)
-        self._fan_runtimes[room.policy.room_id] = runtime
-        hard = room.hard_max_temperature_c is not None and measured >= room.hard_max_temperature_c
-        features = FanFeatures(
-            gap_c=gap_c, gap_stable_s=stable_s, boost_active=False,
-            hard_limit_exceeded=hard, action_stop=False, supported_stages=supported,
-        )
-        decision = evaluate_fan_stage(features, FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s))
-        observed = room.observed_fan_mode
-        if decision.stage == FAN_AUTO:
-            return None if observed in {None, FAN_AUTO} else None
-        selected = modes.get(decision.stage)
-        if selected is None or selected == observed:
+        if measured is not None and measured <= comfort - SETTLE_STOP_RESERVE_C:
+            # Comfort reached: stop instead of holding the room cold.
+            return V2CommandPlan(room.policy.room_id, CandidateAction.STOP, None, "v2_comfort_reached",
+                                 f"V2 beendet die Kühlung: Raum ({measured:.1f} °C) liegt {SETTLE_STOP_RESERVE_C:.1f} K unter dem Komfortziel {comfort:.1f} °C – kein kaltes Halten, keine Zugluft.", None)
+        if target < comfort - SETTLE_TARGET_TOL_C and measured is not None and measured < comfort + 0.5:
+            # Over-eager setpoint: raise gently to comfort (less cold, less draft).
+            new_target = min(comfort, target + step)
+            if new_target > target:
+                return _fan_plan(new_target, "v2_comfort_converge_up",
+                                 f"V2 hebt den Sollwert Richtung Komfort {comfort:.1f} °C an (kein Überkühlen, sanftere Modulation).")
+        if target > comfort + SETTLE_TARGET_TOL_C and measured is not None and measured > comfort + 0.5:
+            # Room still above comfort but the setpoint is warmer than the goal.
+            new_target = max(comfort, target - step)
+            if new_target < target:
+                return _fan_plan(new_target, "v2_comfort_converge_down",
+                                 f"V2 senkt den Sollwert auf das Komfortziel {comfort:.1f} °C, damit der Raum es erreicht.")
+        if target is None:
             return None
-        if decision.stage != runtime.current_stage:
-            self._fan_runtimes[room.policy.room_id] = FanRuntime(
-                current_stage=decision.stage, last_change_at_s=now_s, band_since_at_s=runtime.band_since_at_s
-            )
-        return V2CommandPlan(
-            room.policy.room_id, CandidateAction.ADJUST, target, "v2_fan_normalize",
-            "V2 normalisiert den Lüfter auf die zugluftarme Stufe (gleicher Sollwert).", selected,
-        )
+        # Target is already at comfort: only the fan may need settling.
+        if quiet is None or quiet == room.observed_fan_mode:
+            return None
+        if measured is None:
+            return None
+        if measured <= comfort + 0.5:
+            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, target, "v2_fan_normalize",
+                                 "V2 normalisiert den Lüfter auf die zugluftarme Stufe (gleicher Sollwert).", quiet)
+        return None
 
     def _plan(self, room: V2RoomInput, candidate: RoomCandidate, action: CandidateAction, target: float | None, reason_code: str, reason_text: str) -> V2CommandPlan:
         return V2CommandPlan(room.policy.room_id, action, target, reason_code, reason_text, self._fan_mode(room, candidate, target))

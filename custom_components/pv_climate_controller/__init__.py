@@ -264,7 +264,7 @@ async def _async_refresh_controller(
                 # still settles on the quiet fan stage (fan-only adjust).
                 room_input = inputs_by_id.get(house_zone.zone_id)
                 if room_input is not None:
-                    plan = controller.v2_command_planner.normalize_fan_plan(room_input)
+                    plan = controller.v2_command_planner.settle_plan(room_input)
                 if plan is None:
                     continue
             result = await controller.async_apply_v2_command(plan, _pilot_service_executor(hass))
