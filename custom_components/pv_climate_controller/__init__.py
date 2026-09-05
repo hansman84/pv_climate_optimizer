@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 
 from homeassistant.config_entries import ConfigEntry
