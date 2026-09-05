@@ -38,8 +38,9 @@ class _Room:
 
     def __init__(self, room_id, measured, target_step=1.0, comfort=23.5, hard=28.0,
                  observed_fan="auto", supported=None, hvac="cool", observed_target=24.0,
-                 lower=16.0, upper=25.0):
+                 lower=16.0, upper=25.0, occupied=False):
         self.policy = v2_models.RoomPolicy(room_id, "Raum", 10)
+        self.occupied_window_active = occupied
         self.snapshot = type("S", (), {"room_temperature": type("V", (), {
             "value": measured, "is_valid": True})()})()
         self.estimate = None
@@ -145,3 +146,23 @@ def test_settle_quiets_fan_when_target_already_at_comfort():
     # Once the device reports the quiet stage, no further command is emitted.
     quiet = _Room("s4", measured=24.2, comfort=24.0, observed_target=24.0, observed_fan="low")
     assert planner.settle_plan(quiet) is None
+
+
+def test_settle_stops_earlier_in_occupied_window():
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    # Occupied window: room 23.2 vs comfort 23.5 (only 0.3 K below) must stop.
+    room = _Room("o1", measured=23.2, comfort=23.5, observed_target=23.0, occupied=True)
+    plan = planner.settle_plan(room)
+    assert plan is not None
+    assert plan.action.value == "stop"
+    assert plan.reason_code == "v2_comfort_reached"
+
+
+def test_default_stop_reserve_applies_outside_occupied_window():
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    # Same numbers, no occupied window: default reserve 0.6 K -> not yet a stop
+    # (and fan already quiet / target at comfort -> no command at all).
+    room = _Room("o2", measured=23.2, comfort=23.5, observed_target=23.5, observed_fan="low", occupied=False)
+    assert planner.settle_plan(room) is None

@@ -120,10 +120,11 @@ class V2CommandPlanner:
 
         if target is None:
             return None
-        if measured is not None and measured <= comfort - SETTLE_STOP_RESERVE_C:
+        stop_reserve_c = 0.2 if room.occupied_window_active else SETTLE_STOP_RESERVE_C
+        if measured is not None and measured <= comfort - stop_reserve_c:
             # Comfort reached: stop instead of holding the room cold.
             return V2CommandPlan(room.policy.room_id, CandidateAction.STOP, None, "v2_comfort_reached",
-                                 f"V2 beendet die Kühlung: Raum ({measured:.1f} °C) liegt {SETTLE_STOP_RESERVE_C:.1f} K unter dem Komfortziel {comfort:.1f} °C – kein kaltes Halten, keine Zugluft.", None)
+                                 f"V2 beendet die Kühlung: Raum ({measured:.1f} °C) liegt {stop_reserve_c:.1f} K unter dem Komfortziel {comfort:.1f} °C – kein kaltes Halten, keine Zugluft.", None)
         if target < comfort - SETTLE_TARGET_TOL_C and measured is not None and measured < comfort + 0.5:
             # Over-eager setpoint: raise gently to comfort (less cold, less draft).
             new_target = min(comfort, target + step)

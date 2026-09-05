@@ -54,6 +54,11 @@ class V2ShadowRunner:
     # five continuous minutes of real headroom; living-room comfort and sleep
     # deadlines remain deliberate, visible exceptions.
     _NORMAL_START_SURPLUS_STABLE_S = 5 * 60
+    # Occupied-evening fallback (no per-room presence yet): stop as soon as
+    # comfort is reached and restart only after a clearly larger breach, so
+    # the evening sofa / bedrooms stay draft-free.
+    _OCCUPIED_STOP_RESERVE_C = 0.2
+    _OCCUPIED_RESTART_GAP_C = 1.0
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()
@@ -283,6 +288,21 @@ class V2ShadowRunner:
             if room.observed_hvac_mode == "cool":
                 current = room.observed_target_temperature_c
                 upper = room.pilot_max_target_temperature_c
+                if (
+                    room.occupied_window_active
+                    and room.estimate.temperature_c is not None
+                    and room.estimate.temperature_c <= room.comfort_temperature_c - self._OCCUPIED_STOP_RESERVE_C
+                ):
+                    return RoomCandidate(
+                        policy=room.policy,
+                        action=CandidateAction.STOP,
+                        required_budget_w=0.0,
+                        comfort_gap_c=abs(comfort_gap),
+                        confidence=room.estimate.confidence,
+                        reason_code="occupied_comfort_reached",
+                        reason_text="V2 Abendanwesenheit: der Raum hat den Komfort erreicht; die Kühlung wird sofort beendet (kein Zugluft-Dauerbetrieb).",
+                        safety_override=True,
+                    )
                 if current is not None and upper is not None and current < upper:
                     return RoomCandidate(
                         policy=room.policy,
@@ -323,6 +343,20 @@ class V2ShadowRunner:
                 room,
                 "pv_start_blocked_no_surplus",
                 "V2 startet keine bereits abgeschaltete Kühlung ohne nutzbare PV-Reserve; Komfort- und Fail-safe-Ausnahmen bleiben ausdrücklich möglich.",
+            )
+        if (
+            room.occupied_window_active
+            and room.observed_hvac_mode != "cool"
+            and not evening_priority
+            and not deadline_priority
+            and not living_no_pv_comfort
+            and not telemetry_fallback_active
+            and comfort_gap < self._OCCUPIED_RESTART_GAP_C
+        ):
+            return V2ShadowRunner._hold(
+                room,
+                "occupied_comfort_hysteresis",
+                "V2 Abendanwesenheit: kühlt erst wieder, wenn die Prognose mehr als 1,0 K über dem Komfort liegt (Zugluftschutz).",
             )
         living_room_priority = (
             room.policy.display_name.strip().casefold() == "wohnzimmer"

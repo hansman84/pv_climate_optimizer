@@ -670,6 +670,7 @@ def _v2_room_inputs(
             ),
             evening_comfort_active=evening_comfort_active,
             evening_window_active=evening_window_active,
+            occupied_window_active=_v2_occupied_window_active(local_now.time()),
             evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
                 controller, zone.name, local_now.time(),
                 contextual_forecast.predicted_temperature_60m_c,
@@ -795,6 +796,18 @@ def _v2_living_evening_comfort_active(
     if zone_name.strip().casefold() != "wohnzimmer" or temperature_c is None:
         return False
     return _v2_living_evening_window_active(controller, zone_name, local_time) and temperature_c > controller.config.living_evening_comfort_temperature + 0.25
+
+
+def _v2_occupied_window_active(local_time: time) -> bool:
+    """Time-based occupied-evening fallback until per-room presence exists.
+
+    The family occupies the living room and bedrooms roughly between 17:30
+    and 23:30.  Inside this window the controller stops cooling as soon as
+    comfort is reached and needs a clearly larger forecast breach to start
+    again (draft-free evenings).
+    """
+    start, end = time(17, 30), time(23, 30)
+    return start <= local_time <= end if start <= end else False
 
 
 def _v2_living_evening_window_active(

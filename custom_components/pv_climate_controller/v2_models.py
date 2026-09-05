@@ -168,6 +168,10 @@ class V2RoomInput:
     deadline_at_risk: bool = False
     solar_irradiance_w_m2: float | None = None
     pv_surplus_threshold_w: float = 100.0
+    # Time-based occupied-evening fallback (17:30-23:30) until per-room
+    # presence sensors exist: rooms stop as soon as comfort is reached and
+    # only restart after a clearly larger forecast breach.
+    occupied_window_active: bool = False
 
     def __post_init__(self) -> None:
         if not 5.0 <= self.comfort_temperature_c <= 50.0:
