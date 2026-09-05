@@ -122,6 +122,11 @@ def _rain_3h_streak(forecast: OutdoorForecast, threshold_pct: float) -> bool:
     return False
 
 
+# An indoor room clearly above comfort (solar load through glazing) outweighs
+# a mild outdoor day: acute need is served, only preventive starts are held.
+GATE_ACUTE_BREACH_MARGIN_C = 0.3
+
+
 def evaluate_outdoor_cooling_gate(inputs: OutdoorGateInputs) -> OutdoorGateDecision:
     """Decide the Wohnzimmer cooling gate for one evaluation cycle.
 
@@ -185,17 +190,23 @@ def evaluate_outdoor_cooling_gate(inputs: OutdoorGateInputs) -> OutdoorGateDecis
         )
 
     if gates["today_cool_enough"]:
-        return OutdoorGateDecision(
-            decision="hold",
-            relaxation_target_c=relaxation_target,
-            today_max_outdoor_c=today_max,
-            reason_code="outdoor_today_cool",
-            reason_text=(
-                f"Wohnzimmer-Komfort hält: Tagesmaximum {today_max:.1f} °C liegt unter Komfort "
-                f"({comfort:.1f} °C) − {inputs.no_active_cooling_c:.1f} °C; Außenluft reicht."
-            ),
-            gates=gates,
-        )
+        # A mild outdoor day suppresses *preventive* cooling.  It must never
+        # block *acute* indoor need caused by solar load through the large
+        # glazing: once the measured room is clearly above comfort, comfort
+        # cooling is allowed again (2026-09-05 household finding).
+        acute_breach = room is not None and room > comfort + GATE_ACUTE_BREACH_MARGIN_C
+        if not acute_breach:
+            return OutdoorGateDecision(
+                decision="hold",
+                relaxation_target_c=relaxation_target,
+                today_max_outdoor_c=today_max,
+                reason_code="outdoor_today_cool",
+                reason_text=(
+                    f"Wohnzimmer-Komfort hält: Tagesmaximum {today_max:.1f} °C liegt unter Komfort "
+                    f"({comfort:.1f} °C) − {inputs.no_active_cooling_c:.1f} °C; Außenluft reicht."
+                ),
+                gates=gates,
+            )
 
     if gates["outdoor_equilibrium"] and not gates["strong_sun"]:
         return OutdoorGateDecision(

@@ -38,7 +38,7 @@ def _hour(hour: int, temperature: float, precipitation_probability: float = 0.0)
 def test_holds_when_today_max_outdoor_is_well_below_comfort() -> None:
     decision = gate.evaluate_outdoor_cooling_gate(
         gate.OutdoorGateInputs(
-            room_temperature_c=24.0,
+            room_temperature_c=23.5,
             comfort_temperature_c=23.5,
             relaxation_band_c=1.5,
             no_active_cooling_c=0.5,
@@ -53,6 +53,27 @@ def test_holds_when_today_max_outdoor_is_well_below_comfort() -> None:
     )
     assert decision.decision == "hold"
     assert decision.reason_code == "outdoor_today_cool"
+
+
+def test_acute_indoor_need_overrides_mild_day_hold() -> None:
+    """Solar load through glazing must not be blocked by a mild outdoor day."""
+    decision = gate.evaluate_outdoor_cooling_gate(
+        gate.OutdoorGateInputs(
+            room_temperature_c=26.0,
+            comfort_temperature_c=23.5,
+            relaxation_band_c=1.5,
+            no_active_cooling_c=0.5,
+            rain_hold_probability_pct=60.0,
+            forecast=gate.OutdoorForecast(
+                hours=(_hour(10, 21.0), _hour(12, 22.0), _hour(14, 22.5), _hour(16, 22.0), _hour(18, 21.0)),
+            ),
+            live=gate.OutdoorLive(temperature_c=21.0, uv_index=2.0, cloud_coverage_pct=80.0),
+            pv_forecast_w=0.0,
+            pv_boost_extra_w=2000.0,
+        )
+    )
+    assert decision.decision == "comfort"
+    assert decision.reason_code == "outdoor_comfort"
 
 
 def test_relaxes_target_when_outdoor_air_almost_matches_room_temperature() -> None:

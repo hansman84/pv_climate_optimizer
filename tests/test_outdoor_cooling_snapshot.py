@@ -126,7 +126,7 @@ def test_service_forecast_hours_enable_mild_day_hold() -> None:
     )
     snap = snapshot_module.build_outdoor_cooling_inputs(
         weather_state=state,
-        room_temperature_c=24.0,
+        room_temperature_c=23.5,
         comfort_temperature_c=23.5,
         relaxation_band_c=1.5,
         no_active_cooling_c=0.5,
