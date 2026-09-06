@@ -126,7 +126,7 @@ class V2CommandPlanner:
 
         if target is None:
             return None
-        stop_reserve_c = 0.2 if room.occupied_window_active else SETTLE_STOP_RESERVE_C
+        stop_reserve_c = 0.4 if room.occupied_window_active else SETTLE_STOP_RESERVE_C
         if measured is not None and measured <= comfort - stop_reserve_c:
             # Comfort reached: stop instead of holding the room cold.
             return V2CommandPlan(room.policy.room_id, CandidateAction.STOP, None, "v2_comfort_reached",

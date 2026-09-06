@@ -56,9 +56,10 @@ class V2ShadowRunner:
     _NORMAL_START_SURPLUS_STABLE_S = 5 * 60
     # Occupied-evening fallback (no per-room presence yet): stop as soon as
     # comfort is reached and restart only after a clearly larger breach, so
-    # the evening sofa / bedrooms stay draft-free.
-    _OCCUPIED_STOP_RESERVE_C = 0.2
-    _OCCUPIED_RESTART_GAP_C = 1.0
+    # the evening sofa / bedrooms stay draft-free.  Household tuning 0.4.52:
+    # softer band (room feels noticeably warmer with the strict values).
+    _OCCUPIED_STOP_RESERVE_C = 0.4
+    _OCCUPIED_RESTART_GAP_C = 0.5
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()

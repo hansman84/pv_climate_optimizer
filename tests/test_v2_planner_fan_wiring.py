@@ -151,8 +151,8 @@ def test_settle_quiets_fan_when_target_already_at_comfort():
 def test_settle_stops_earlier_in_occupied_window():
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
-    # Occupied window: room 23.2 vs comfort 23.5 (only 0.3 K below) must stop.
-    room = _Room("o1", measured=23.2, comfort=23.5, observed_target=23.0, occupied=True)
+    # Occupied window (softer 0.4.52 band): room 23.0 vs comfort 23.5 stops.
+    room = _Room("o1", measured=23.0, comfort=23.5, observed_target=23.0, occupied=True)
     plan = planner.settle_plan(room)
     assert plan is not None
     assert plan.action.value == "stop"
