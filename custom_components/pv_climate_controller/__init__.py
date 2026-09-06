@@ -671,6 +671,7 @@ def _v2_room_inputs(
             evening_comfort_active=evening_comfort_active,
             evening_window_active=evening_window_active,
             occupied_window_active=_v2_occupied_window_active(local_now.time()),
+            quiet_fan_active=bool(getattr(zone, "quiet_fan", True)),
             evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
                 controller, zone.name, local_now.time(),
                 contextual_forecast.predicted_temperature_60m_c,

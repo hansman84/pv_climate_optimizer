@@ -295,6 +295,7 @@ def _zone_tuning_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required("priority", default=values.get("priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("modulation_priority", default=values.get("modulation_priority", 50)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Required("use_climate_temperature_fallback", default=values.get("use_climate_temperature_fallback", False)): bool,
+        vol.Required("quiet_fan", default=values.get("quiet_fan", True)): bool,
         vol.Optional("shade_entity_ids", default=values.get("shade_entity_ids", [])): EntitySelector(EntitySelectorConfig(domain="cover", multiple=True)),
         # Plain optional text fields deliberately accept blank input.  HA's number
         # selector submits empty optional values as null and otherwise raises

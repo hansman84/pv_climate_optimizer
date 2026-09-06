@@ -53,6 +53,12 @@ class V2CommandPlanner:
         """
         if target is None or not room.supported_fan_modes:
             return None
+        if not getattr(room, "quiet_fan_active", True):
+            # Sleep/child rooms: the device's automatic fan modulation is
+            # allowed; only restore auto if a manual stage is still active.
+            if FAN_AUTO in room.supported_fan_modes and room.observed_fan_mode not in {None, FAN_AUTO}:
+                return FAN_AUTO
+            return None
         measured = self._measured_room_temp_c(room)
         if measured is None:
             return None
@@ -157,7 +163,7 @@ class V2CommandPlanner:
                 return _fan_plan(new_target, "v2_capacity_target_boost",
                                  f"V2 erhöht die Kälteleistung über den Sollwert ({new_target:.1f} °C, Kompressor) – der Lüfter bleibt leise.")
             at_floor = True
-        if at_floor and (measured - comfort) >= STEP_UP_HARD_GAP_C and stable_s >= STEP_UP_GRACE_S:
+        if at_floor and (measured - comfort) >= STEP_UP_HARD_GAP_C and stable_s >= STEP_UP_GRACE_S and getattr(room, "quiet_fan_active", True):
             # Last resort: setpoint already at the comfort floor, still too warm.
             fan_step = modes.get("middle_low")
             if fan_step is not None and fan_step != room.observed_fan_mode:
@@ -167,6 +173,8 @@ class V2CommandPlanner:
             return None  # grace period: observe before boosting capacity
 
         # Target is at comfort (or in its grace window): only the fan may need settling.
+        if not getattr(room, "quiet_fan_active", True):
+            return None  # automatic fan modulation is allowed for this room
         if quiet is None or quiet == room.observed_fan_mode:
             return None
         if measured <= comfort + 0.5:

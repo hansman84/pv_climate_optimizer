@@ -27,6 +27,10 @@ class ZoneConfig:
     minimum_plausible_temperature_c: float = 5.0
     maximum_plausible_temperature_c: float = 50.0
     use_climate_temperature_fallback: bool = False
+    # Draft-sensitive zone: the controller forces the quiet fan stage on its
+    # own commands.  Sleep/child rooms may disable this and let the device
+    # automatic fan modulation run (2026-09-06 household request).
+    quiet_fan: bool = True
     shade_entity_ids: tuple[str, ...] = ()
     facade_azimuths: tuple[float, ...] = ()
     facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()
