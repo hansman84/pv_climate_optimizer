@@ -76,6 +76,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ZonePowerEstimateSensor(controller, entry.entry_id, f"zone_power_estimate_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
+    entities.extend(
+        ZoneRoomTemperatureSensor(controller, entry.entry_id, f"zone_room_temperature_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
     async_add_entities(entities)
 
 
@@ -752,6 +756,53 @@ class _ZoneMetricSensor(ControllerEntity, SensorEntity):
     def _zone_name(self) -> str:
         zone = self._zone
         return zone.name if zone is not None else self._zone_id
+
+
+class ZoneRoomTemperatureSensor(ControllerEntity, SensorEntity):
+    """Die echte Raumluft, mit der V2 rechnet (konfigurierte Luftquelle).
+
+    Nicht der Innengerät-Fühler, sondern exakt die Entity, die als
+    Temperaturquelle der Zone eingestellt ist (z. B. AirQuality am Sofa).
+    """
+
+    _attr_native_unit_of_measurement = "°C"
+    _attr_device_class = "temperature"
+    _attr_state_class = "measurement"
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        return next((z for z in self.controller.config.house_zones if z.zone_id == self._zone_id), None)
+
+    @property
+    def name(self) -> str:
+        zone = self._zone
+        return f"{(zone.name if zone else self._zone_id)} – Raumtemperatur (Luft)"
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._zone
+        if zone is None:
+            return None
+        state = self.hass.states.get(zone.temperature_entity_id)
+        if state is None:
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        state = self.hass.states.get(zone.temperature_entity_id) if zone else None
+        return {
+            "source_entity_id": zone.temperature_entity_id if zone else None,
+            "last_reported": state.last_updated if state else None,
+        }
 
 
 class ZoneTemperatureGradientSensor(_ZoneMetricSensor):
