@@ -187,7 +187,7 @@ class PVClimateController:
         living_room_profile = next((item for item in zones if item.name.strip().casefold() == "wohnzimmer"), None)
         if living_room_profile is not None:
             zone = living_room_profile
-        configured_minimum_surplus_w = float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 400.0)))
+        configured_minimum_surplus_w = float(options.get(CONF_MIN_PV_SURPLUS_W, data.get(CONF_MIN_PV_SURPLUS_W, 150.0)))
         # Older builds allowed 0 W, which turns an idle meter into a permanent
         # PV approval. Treat that legacy value as invalid configuration rather
         # than silently downgrading the safe default to 100 W after restart.

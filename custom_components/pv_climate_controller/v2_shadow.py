@@ -51,9 +51,10 @@ class V2ShadowRunner:
     _LIVING_NO_PV_URGENT_GAP_C = 1.0
     # A momentary export spike must not wake a lower-priority compressor only
     # to stop it again with the next cloud sample.  Normal room starts require
-    # five continuous minutes of real headroom; living-room comfort and sleep
+    # three continuous minutes of real headroom (household tuning 0.4.55:
+    # earlier PV-budget starts); living-room comfort and sleep
     # deadlines remain deliberate, visible exceptions.
-    _NORMAL_START_SURPLUS_STABLE_S = 5 * 60
+    _NORMAL_START_SURPLUS_STABLE_S = 3 * 60
     # Occupied-evening fallback (no per-room presence yet): stop as soon as
     # comfort is reached and restart only after a clearly larger breach, so
     # the evening sofa / bedrooms stay draft-free.  Household tuning 0.4.52:
@@ -357,7 +358,7 @@ class V2ShadowRunner:
             return V2ShadowRunner._hold(
                 room,
                 "occupied_comfort_hysteresis",
-                "V2 Abendanwesenheit: kühlt erst wieder, wenn die Prognose mehr als 1,0 K über dem Komfort liegt (Zugluftschutz).",
+                "V2 Abendanwesenheit: kühlt erst wieder, wenn die Prognose mehr als 0,5 K über dem Komfort liegt (Zugluftschutz).",
             )
         living_room_priority = (
             room.policy.display_name.strip().casefold() == "wohnzimmer"
