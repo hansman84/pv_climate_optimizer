@@ -695,7 +695,14 @@ def _v2_room_inputs(
             ),
             pv_surplus_threshold_w=controller.config.min_pv_surplus_w,
         )
-        result.append(replace(built, outdoor_cooling_gate=outdoor_cooling_gate))
+        result.append(
+            replace(
+                built,
+                outdoor_cooling_gate=outdoor_cooling_gate
+                if zone.name.strip().casefold() == "wohnzimmer"
+                else None,
+            )
+        )
     return tuple(result)
 
 
