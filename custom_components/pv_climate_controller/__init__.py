@@ -758,15 +758,12 @@ def _v2_sleeping_room_device_target(
         return None
     quiet_value = controller.config.bedroom_quiet_time if normalized == "schlafzimmer" else controller.config.bedroom_cutoff_time
     quiet = _v2_schedule_time(quiet_value, time(22, 0))
-    now_minutes = local_now.hour * 60 + local_now.minute
-    deadline_minutes = quiet.hour * 60 + quiet.minute
-    remaining_h = max(0.0, (deadline_minutes - now_minutes) / 60.0)
-    # 1.5 C above the sleep promise four hours before quiet time, converging
-    # gently over the final three hours.  It avoids a fixed 20 C setpoint
-    # while still leaving room for a forecast-based escalation.
-    staged = comfort_target_c + min(1.5, max(0.0, remaining_h - 1.0) * 0.5)
-    risk_c = max(0.0, (forecast_c or comfort_target_c) - comfort_target_c)
-    staged -= min(1.5, risk_c * 1.5)
+    # Household decision (2026-09-08): pre-cooling aims exactly at the
+    # comfort temperature and never below it - neither a warm early-evening
+    # relaxation nor a risk-based colder chase.  The sleep promise itself is
+    # handled by the bedroom windows; during pre-cooling the room is simply
+    # held at comfort.
+    staged = comfort_target_c
     return round(max(lower, min(upper, staged)), 1)
 
 
