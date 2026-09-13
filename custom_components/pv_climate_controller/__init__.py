@@ -516,6 +516,7 @@ def _v2_outdoor_cooling_gate(
         weather_state,
         room_temperature_c=room_temperature_c,
         pv_forecast_w=pv_forecast_w,
+        acute_cooling_limit_c=living_zone.acute_cooling_limit_c,
     )
     if result is None:
         return None
@@ -559,6 +560,9 @@ def _v2_room_inputs(
             if evening_comfort_active
             else _v2_sleeping_room_comfort_target(controller, zone.name)
         )
+        gate_acute_target = getattr(outdoor_cooling_gate, "acute_target_c", None)
+        if gate_acute_target is not None and zone.name.strip().casefold() == "wohnzimmer":
+            effective_comfort_temperature = float(gate_acute_target)
         contextual_forecast = contextual_temperature_forecast(
             house_states[zone.zone_id][0].temperature_c,
             None if forecast is None else forecast.trend_c_per_h,
@@ -672,6 +676,7 @@ def _v2_room_inputs(
             evening_window_active=evening_window_active,
             occupied_window_active=_v2_occupied_window_active(local_now.time()),
             quiet_fan_active=bool(getattr(zone, "quiet_fan", True)),
+            acute_cooling_limit_c=zone.acute_cooling_limit_c,
             evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
                 controller, zone.name, local_now.time(),
                 contextual_forecast.predicted_temperature_60m_c,

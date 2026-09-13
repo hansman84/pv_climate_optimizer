@@ -112,6 +112,31 @@ class V2ShadowRunner:
                 reason_text=f"V2 Outdoor-Cooling-Gate: {gate.reason_text}",
                 safety_override=False,
             )
+        acute_limit = getattr(room, "acute_cooling_limit_c", None)
+        acute_air = room.estimate.temperature_c
+        if (
+            acute_limit is not None
+            and acute_air is not None
+            and acute_air >= acute_limit
+            and room.observed_hvac_mode != "cool"
+            and room.eligibility.reason_code != "bedroom_quiet_time"
+        ):
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.START,
+                # The household guard is a safety promise: it cools even when
+                # no learned power estimate exists yet (0 W requested).
+                required_budget_w=0.0,
+                comfort_gap_c=acute_air - room.comfort_temperature_c,
+                confidence=room.estimate.confidence,
+                reason_code="indoor_acute_need",
+                reason_text=(
+                    f"V2 Akute Kuehlgrenze ({acute_limit:.1f} C): Raumluft {acute_air:.1f} C - "
+                    "Kuehlung wird auch ohne PV-Reserve oder gegen einen Hold freigegeben."
+                ),
+                safety_override=True,
+                target_after_c=room.scheduled_target_temperature_c or room.comfort_temperature_c,
+            )
         if room.eligibility.reason_code in {"bedroom_schedule_pending", "bedroom_quiet_time"}:
             if room.observed_hvac_mode == "cool":
                 return RoomCandidate(

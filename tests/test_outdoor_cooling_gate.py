@@ -55,6 +55,34 @@ def test_holds_when_today_max_outdoor_is_well_below_comfort() -> None:
     assert decision.reason_code == "outdoor_today_cool"
 
 
+def test_acute_limit_overrides_rain_and_mild_holds() -> None:
+    def _inputs(room: float, limit):
+        return gate.OutdoorGateInputs(
+            room_temperature_c=room,
+            comfort_temperature_c=25.0,
+            relaxation_band_c=1.5,
+            no_active_cooling_c=0.5,
+            rain_hold_probability_pct=60.0,
+            forecast=gate.OutdoorForecast(
+                hours=tuple(
+                    {"datetime": f"2026-09-10T{h:02d}:00", "temperature": 17.0, "precipitation_probability": 70}
+                    for h in (12, 13, 14)
+                )
+            ),
+            live=gate.OutdoorLive(temperature_c=21.0, uv_index=1.0, cloud_coverage_pct=90.0),
+            pv_forecast_w=0.0,
+            pv_boost_extra_w=0.0,
+            acute_cooling_limit_c=limit,
+        )
+
+    assert gate.evaluate_outdoor_cooling_gate(_inputs(25.0, None)).decision == "rain_hold"
+    acute = gate.evaluate_outdoor_cooling_gate(_inputs(25.0, 24.9))
+    assert acute.decision == "comfort"
+    assert acute.reason_code == "indoor_acute_need"
+    assert acute.acute_target_c == 24.9
+    assert gate.evaluate_outdoor_cooling_gate(_inputs(24.0, 24.9)).decision == "rain_hold"
+
+
 def test_acute_indoor_need_overrides_mild_day_hold() -> None:
     """Solar load through glazing must not be blocked by a mild outdoor day."""
     decision = gate.evaluate_outdoor_cooling_gate(

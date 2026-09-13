@@ -60,6 +60,7 @@ class OutdoorGateInputs:
     live: OutdoorLive
     pv_forecast_w: float | None
     pv_boost_extra_w: float
+    acute_cooling_limit_c: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.relaxation_band_c, (int, float)) or self.relaxation_band_c <= 0:
@@ -82,6 +83,9 @@ class OutdoorGateDecision:
     reason_code: str
     reason_text: str
     gates: dict[str, bool]
+    # Set when the acute indoor-air guard overrode a hold: the room is cooled
+    # toward this absolute target even though the gate would otherwise pause.
+    acute_target_c: float | None = None
 
     def __post_init__(self) -> None:
         allowed = {"hold", "comfort", "pv_boosted", "rain_hold"}
@@ -161,6 +165,21 @@ def evaluate_outdoor_cooling_gate(inputs: OutdoorGateInputs) -> OutdoorGateDecis
     }
 
     relaxation_target: float | None = None
+    # Acute air guard: absolute limit set by the household (dashboard number).
+    acute_limit = inputs.acute_cooling_limit_c
+    if acute_limit is not None and room is not None and room >= acute_limit:
+        return OutdoorGateDecision(
+            decision="comfort",
+            relaxation_target_c=None,
+            today_max_outdoor_c=today_max,
+            reason_code="indoor_acute_need",
+            reason_text=(
+                f"Akute Kuehlgrenze erreicht: Raumluft {room:.1f} C auf/ueber Grenze "
+                f"{acute_limit:.1f} C - Kuehlung trotz Gate freigegeben."
+            ),
+            gates=gates,
+            acute_target_c=acute_limit,
+        )
     equilibrium_target = (
         live_temp - 1.0
         if live_temp is not None and room is not None and (room - live_temp) < inputs.relaxation_band_c

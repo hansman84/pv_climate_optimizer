@@ -27,6 +27,10 @@ class ZoneConfig:
     minimum_plausible_temperature_c: float = 5.0
     maximum_plausible_temperature_c: float = 50.0
     use_climate_temperature_fallback: bool = False
+    # Absolute air-temperature guard: at or above this measured room air the
+    # controller cools even against mild-day / rain / equilibrium holds.
+    # None means "use the legacy comfort + 0.3 K margin".
+    acute_cooling_limit_c: float | None = None
     # Draft-sensitive zone: the controller forces the quiet fan stage on its
     # own commands.  Sleep/child rooms may disable this and let the device
     # automatic fan modulation run (2026-09-06 household request).

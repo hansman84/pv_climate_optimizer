@@ -66,6 +66,11 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             modulation_priority=max(1, int(item.get("modulation_priority", 50))),
             pilot_enabled=bool(item.get("pilot_enabled", default_pilot_enabled)),
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
+            acute_cooling_limit_c=(
+                float(item["acute_cooling_limit_c"])
+                if item.get("acute_cooling_limit_c") is not None
+                else None
+            ),
             quiet_fan=bool(item.get("quiet_fan", True)),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
@@ -92,6 +97,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "modulation_priority": zone.modulation_priority,
         "pilot_enabled": zone.pilot_enabled,
         "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
+        "acute_cooling_limit_c": zone.acute_cooling_limit_c,
         "quiet_fan": zone.quiet_fan,
         "shade_entity_ids": list(zone.shade_entity_ids),
         "facade_azimuths": list(zone.facade_azimuths),
@@ -1101,7 +1107,7 @@ class PVClimateController:
             self.outdoor_comfort_candidate_since = None
         return replace(zone, comfort_temperature=self.effective_living_room_comfort_temperature)
 
-    def evaluate_outdoor_cooling_gate(self, weather_state, *, room_temperature_c: float | None, pv_forecast_w: float | None) -> object:
+    def evaluate_outdoor_cooling_gate(self, weather_state, *, room_temperature_c: float | None, pv_forecast_w: float | None, acute_cooling_limit_c: float | None = None) -> object:
         """Evaluate the outdoor cooling gate for the Wohnzimmer pilot.
 
         Returns a tuple ``(decision, snapshot)`` where ``decision`` is the
@@ -1127,6 +1133,7 @@ class PVClimateController:
             pv_forecast_w=pv_forecast_w,
             pv_boost_extra_w=self.config.outdoor_pv_boost_extra_w,
             forecast_hours=self.last_outdoor_forecast_hours or None,
+            acute_cooling_limit_c=acute_cooling_limit_c,
         )
         if snapshot.inputs is None:
             return None
@@ -1496,6 +1503,7 @@ class PVClimateController:
         pilot_max_target_temperature: float | None = None,
         hard_limit_failsafe_offset_c: float | None = None,
         priority: int | None = None,
+        acute_cooling_limit_c: float | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
         updated: list[ZoneConfig] = []
@@ -1519,6 +1527,11 @@ class PVClimateController:
                 pilot_max_target_temperature=pilot_max,
                 hard_limit_failsafe_offset_c=failsafe_offset,
                 priority=zone.priority if priority is None else max(1, min(100, int(priority))),
+                acute_cooling_limit_c=(
+                    zone.acute_cooling_limit_c
+                    if acute_cooling_limit_c is None
+                    else max(16.0, min(32.0, float(acute_cooling_limit_c)))
+                ),
             ))
         zones = tuple(updated)
         selected_zone = self.config.zone

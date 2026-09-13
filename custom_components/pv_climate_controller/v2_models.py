@@ -170,6 +170,9 @@ class V2RoomInput:
     pv_surplus_threshold_w: float = 100.0
     # Draft-sensitive zones force the quiet fan; others may run automatic.
     quiet_fan_active: bool = True
+    # Absolute air guard (dashboard-editable): at/above this the room cools
+    # even against pv/occupied holds. None = legacy margin behaviour.
+    acute_cooling_limit_c: float | None = None
     # Time-based occupied-evening fallback (17:30-23:30) until per-room
     # presence sensors exist: rooms stop as soon as comfort is reached and
     # only restart after a clearly larger forecast breach.

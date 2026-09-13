@@ -42,6 +42,7 @@ def build_outdoor_cooling_inputs(
     pv_forecast_w: float | None,
     pv_boost_extra_w: float,
     forecast_hours: tuple[dict[str, Any], ...] | None = None,
+    acute_cooling_limit_c: float | None = None,
 ) -> OutdoorCoolingSnapshot:
     """Build the gate inputs from raw HA values, never raising."""
 
@@ -130,6 +131,7 @@ def build_outdoor_cooling_inputs(
         ),
         pv_forecast_w=pv_forecast_w,
         pv_boost_extra_w=pv_boost_extra_w,
+        acute_cooling_limit_c=acute_cooling_limit_c,
     )
 
     return OutdoorCoolingSnapshot(

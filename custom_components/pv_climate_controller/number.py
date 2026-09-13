@@ -36,6 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZonePilotMaxTargetTemperatureNumber(controller, entry.entry_id, f"zone_pilot_max_target_temperature_{index}", zone.zone_id),
             ZoneHardLimitFailsafeOffsetNumber(controller, entry.entry_id, f"zone_hard_limit_failsafe_offset_{index}", zone.zone_id),
             ZonePriorityNumber(controller, entry.entry_id, f"zone_priority_{index}", zone.zone_id),
+            ZoneAcuteCoolingLimitNumber(controller, entry.entry_id, f"zone_acute_cooling_limit_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
 
@@ -257,6 +258,63 @@ class ZoneHardMaxTemperatureNumber(ZoneComfortTemperatureNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_zone_thermal_settings(self._zone_id, hard_max_temperature=value)
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZoneAcuteCoolingLimitNumber(_ZoneSettingNumber):
+    """Absolute air-temperature guard - editable and explained in the UI.
+
+    At or above this measured room-air temperature the controller cools the
+    room even when the outdoor gate would otherwise hold (mild day, rain
+    streak, outdoor-air equilibrium).  It is intentionally an absolute value
+    so the household can read it directly on the dashboard; the default is
+    comfort + 0.9 K.  Relation: it only ever *adds* cooling below the
+    gate's relaxed target, never raises any other threshold.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 18.0
+    _attr_native_max_value = 30.0
+    _attr_native_step = 0.1
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Akute Kühlgrenze"
+
+    def _default_limit(self) -> float | None:
+        zone = self._zone
+        if zone is None:
+            return None
+        return round(zone.comfort_temperature + 0.9, 1)
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._zone
+        if zone is None:
+            return None
+        if zone.acute_cooling_limit_c is not None:
+            return zone.acute_cooling_limit_c
+        return self._default_limit()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        zone = self._zone
+        return {
+            "erklaerung": (
+                "Steigt die echte Raumluft auf oder über diesen Wert, kühlt der "
+                "Controller auch dann, wenn der Tag mild, eine Regenstrecke aktiv "
+                "oder das Außenluft-Gleichgewicht erreicht ist. Standard: "
+                "Komforttemperatur + 0,9 K."
+            ),
+            "quelle": "pv_klimaregler_wohnzimmer_raumtemperatur_luft" if zone is None else f"pv_klimaregler_{zone.name.strip().casefold()}_raumtemperatur_luft",
+            "ist_standard": zone is None or zone.acute_cooling_limit_c is None,
+        }
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(self._zone_id, acute_cooling_limit_c=value)
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 
