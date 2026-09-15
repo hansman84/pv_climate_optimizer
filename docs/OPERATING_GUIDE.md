@@ -39,6 +39,37 @@ So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
 Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 `dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
+## Haushalts-Regler (V2, Stand 0.4.58)
+
+Auf der Dashboard-Detailseite jedes Raums liegt der Block **Kühl-Logik** mit
+zwei editierbaren Zahlen. Beide sind Haushaltsentscheidungen, keine
+Technikwerte – sie verschieben nur, *wann* V2 kühlen darf:
+
+1. **Akute Kühlgrenze (Standard: Komforttemperatur + 0,9 K).** Steigt die
+   echte Raumluft auf oder über diesen Wert, kühlt V2 auch dann, wenn der Tag
+   mild, eine Regenstrecke aktiv oder das Außenluft-Gleichgewicht erreicht
+   ist. Kleiner = kühler/mehr Laufzeit, größer = sparsamer/wärmer.
+2. **Kühlung erst ab Aussentemperatur (Default Obergeschoss 20 °C,
+   Wohnzimmer/Speis 0 = aus).** Liegt die Außentemperatur darunter, wird der
+   Raum nicht gekühlt – gedacht für Schlaf-, Kinder- und Spielzimmer, damit an
+   kühlen Tagen nicht gegen eine laufende Heizung gekühlt wird. `0` schaltet
+   die Regel ab.
+
+**Dead-End:** Die harte Temperaturgrenze (z. B. 26 °C) ist ein echtes
+Notaus: Sie übersteuert Saison-Sperre, Außengrenze, Ruhezeit und
+PV-Wartezeiten. Ab dort kühlt V2 unabhängig von allen Holds.
+
+**Schlafräume:** Vorkühlung (15:30 bis Ruhezeit) zielt auf die
+Zonen-Komforttemperatur, nicht mehr auf das Nachtziel
+(`Schlafraum-Abendzieltemperatur`, Default 22,5 °C). Die Vorkühlung war bis
+0.4.57 die Ursache für „zu kalte" Schlaf-/Kinderzimmer (Gerät rundete 22,5 auf
+22). Zusätzlich sichern zwei HA-Watchdogs, dass Schlaf- und Kinderzimmer nie
+unter 23 °C gekühlt werden.
+
+**Priorität der Regeln (von stark nach schwach):** Dead-End harte Grenze →
+Saison-/Urlaubssperre → Außengrenze pro Raum → Ruhezeit/Bedroom-Fenster →
+akute Kühlgrenze → Komfort-/PV-Logik.
+
 ## Dashboard
 
 Das Dashboard **PV Klimaregler** hat zwei bewusst unterschiedliche Ansichten:
@@ -96,3 +127,11 @@ Eine fehlende Prognose ist keine erfundene Schätzung.
 Ein produktiver Pilot ist ausdrücklich nicht enthalten. Vor einer späteren
 Freigabe müssen Shadow-Plan, Betriebszustände und Hausbudget über reale
 Szenarien geprüft und separat abgenommen werden.
+# V2.1 local review boundary
+
+V2.1 is reviewed locally. Use `pytest -q`, `python3 -m compileall -q
+custom_components/pv_climate_controller`, and open
+`docs/v2.1_simulation.html` in an offline browser. The Lovelace YAML is a
+draft only. Do not deploy it from this repository; do not modify legacy
+automations. Existing thermal, power, house-learning, and manual-takeover
+records are preserved across upgrade/restart.
