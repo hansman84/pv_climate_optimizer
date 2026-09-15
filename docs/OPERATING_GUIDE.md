@@ -55,9 +55,10 @@ Technikwerte – sie verschieben nur, *wann* V2 kühlen darf:
    kühlen Tagen nicht gegen eine laufende Heizung gekühlt wird. `0` schaltet
    die Regel ab.
 
-**Dead-End:** Die harte Temperaturgrenze (z. B. 26 °C) ist ein echtes
-Notaus: Sie übersteuert Saison-Sperre, Außengrenze, Ruhezeit und
-PV-Wartezeiten. Ab dort kühlt V2 unabhängig von allen Holds.
+**Dead-End:** Die harte Temperaturgrenze (z. B. 26 °C) übersteuert die
+weichen Regeln eines Raums (Außengrenze, Ruhezeit, PV-Holds) – aber **nur
+solange Kühlen eingeschaltet ist**. Ist der Kühlsaison-Schalter aus (oder
+Urlaub aktiv), kühlt gar nichts, auch der Dead-End nicht (0.4.59).
 
 **Schlafräume:** Vorkühlung (15:30 bis Ruhezeit) zielt auf die
 Zonen-Komforttemperatur, nicht mehr auf das Nachtziel

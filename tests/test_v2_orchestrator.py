@@ -7,6 +7,7 @@ import json
 import sys
 import types
 from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -965,15 +966,45 @@ def test_command_planner_keeps_quiet_airflow_when_relaxing() -> None:
     assert plan.fan_mode == "low"
 
 
-def test_shadow_dead_end_cools_even_when_the_season_blocks_everything() -> None:
-    """Household rule: the hard limit is a dead-end, nothing may block it."""
+def test_shadow_dead_end_is_off_while_cooling_is_switched_off() -> None:
+    """Household rule: cooling off means *nothing* cools - no dead-end."""
     base = _shadow_room()
-    blocked = models.EligibilityDecision(False, "cooling_season_inactive", "ausserhalb der Saison")
+    off = replace(
+        base.snapshot,
+        cooling_season_allowed=models.InputValue(
+            "input_boolean.season", False, None, 1.0, models.InputQuality.VALID, "season_off"
+        ),
+    )
     room = models.V2RoomInput(
         base.policy,
+        off,
+        models.RoomEstimate("living", 27.2, 0.2, 27.4, 0.8, -0.7, ("trend",), "forecast_ready"),
+        models.EligibilityDecision(False, "cooling_season_inactive", "ausserhalb der Saison"),
+        23.5,
+        26.0,
+        400.0,
+    )
+
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "cooling_season_inactive"
+    assert candidates[0].action is models.CandidateAction.HOLD
+
+
+def test_shadow_dead_end_beats_soft_room_blocks_while_cooling_is_on() -> None:
+    """With cooling on, the hard limit still overrides quiet time and holds."""
+    base = _shadow_room()
+    on_snapshot = replace(
         base.snapshot,
+        vacation_active=models.InputValue(
+            "input_boolean.vacation", False, None, 1.0, models.InputQuality.VALID, "home"
+        ),
+    )
+    room = models.V2RoomInput(
+        base.policy,
+        on_snapshot,
         models.RoomEstimate("living", 26.4, 0.2, 26.6, 0.8, -0.7, ("trend",), "forecast_ready"),
-        blocked,
+        models.EligibilityDecision(False, "bedroom_quiet_time", "Ruhezeit"),
         23.5,
         26.0,
         400.0,

@@ -85,9 +85,19 @@ class V2ShadowRunner:
 
     def _candidate(self, room: V2RoomInput) -> RoomCandidate:
         # Hard dead-end (household rule): at or above the hard limit the room
-        # is cooled regardless of season, outdoor floor, quiet time or PV.
+        # is cooled against per-room soft rules (outdoor floor, quiet time,
+        # PV holds) - but only while cooling is switched on globally.  With
+        # the cooling-season switch off (or vacation active) nothing cools.
+        cooling_globally_off = (
+            room.snapshot.cooling_season_allowed.value is False
+            or room.snapshot.vacation_active.value is True
+        )
         dead_end_air = room.estimate.temperature_c
-        if dead_end_air is not None and dead_end_air >= room.hard_max_temperature_c:
+        if (
+            not cooling_globally_off
+            and dead_end_air is not None
+            and dead_end_air >= room.hard_max_temperature_c
+        ):
             if room.observed_hvac_mode != "cool":
                 return RoomCandidate(
                     policy=room.policy,
