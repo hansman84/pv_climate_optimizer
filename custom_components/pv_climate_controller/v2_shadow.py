@@ -84,6 +84,32 @@ class V2ShadowRunner:
         return candidates, decision
 
     def _candidate(self, room: V2RoomInput) -> RoomCandidate:
+        # Hard dead-end (household rule): at or above the hard limit the room
+        # is cooled regardless of season, outdoor floor, quiet time or PV.
+        dead_end_air = room.estimate.temperature_c
+        if dead_end_air is not None and dead_end_air >= room.hard_max_temperature_c:
+            if room.observed_hvac_mode != "cool":
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.START,
+                    required_budget_w=0.0,
+                    comfort_gap_c=max(0.0, dead_end_air - room.comfort_temperature_c),
+                    confidence=room.estimate.confidence,
+                    reason_code="hard_temperature_limit_failsafe",
+                    reason_text="V2 Dead-End: harte Temperaturgrenze erreicht - die Kuehlung startet unabhaengig von Saison, Aussengrenze und Ruhezeit.",
+                    safety_override=True,
+                )
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.ADJUST,
+                required_budget_w=0.0,
+                comfort_gap_c=max(0.0, dead_end_air - room.comfort_temperature_c),
+                confidence=room.estimate.confidence,
+                reason_code="hard_temperature_limit_failsafe",
+                reason_text="V2 Dead-End: harte Temperaturgrenze erreicht - der laufende Betrieb wird gehalten.",
+                safety_override=True,
+                target_after_c=room.comfort_temperature_c,
+            )
         # The outdoor cooling gate is a transparent, weather-aware pause that
         # lives between the hard failsafe and the bedroom quiet-time handling.
         # The hard failsafe, manual takeover and bedroom rules are unaffected;
@@ -111,31 +137,6 @@ class V2ShadowRunner:
                 reason_code="outdoor_cooling_gate_rain_hold",
                 reason_text=f"V2 Outdoor-Cooling-Gate: {gate.reason_text}",
                 safety_override=False,
-            )
-        acute_limit = getattr(room, "acute_cooling_limit_c", None)
-        acute_air = room.estimate.temperature_c
-        if (
-            acute_limit is not None
-            and acute_air is not None
-            and acute_air >= acute_limit
-            and room.observed_hvac_mode != "cool"
-            and room.eligibility.reason_code != "bedroom_quiet_time"
-        ):
-            return RoomCandidate(
-                policy=room.policy,
-                action=CandidateAction.START,
-                # The household guard is a safety promise: it cools even when
-                # no learned power estimate exists yet (0 W requested).
-                required_budget_w=0.0,
-                comfort_gap_c=acute_air - room.comfort_temperature_c,
-                confidence=room.estimate.confidence,
-                reason_code="indoor_acute_need",
-                reason_text=(
-                    f"V2 Akute Kuehlgrenze ({acute_limit:.1f} C): Raumluft {acute_air:.1f} C - "
-                    "Kuehlung wird auch ohne PV-Reserve oder gegen einen Hold freigegeben."
-                ),
-                safety_override=True,
-                target_after_c=room.scheduled_target_temperature_c or room.comfort_temperature_c,
             )
         if room.eligibility.reason_code in {"bedroom_schedule_pending", "bedroom_quiet_time"}:
             if room.observed_hvac_mode == "cool":
@@ -169,6 +170,32 @@ class V2ShadowRunner:
                 reason_code="hard_temperature_limit_failsafe",
                 reason_text="V2 Fail-safe: die harte Raumtemperaturgrenze ist erreicht; das Klimagerät wird mit einem bestätigten, milden Sollwert gestartet.",
                 safety_override=True,
+            )
+        # Acute cooling guard (household setting): only for rooms that are
+        # legitimately eligible right now - season, outdoor floor, bedroom
+        # quiet time and fail-safe handling above keep their priority.
+        acute_limit = getattr(room, "acute_cooling_limit_c", None)
+        acute_air = room.estimate.temperature_c
+        if (
+            acute_limit is not None
+            and acute_air is not None
+            and acute_air >= acute_limit
+            and room.observed_hvac_mode != "cool"
+            and room.eligibility.allowed
+        ):
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.START,
+                required_budget_w=0.0,
+                comfort_gap_c=acute_air - room.comfort_temperature_c,
+                confidence=room.estimate.confidence,
+                reason_code="indoor_acute_need",
+                reason_text=(
+                    f"V2 Akute Kuehlgrenze ({acute_limit:.1f} C): Raumluft {acute_air:.1f} C - "
+                    "Kuehlung wird auch ohne PV-Reserve oder gegen einen Hold freigegeben."
+                ),
+                safety_override=True,
+                target_after_c=room.scheduled_target_temperature_c or room.comfort_temperature_c,
             )
         # V1's essential wind-down rule: without export, do not leave an
         # already comfortable room running merely because its old device

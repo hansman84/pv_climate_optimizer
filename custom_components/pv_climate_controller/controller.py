@@ -71,6 +71,11 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
                 if item.get("acute_cooling_limit_c") is not None
                 else None
             ),
+            min_outdoor_cooling_temperature_c=(
+                float(item["min_outdoor_cooling_temperature_c"])
+                if item.get("min_outdoor_cooling_temperature_c") is not None
+                else None
+            ),
             quiet_fan=bool(item.get("quiet_fan", True)),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
@@ -98,6 +103,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "pilot_enabled": zone.pilot_enabled,
         "use_climate_temperature_fallback": zone.use_climate_temperature_fallback,
         "acute_cooling_limit_c": zone.acute_cooling_limit_c,
+        "min_outdoor_cooling_temperature_c": zone.min_outdoor_cooling_temperature_c,
         "quiet_fan": zone.quiet_fan,
         "shade_entity_ids": list(zone.shade_entity_ids),
         "facade_azimuths": list(zone.facade_azimuths),
@@ -1504,6 +1510,7 @@ class PVClimateController:
         hard_limit_failsafe_offset_c: float | None = None,
         priority: int | None = None,
         acute_cooling_limit_c: float | None = None,
+        min_outdoor_cooling_temperature_c: float | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
         updated: list[ZoneConfig] = []
@@ -1531,6 +1538,11 @@ class PVClimateController:
                     zone.acute_cooling_limit_c
                     if acute_cooling_limit_c is None
                     else max(16.0, min(32.0, float(acute_cooling_limit_c)))
+                ),
+                min_outdoor_cooling_temperature_c=(
+                    zone.min_outdoor_cooling_temperature_c
+                    if min_outdoor_cooling_temperature_c is None
+                    else max(0.0, min(32.0, float(min_outdoor_cooling_temperature_c)))
                 ),
             ))
         zones = tuple(updated)

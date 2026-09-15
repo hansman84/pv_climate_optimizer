@@ -31,6 +31,9 @@ class ZoneConfig:
     # controller cools even against mild-day / rain / equilibrium holds.
     # None means "use the legacy comfort + 0.3 K margin".
     acute_cooling_limit_c: float | None = None
+    # Outdoor floor for cooling (upstairs rule): below this outdoor
+    # temperature the room is not cooled at all - only the hard limit stays.
+    min_outdoor_cooling_temperature_c: float | None = None
     # Draft-sensitive zone: the controller forces the quiet fan stage on its
     # own commands.  Sleep/child rooms may disable this and let the device
     # automatic fan modulation run (2026-09-06 household request).

@@ -589,6 +589,25 @@ def _v2_room_inputs(
             eligibility = EligibilityDecision(False, "cooling_season_inactive", "V2 Shadow: automatische Kühlung ist außerhalb der Saison gesperrt.")
         else:
             eligibility = _v2_bedroom_schedule_eligibility(controller, zone.name, local_now.time())
+        min_outdoor = _v2_effective_min_outdoor_cooling_temperature(zone)
+        outdoor_now = _v2_numeric_input(
+            hass.states.get(controller.config.outdoor_temperature_entity_id or "sensor.aussentemperatur"),
+            controller.config.outdoor_temperature_entity_id or "sensor.aussentemperatur",
+            "°C",
+        )
+        if (
+            eligibility.allowed
+            and min_outdoor is not None
+            and outdoor_now.is_valid
+            and isinstance(outdoor_now.value, (int, float))
+            and float(outdoor_now.value) < min_outdoor
+        ):
+            eligibility = EligibilityDecision(
+                False,
+                "outdoor_too_cold_no_cooling",
+                f"{zone.name}: Aussenluft {float(outdoor_now.value):.1f} C unter der Kuehlgrenze "
+                f"{min_outdoor:.1f} C - im Obergeschoss wird nicht gekuehlt (nur harte Grenze).",
+            )
         built = V2RoomInput(
             # The visible room priority is the house-level commitment: a
             # larger configured value is more important (Wohnzimmer 91,
@@ -711,6 +730,17 @@ def _v2_room_inputs(
     return tuple(result)
 
 
+_UPSTAIRS_ZONES = {"schlafzimmer", "kinderzimmer", "spielzimmer"}
+
+
+def _v2_effective_min_outdoor_cooling_temperature(zone) -> float | None:
+    """Outdoor floor for cooling upstairs; None means "no floor"."""
+    value = getattr(zone, "min_outdoor_cooling_temperature_c", None)
+    if value is None:
+        return 20.0 if zone.name.strip().casefold() in _UPSTAIRS_ZONES else None
+    return value if value > 0 else None
+
+
 def _v2_bedroom_schedule_eligibility(
     controller: PVClimateController,
     zone_name: str,
@@ -736,10 +766,14 @@ def _v2_bedroom_schedule_eligibility(
 
 
 def _v2_sleeping_room_comfort_target(controller: PVClimateController, zone_name: str) -> float:
-    """Use the explicit sleeping promise, never the generic day-room comfort."""
-    if zone_name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}:
+    """Pre-cooling targets the room's day comfort, not the night promise."""
+    normalized = zone_name.strip().casefold()
+    for zone in controller.config.house_zones:
+        if zone.name.strip().casefold() == normalized:
+            return zone.comfort_temperature
+    if normalized in {"schlafzimmer", "kinderzimmer"}:
         return controller.config.bedroom_target_temperature
-    return next((zone.comfort_temperature for zone in controller.config.house_zones if zone.name == zone_name), 23.5)
+    return 23.5
 
 
 def _v2_sleeping_room_device_target(

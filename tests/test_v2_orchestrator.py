@@ -963,3 +963,62 @@ def test_command_planner_keeps_quiet_airflow_when_relaxing() -> None:
     assert plan.target_temperature_c == 22.0
     # Zugluftschutz: beim Entspannen auf die leise Stufe statt Auto zurück.
     assert plan.fan_mode == "low"
+
+
+def test_shadow_dead_end_cools_even_when_the_season_blocks_everything() -> None:
+    """Household rule: the hard limit is a dead-end, nothing may block it."""
+    base = _shadow_room()
+    blocked = models.EligibilityDecision(False, "cooling_season_inactive", "ausserhalb der Saison")
+    room = models.V2RoomInput(
+        base.policy,
+        base.snapshot,
+        models.RoomEstimate("living", 26.4, 0.2, 26.6, 0.8, -0.7, ("trend",), "forecast_ready"),
+        blocked,
+        23.5,
+        26.0,
+        400.0,
+    )
+
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "hard_temperature_limit_failsafe"
+    assert candidates[0].action is models.CandidateAction.START
+
+
+def test_shadow_acute_guard_is_blocked_by_the_outdoor_floor() -> None:
+    """The outdoor floor upstairs wins over the acute cooling guard."""
+    base = _shadow_room()
+    blocked = models.EligibilityDecision(False, "outdoor_too_cold_no_cooling", "Aussen zu kuehl")
+    room = models.V2RoomInput(
+        base.policy,
+        base.snapshot,
+        models.RoomEstimate("living", 25.2, 0.2, 25.4, 0.8, -0.7, ("trend",), "forecast_ready"),
+        blocked,
+        23.5,
+        26.0,
+        400.0,
+        acute_cooling_limit_c=24.9,
+    )
+
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=500.0)
+
+    assert candidates[0].reason_code != "indoor_acute_need"
+
+
+def test_shadow_acute_guard_starts_a_room_when_it_is_eligible() -> None:
+    base = _shadow_room()
+    room = models.V2RoomInput(
+        base.policy,
+        base.snapshot,
+        models.RoomEstimate("living", 25.2, 0.2, 25.4, 0.8, -0.7, ("trend",), "forecast_ready"),
+        models.EligibilityDecision(True, "v2_eligible", "Automatik ist zulaessig."),
+        23.5,
+        26.0,
+        400.0,
+        acute_cooling_limit_c=24.9,
+    )
+
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "indoor_acute_need"
+    assert candidates[0].action is models.CandidateAction.START

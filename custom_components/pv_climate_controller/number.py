@@ -37,6 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZoneHardLimitFailsafeOffsetNumber(controller, entry.entry_id, f"zone_hard_limit_failsafe_offset_{index}", zone.zone_id),
             ZonePriorityNumber(controller, entry.entry_id, f"zone_priority_{index}", zone.zone_id),
             ZoneAcuteCoolingLimitNumber(controller, entry.entry_id, f"zone_acute_cooling_limit_{index}", zone.zone_id),
+            ZoneMinOutdoorCoolingNumber(controller, entry.entry_id, f"zone_min_outdoor_cooling_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
 
@@ -243,6 +244,54 @@ class ZoneComfortTemperatureNumber(_ZoneSettingNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_zone_thermal_settings(self._zone_id, comfort_temperature=value)
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZoneMinOutdoorCoolingNumber(ZoneComfortTemperatureNumber):
+    """Outdoor floor for cooling this room (upstairs rule).
+
+    Below this outdoor temperature the room is not cooled automatically -
+    only the hard temperature limit stays as a dead-end. 0 disables the rule.
+    """
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Kühlung erst ab Aussentemperatur"
+
+    @property
+    def native_value(self) -> float:
+        zone = self._zone
+        value = None if zone is None else getattr(zone, "min_outdoor_cooling_temperature_c", None)
+        if value is None:
+            return 20.0 if self._zone_name.strip().casefold() in {"schlafzimmer", "kinderzimmer", "spielzimmer"} else 0.0
+        return float(value)
+
+    @property
+    def native_min_value(self) -> float:
+        return 0.0
+
+    @property
+    def native_max_value(self) -> float:
+        return 32.0
+
+    @property
+    def native_step(self) -> float:
+        return 0.5
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            "erklaerung": (
+                "Liegt die Aussentemperatur unter diesem Wert, wird dieser Raum nicht gekuehlt "
+                "(0 = Regel aus). Ausnahme: die harte Temperaturgrenze bleibt als Dead-End aktiv."
+            )
+        }
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(
+            self._zone_id, min_outdoor_cooling_temperature_c=float(value)
+        )
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 
