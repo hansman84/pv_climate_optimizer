@@ -39,6 +39,20 @@ So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
 Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 `dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
+## V1 entfernt (0.5.0)
+
+Der alte **V1-Pilot** ist vollständig entfernt: `pilot.py`, die `decide_*_pilot`-
+Pfade, Pilot-Schalter/-Buttons/-Sensoren sowie der V1-Failback existieren nicht
+mehr. V2 ist der **einzige** Reglerpfad; es gibt genau einen Schreiber.
+
+Statt `failback_v2_to_v1` gilt jetzt **Safe-Hold**: Schlägt ein V2-Kommando am
+Transport fehl, wird es verworfen (kein Retry-Sturm), das betroffene Gerät
+best-effort auf die entspannte Sollstufe (`<Zone> – Gerätesoll max`) angehoben
+und der Fehler pro Zone gezählt (`note_v2_transport_failure`).
+
+Die früheren „Pilot"-Zahlen sind reine **Gerätegrenzen** und werden von V2
+gelesen: `Gerätesoll min` / `Gerätesoll max` je Zone.
+
 ## Haushalts-Regler (V2, Stand 0.4.58)
 
 Auf der Dashboard-Detailseite jedes Raums liegt der Block **Kühl-Logik** mit

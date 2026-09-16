@@ -1,5 +1,9 @@
 # V1-Entfernung – Inventar und Plan (Stand 0.4.60)
 
+> **UMGESETZT in 0.5.0** (Release + HACS + HA-Neustart). 24 verwaiste Entities
+> wurden aus der HA-Registry entfernt, Dashboard *Klima-Steuerzentrale* bereinigt,
+> Tests 224 → 169 (V1-Suiten entfernt), `pilot.py` gelöscht.
+
 V1 (der ursprüngliche „PV-Pilot") ist seit Wochen **nicht mehr aktiv**: Alle
 Pilot-Schalter sind aus, V1 hat Schreibverbot (`v1_may_write = false`), und
 die Pilotentscheidungs-Sensoren melden „Pilot ist in der GUI ausgeschaltet".
