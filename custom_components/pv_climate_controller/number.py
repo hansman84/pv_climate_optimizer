@@ -383,7 +383,7 @@ class _ZonePilotTargetTemperatureNumber(_ZoneSettingNumber):
 class ZonePilotMinTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):
     @property
     def name(self) -> str:
-        return f"{self._zone_name} – Minimale Pilot-Zieltemperatur"
+        return f"{self._zone_name} – Gerätesoll min"
 
     @property
     def native_value(self) -> float:
@@ -398,7 +398,7 @@ class ZonePilotMinTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):
 class ZonePilotMaxTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):
     @property
     def name(self) -> str:
-        return f"{self._zone_name} – Maximale Pilot-Zieltemperatur"
+        return f"{self._zone_name} – Gerätesoll max"
 
     @property
     def native_value(self) -> float:

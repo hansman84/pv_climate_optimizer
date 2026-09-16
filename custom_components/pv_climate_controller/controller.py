@@ -17,7 +17,6 @@ from .house import HousePlan, ZoneTelemetry, build_house_plan
 from .house_learning import HouseLearningModel
 from .models import ControllerConfig, EMSGrant, EnergySnapshot, ThermalProfile, ThermalResponse, ZoneConfig, ZoneDecision, ZoneForecast, ZoneInput
 from .outdoor_unit import HISENSE_5AMW125U4RTA
-from .pilot import LivingRoomPilot, PilotAction
 from .power_learning import OutdoorPowerLearner, PowerEstimate
 from .thermal_budget import build_thermal_budget
 from .thermal_response import learn_thermal_response
@@ -137,20 +136,6 @@ class PVClimateController:
     power_learner: OutdoorPowerLearner = field(default_factory=OutdoorPowerLearner)
     last_power_estimates: dict[str, PowerEstimate] = field(default_factory=dict)
     house_learning: HouseLearningModel = field(default_factory=HouseLearningModel)
-    pilot: LivingRoomPilot = field(default_factory=LivingRoomPilot)
-    office_pilot: LivingRoomPilot = field(default_factory=lambda: LivingRoomPilot(expected_zone_name="Spielzimmer", display_name="Arbeitszimmer"))
-    speis_pilot: LivingRoomPilot = field(default_factory=lambda: LivingRoomPilot(
-        expected_zone_name="Speis",
-        display_name="Speis",
-        overshoot_margin_c=0.2,
-        overshoot_confirmation_s=60,
-        thermal_relief_observation_s=5 * 60,
-    ))
-    bedroom_pilots: dict[str, LivingRoomPilot] = field(default_factory=dict)
-    last_pilot_action: PilotAction | None = None
-    last_office_pilot_action: PilotAction | None = None
-    last_speis_pilot_action: PilotAction | None = None
-    last_bedroom_pilot_actions: dict[str, PilotAction] = field(default_factory=dict)
     v2_shadow_runner: V2ShadowRunner = field(default_factory=V2ShadowRunner)
     v2_command_planner: V2CommandPlanner = field(default_factory=V2CommandPlanner)
     last_v2_candidates: tuple[RoomCandidate, ...] = ()
@@ -158,6 +143,8 @@ class PVClimateController:
     last_v2_room_inputs: tuple[V2RoomInput, ...] = ()
     room_authority: RoomAuthorityRegistry = field(default_factory=RoomAuthorityRegistry)
     _last_v2_command_at: dict[str, float] = field(default_factory=dict)
+    _v2_transport_failures: dict[str, int] = field(default_factory=dict)
+    last_v2_transport_error: str | None = None
     heat_pump_priority_active: bool = False
     active_cooling_zone_count: int = 0
     effective_living_room_comfort_temperature: float | None = None
@@ -249,23 +236,13 @@ class PVClimateController:
             outdoor_rain_hold_probability_pct=float(options.get(CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, data.get(CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, 60.0))),
             outdoor_pv_boost_extra_w=float(options.get(CONF_OUTDOOR_PV_BOOST_EXTRA_W, data.get(CONF_OUTDOOR_PV_BOOST_EXTRA_W, 2000.0))),
         )
-        if config.v2_house_control_enabled:
-            v2_zones = tuple(replace(item, pilot_enabled=False) for item in config.house_zones)
-            v2_zone = next((item for item in v2_zones if config.zone is not None and item.zone_id == config.zone.zone_id), config.zone)
-            config = replace(
-                config,
-                living_room_pilot_enabled=False,
-                house_zones=v2_zones,
-                zone=v2_zone,
-            )
         controller = cls(
             config=config,
             command_adapter=ClimateCommandAdapter(
                 shadow_mode=False if config.v2_house_control_enabled else shadow_mode,
-                productive_enabled=config.v2_house_control_enabled or (config.living_room_pilot_enabled and not shadow_mode),
+                productive_enabled=config.v2_house_control_enabled,
             ),
         )
-        controller._ensure_bedroom_pilots()
         return controller
 
     def evaluate_v2_shadow(self, rooms: tuple[V2RoomInput, ...], *, available_budget_w: float) -> HouseDecision | None:
@@ -431,12 +408,6 @@ class PVClimateController:
             },
             "outdoor_power_samples": self.power_learner.export_state(),
             "house_power_observations": self.house_learning.export_state(now),
-            "pilot_runtime": {
-                "wohnzimmer": self.pilot.export_runtime_state(),
-                "arbeitszimmer": self.office_pilot.export_runtime_state(),
-                "speis": self.speis_pilot.export_runtime_state(),
-                "schlafraeume": {zone_id: pilot.export_runtime_state() for zone_id, pilot in self.bedroom_pilots.items()},
-            },
             "v2_room_authority": self.room_authority.export_state(),
             "command_adapter": self.command_adapter.export_state(),
         }
@@ -491,25 +462,12 @@ class PVClimateController:
         self.power_learner.restore_state(state.get("outdoor_power_samples"))
         self.house_learning.restore_state(state.get("house_power_observations"), now)
         self.room_authority = RoomAuthorityRegistry.restore(state.get("v2_room_authority"))
-        pilot_runtime = state.get("pilot_runtime")
-        if isinstance(pilot_runtime, dict):
-            self.pilot.restore_runtime_state(pilot_runtime.get("wohnzimmer"))
-            self.office_pilot.restore_runtime_state(pilot_runtime.get("arbeitszimmer"))
-            self.speis_pilot.restore_runtime_state(pilot_runtime.get("speis"))
-            bedrooms = pilot_runtime.get("schlafraeume")
-            if isinstance(bedrooms, dict):
-                self._ensure_bedroom_pilots()
-                for zone_id, room_pilot in self.bedroom_pilots.items():
-                    room_pilot.restore_runtime_state(bedrooms.get(zone_id))
-        if not self.config.manual_override_enabled:
-            self._clear_manual_override_state()
-
     @property
     def state(self) -> ControllerState:
         """Return an explicit, fail-safe global state."""
         if self.config.shadow_mode:
             return ControllerState.SHADOW
-        if self.config.living_room_pilot_enabled:
+        if self.config.v2_house_control_enabled:
             return ControllerState.AUTOMATIC
         return ControllerState.DISABLED
 
@@ -631,7 +589,7 @@ class PVClimateController:
     def set_shadow_mode(self, enabled: bool) -> None:
         """Update the UI-visible mode; the command adapter remains hard locked."""
         self.config = replace(self.config, shadow_mode=enabled)
-        self.command_adapter.set_operating_mode(shadow_mode=enabled, productive_enabled=self.config.living_room_pilot_enabled and not enabled)
+        self.command_adapter.set_operating_mode(shadow_mode=enabled, productive_enabled=self.config.v2_house_control_enabled and not enabled)
 
     def set_v2_shadow_enabled(self, enabled: bool) -> None:
         """Enable only V2 diagnostic comparison; it never changes V1's gate."""
@@ -651,20 +609,14 @@ class PVClimateController:
         """
         if not self.config.house_zones:
             return False
-        activated: list[str] = []
         for zone in self.config.house_zones:
             self.enable_v2_room_shadow(zone.zone_id)
             pending = self.begin_v2_handoff(zone.zone_id, preconditions_met=True)
             if pending.authority.value != "handoff_pending":
-                for room_id in activated:
-                    self.failback_v2_to_v1(room_id)
                 return False
             active = self.activate_v2_authority(zone.zone_id, observed_state_aligned=True)
             if not active.v2_may_write:
-                for room_id in activated:
-                    self.failback_v2_to_v1(room_id)
                 return False
-            activated.append(zone.zone_id)
         # A house-wide V2 takeover is also a persistent shutdown of every V1
         # pilot permission.  Authority already prevents V1 writes, but keeping
         # the old switches logically on after a restart is misleading and makes
@@ -673,8 +625,6 @@ class PVClimateController:
             self.config,
             v2_shadow_enabled=True,
             v2_house_control_enabled=True,
-            living_room_pilot_enabled=False,
-            house_zones=tuple(replace(zone, pilot_enabled=False) for zone in self.config.house_zones),
         )
         # This adapter is still the only service-call boundary.  V1 cannot
         # use it while every room is V2-owned, so the productive permission
@@ -705,16 +655,8 @@ class PVClimateController:
         self.command_adapter.set_operating_mode(shadow_mode=False, productive_enabled=True)
 
     def deactivate_v2_house_control(self) -> None:
-        """Start a safe all-room return to V1 without racing pending commands."""
-        self.config = replace(self.config, v2_house_control_enabled=False)
-        for zone in self.config.house_zones:
-            self.begin_v1_rollback(zone.zone_id)
-            if "command_ack_pending" not in self.command_adapter.handoff_blockers(zone.climate_entity_id):
-                self.complete_v1_rollback(zone.zone_id, observed_state_aligned=True)
-        self.command_adapter.set_operating_mode(
-            shadow_mode=self.config.shadow_mode,
-            productive_enabled=self.config.living_room_pilot_enabled and not self.config.shadow_mode,
-        )
+        """V2 remains the sole operational controller after activation."""
+        return None
 
     def v2_authority_for(self, zone_id: str) -> AuthorityDecision:
         """Return the visible authority; default ownership is always V1."""
@@ -785,48 +727,9 @@ class PVClimateController:
         """Complete a handoff only after adopting the observed device state."""
         return self.room_authority.activate_v2(zone_id, observed_state_aligned=observed_state_aligned)
 
-    def begin_v1_rollback(self, zone_id: str) -> AuthorityDecision:
-        """Freeze both paths before returning a room to V1."""
-        return self.room_authority.begin_rollback(zone_id)
-
-    def complete_v1_rollback(self, zone_id: str, *, observed_state_aligned: bool) -> AuthorityDecision:
-        """Return V1 authority only after it adopts the observed device state."""
-        return self.room_authority.complete_rollback(zone_id, observed_state_aligned=observed_state_aligned)
-
-    def failback_v2_to_v1(self, zone_id: str) -> AuthorityDecision:
-        """Immediately restore V1 after a V2 transport failure.
-
-        No device command is issued here: the current observed state is kept and
-        V1 resumes from the next decision in the same refresh cycle.
-        """
-        pending = self.begin_v1_rollback(zone_id)
-        if pending.authority.value != "rollback_pending":
-            return pending
-        return self.complete_v1_rollback(zone_id, observed_state_aligned=True)
-
-    def set_living_room_pilot_enabled(self, enabled: bool) -> None:
-        """Change the explicit GUI pilot gate; no command is sent here."""
-        self.config = replace(self.config, living_room_pilot_enabled=enabled)
-        # V1 may be deliberately disabled while V2 owns the whole house.  The
-        # shared adapter must remain available to V2 in that state, otherwise
-        # turning the retained V1 master switch off would silently stop V2.
-        v2_owns_house = self.config.v2_house_control_enabled
-        self.command_adapter.set_operating_mode(
-            shadow_mode=False if v2_owns_house else self.config.shadow_mode,
-            productive_enabled=v2_owns_house or (enabled and not self.config.shadow_mode),
-        )
-
     def set_manual_override_enabled(self, enabled: bool) -> None:
-        """Choose whether a HA user's climate change may release a pilot."""
+        """Choose whether a manual climate change is remembered."""
         self.config = replace(self.config, manual_override_enabled=enabled)
-        if not enabled:
-            self._clear_manual_override_state()
-
-    def _clear_manual_override_state(self) -> None:
-        """Return every permitted room to pilot ownership immediately."""
-        self._ensure_bedroom_pilots()
-        for room_pilot in (self.pilot, self.office_pilot, self.speis_pilot, *self.bedroom_pilots.values()):
-            room_pilot.request_takeover()
 
     def release_room_manual_takeover(self, zone_id: str) -> bool:
         """Give one manually held room back to V2/V1 at its next safe step."""
@@ -835,19 +738,7 @@ class PVClimateController:
             return False
         self.command_adapter.clear_manual_override(zone.climate_entity_id)
         # A room returned from manual control is a new V2 ownership session.
-        # Do not apply a stale no-PV timer from before that manual session;
-        # first use the normal quiet wind-down observation window.
         self.v2_shadow_runner.reset_room_wind_down(zone.zone_id)
-        self._ensure_bedroom_pilots()
-        normalized = zone.name.strip().casefold()
-        room_pilot = (
-            self.pilot if normalized == "wohnzimmer" else
-            self.office_pilot if normalized == "spielzimmer" else
-            self.speis_pilot if normalized == "speis" else
-            self.bedroom_pilots.get(zone.zone_id)
-        )
-        if room_pilot is not None:
-            room_pilot.request_takeover()
         return True
 
     def set_bedroom_mode_enabled(self, enabled: bool) -> None:
@@ -882,44 +773,14 @@ class PVClimateController:
         """Set the thermal promise for both sleeping rooms without altering daytime comfort."""
         self.config = replace(self.config, bedroom_target_temperature=min(25.0, max(20.0, value)))
 
-    def set_zone_pilot_enabled(self, zone_id: str, enabled: bool) -> None:
-        """Grant or revoke productive pilot control for exactly one room."""
-        zones = tuple(
-            replace(zone, pilot_enabled=enabled) if zone.zone_id == zone_id else zone
-            for zone in self.config.house_zones
-        )
-        selected_zone = self.config.zone
-        if selected_zone is not None:
-            selected_zone = next((zone for zone in zones if zone.zone_id == selected_zone.zone_id), selected_zone)
-        self.config = replace(self.config, house_zones=zones, zone=selected_zone)
-
-    def request_living_room_pilot_takeover(self) -> None:
-        """Queue one explicit handover; the next manual climate change returns control."""
-        self.pilot.request_takeover()
-
-    def request_office_pilot_takeover(self) -> None:
-        """Queue an explicit Arbeitszimmer handover with the same safety boundary."""
-        self.office_pilot.request_takeover()
-
-    def request_speis_pilot_takeover(self) -> None:
-        """Queue an explicit Speis handover with its tighter thermal guard."""
-        self.speis_pilot.request_takeover()
-
-    def _ensure_bedroom_pilots(self) -> None:
-        """Create isolated pilots only for the two explicitly named sleeping rooms."""
-        for zone in self.config.house_zones:
-            if zone.name.strip().casefold() not in {"schlafzimmer", "kinderzimmer"}:
-                continue
-            self.bedroom_pilots.setdefault(
-                zone.zone_id,
-                LivingRoomPilot(
-                    expected_zone_name=zone.name,
-                    display_name=zone.name,
-                    min_start_target_c=22.0,
-                    max_start_target_c=23.0,
-                    thermal_relief_target_c=24.0,
-                ),
-            )
+    def living_evening_comfort_active(self, now: time | None = None) -> bool:
+        """Return whether the configured occupied-evening comfort window is active."""
+        local_time = now or datetime.now().astimezone().time()
+        start = self._schedule_time(self.config.living_evening_start_time, time(20, 30))
+        end = self._schedule_time(self.config.living_evening_end_time, time(23, 30))
+        if start <= end:
+            return start <= local_time < end
+        return local_time >= start or local_time < end
 
     @staticmethod
     def _schedule_time(value: str, fallback: time) -> time:
@@ -929,150 +790,6 @@ class PVClimateController:
             return time(hour, minute)
         except (AttributeError, TypeError, ValueError):
             return fallback
-
-    def decide_bedroom_pilot(
-        self,
-        zone: ZoneConfig,
-        *,
-        temperature_c: float | None,
-        climate_mode: str | None,
-        climate_target_temperature_c: float | None = None,
-        climate_fan_mode: str | None = None,
-        climate_swing_mode: str | None = None,
-        manual_change_candidate: bool = True,
-        direct_sun: bool = False,
-        irradiance_w_m2: float | None = None,
-        shade_open_percent: float | None = None,
-        outdoor_temperature_c: float | None = None,
-        now: time | None = None,
-    ) -> PilotAction:
-        """Use late-afternoon PV for sleeping rooms and enforce their quiet time."""
-        self._ensure_bedroom_pilots()
-        pilot = self.bedroom_pilots.get(zone.zone_id)
-        if pilot is None:
-            return PilotAction("none", None, "bedroom_zone_missing", "Schlafraum ist nicht als Pilotzone konfiguriert.")
-        if not self.config.living_room_pilot_enabled or not self.config.bedroom_mode_enabled:
-            action = PilotAction("none", None, "bedroom_mode_disabled", "Schlafraum-Modus ist in der GUI ausgeschaltet.")
-            self.last_bedroom_pilot_actions[zone.zone_id] = action
-            return action
-        if not zone.pilot_enabled:
-            action = PilotAction("none", None, "zone_pilot_disabled", f"{zone.name}-Pilot ist für diesen Raum ausgeschaltet.")
-            self.last_bedroom_pilot_actions[zone.zone_id] = action
-            return action
-        local_time = now or datetime.now().astimezone().time()
-        is_master_bedroom = zone.name.strip().casefold() == "schlafzimmer"
-        start_value = self.config.bedroom_start_time if is_master_bedroom else self.config.child_bedroom_start_time
-        start = self._schedule_time(start_value, time(15, 30))
-        quiet_enabled = self.config.bedroom_quiet_enabled if is_master_bedroom else self.config.bedroom_cutoff_enabled
-        quiet_value = self.config.bedroom_quiet_time if is_master_bedroom else self.config.bedroom_cutoff_time
-        cutoff = self._schedule_time(quiet_value, time(18, 30))
-        # A room-specific cutoff is the end of that room's pre-cooling run.
-        # It is deliberately a hard stop, even when the room is still warm:
-        # otherwise the deadline is not a deadline and the unit can run far
-        # into the evening merely because the temperature has not converged.
-        if quiet_enabled and local_time >= cutoff:
-            action = (
-                PilotAction("stop", None, "bedroom_quiet_time", f"{zone.name}: Ruhezeit ab {cutoff.strftime('%H:%M')} Uhr; Klimagerät wird ausgeschaltet.")
-                if climate_mode == "cool"
-                else PilotAction("none", None, "bedroom_quiet_time", f"{zone.name}: Ruhezeit ab {cutoff.strftime('%H:%M')} Uhr aktiv.")
-            )
-            self.last_bedroom_pilot_actions[zone.zone_id] = action
-            return action
-        target_zone = replace(zone, comfort_temperature=self._effective_bedroom_target(outdoor_temperature_c))
-        if local_time < start:
-            action = PilotAction("none", None, "bedroom_window_pending", f"{zone.name}: PV-Vorkühlung beginnt ab {start.strftime('%H:%M')} Uhr.")
-            self.last_bedroom_pilot_actions[zone.zone_id] = action
-            return action
-        forecast = self.last_zone_forecasts.get(zone.zone_id)
-        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
-        action = pilot.decide(
-            replace(self.config, zone=target_zone),
-            temperature_c=temperature_c,
-            climate_mode=climate_mode,
-            granted_stages=grant,
-            export_power_w=self.last_energy.export_power_w,
-            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
-            heat_pump_priority_active=self.heat_pump_priority_active,
-            heat_pump_power_w=self.last_energy.heat_pump_power_w,
-            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
-            thermal_profile=self.last_thermal_profiles.get(zone.zone_id),
-            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
-            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
-            direct_sun=direct_sun,
-            irradiance_w_m2=irradiance_w_m2,
-            shade_open_percent=shade_open_percent,
-            active_cooling_zone_count=self.active_cooling_zone_count,
-            climate_target_temperature_c=climate_target_temperature_c,
-            climate_fan_mode=climate_fan_mode,
-            climate_swing_mode=climate_swing_mode,
-            pv_deadline_active=True,
-            comfort_required=True,
-            manual_change_candidate=manual_change_candidate,
-        )
-        self.last_bedroom_pilot_actions[zone.zone_id] = action
-        return action
-
-    def decide_living_room_pilot(
-        self,
-        *,
-        temperature_c: float | None,
-        climate_mode: str | None,
-        climate_target_temperature_c: float | None = None,
-        climate_fan_mode: str | None = None,
-        climate_swing_mode: str | None = None,
-        pv_deadline_active: bool = False,
-        manual_change_candidate: bool = True,
-        direct_sun: bool = False,
-        irradiance_w_m2: float | None = None,
-        shade_open_percent: float | None = None,
-        outdoor_temperature_c: float | None = None,
-        now: time | None = None,
-    ) -> PilotAction:
-        """Evaluate the only productive PoC route after HA state refresh."""
-        if not self.config.living_room_pilot_enabled:
-            self.last_pilot_action = PilotAction("none", None, "pilot_disabled", "Wohnzimmer-Pilot ist in der GUI ausgeschaltet.")
-            return self.last_pilot_action
-        if self.config.zone is not None and not self.config.zone.pilot_enabled:
-            self.last_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Wohnzimmer-Pilot ist für diesen Raum ausgeschaltet.")
-            return self.last_pilot_action
-        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
-        evening_comfort_active = self.living_evening_comfort_active(now)
-        effective_zone = self._effective_living_room_zone(outdoor_temperature_c, now=now)
-        forecast = None if effective_zone is None else self.last_zone_forecasts.get(effective_zone.zone_id)
-        self.last_pilot_action = self.pilot.decide(
-            replace(self.config, zone=effective_zone),
-            temperature_c=temperature_c,
-            climate_mode=climate_mode,
-            granted_stages=grant,
-            export_power_w=self.last_energy.export_power_w,
-            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
-            heat_pump_priority_active=self.heat_pump_priority_active,
-            heat_pump_power_w=self.last_energy.heat_pump_power_w,
-            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
-            thermal_profile=None if effective_zone is None else self.last_thermal_profiles.get(effective_zone.zone_id),
-            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
-            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
-            direct_sun=direct_sun,
-            irradiance_w_m2=irradiance_w_m2,
-            shade_open_percent=shade_open_percent,
-            active_cooling_zone_count=self.active_cooling_zone_count,
-            climate_target_temperature_c=climate_target_temperature_c,
-            climate_fan_mode=climate_fan_mode,
-            climate_swing_mode=climate_swing_mode,
-            pv_deadline_active=pv_deadline_active,
-            comfort_required=evening_comfort_active,
-            manual_change_candidate=manual_change_candidate,
-        )
-        return self.last_pilot_action
-
-    def living_evening_comfort_active(self, now: time | None = None) -> bool:
-        """Return whether the configured occupied-evening comfort window is active."""
-        local_time = now or datetime.now().astimezone().time()
-        start = self._schedule_time(self.config.living_evening_start_time, time(20, 30))
-        end = self._schedule_time(self.config.living_evening_end_time, time(23, 30))
-        if start <= end:
-            return start <= local_time < end
-        return local_time >= start or local_time < end
 
     def _effective_living_room_zone(
         self,
@@ -1234,151 +951,18 @@ class PVClimateController:
             "stability_required_s": 15 * 60,
         }
 
-    def decide_office_pilot(
-        self,
-        *,
-        temperature_c: float | None,
-        climate_mode: str | None,
-        climate_target_temperature_c: float | None = None,
-        climate_fan_mode: str | None = None,
-        climate_swing_mode: str | None = None,
-        pv_deadline_active: bool = False,
-        manual_change_candidate: bool = True,
-        direct_sun: bool = False,
-        irradiance_w_m2: float | None = None,
-        shade_open_percent: float | None = None,
-        outdoor_temperature_c: float | None = None,
-    ) -> PilotAction:
-        """Evaluate the productive Arbeitszimmer route only for its exact mapped zone."""
-        office_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "spielzimmer"), None)
-        if not self.config.living_room_pilot_enabled:
-            self.last_office_pilot_action = PilotAction("none", None, "pilot_disabled", "Arbeitszimmer-Pilot ist in der GUI ausgeschaltet.")
-            return self.last_office_pilot_action
-        if office_zone is None:
-            self.last_office_pilot_action = PilotAction("none", None, "office_zone_missing", "Arbeitszimmer ist nicht als Zone konfiguriert.")
-            return self.last_office_pilot_action
-        if not office_zone.pilot_enabled:
-            self.last_office_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Arbeitszimmer-Pilot ist für diesen Raum ausgeschaltet.")
-            return self.last_office_pilot_action
-        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
-        effective_zone = self._effective_living_room_zone(outdoor_temperature_c, office_zone)
-        forecast = self.last_zone_forecasts.get(office_zone.zone_id)
-        self.last_office_pilot_action = self.office_pilot.decide(
-            replace(self.config, zone=effective_zone),
-            temperature_c=temperature_c,
-            climate_mode=climate_mode,
-            granted_stages=grant,
-            export_power_w=self.last_energy.export_power_w,
-            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
-            heat_pump_priority_active=self.heat_pump_priority_active,
-            heat_pump_power_w=self.last_energy.heat_pump_power_w,
-            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
-            thermal_profile=self.last_thermal_profiles.get(office_zone.zone_id),
-            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
-            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
-            direct_sun=direct_sun,
-            irradiance_w_m2=irradiance_w_m2,
-            shade_open_percent=shade_open_percent,
-            active_cooling_zone_count=self.active_cooling_zone_count,
-            climate_target_temperature_c=climate_target_temperature_c,
-            climate_fan_mode=climate_fan_mode,
-            climate_swing_mode=climate_swing_mode,
-            pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=manual_change_candidate,
+    def note_v2_transport_failure(self, zone_id: str) -> None:
+        """Record a V2 transport failure and request a one-shot relaxed safe hold."""
+        zone = next((item for item in self.config.house_zones if item.zone_id == zone_id), None)
+        self._v2_transport_failures[zone_id] = self._v2_transport_failures.get(zone_id, 0) + 1
+        if zone is None:
+            self.last_v2_transport_error = f"{zone_id}: V2-Transportfehler"
+            return
+        relaxed_target = zone.pilot_max_target_temperature
+        self.last_v2_transport_error = (
+            f"{zone.name}: V2-Transportfehler #{self._v2_transport_failures[zone_id]}"
+            + (f"; Safe-Hold bei {relaxed_target:g} °C" if relaxed_target is not None else "; Safe-Hold ohne konfiguriertes Gerätesoll")
         )
-        return self.last_office_pilot_action
-
-    def decide_speis_pilot(
-        self,
-        *,
-        temperature_c: float | None,
-        climate_mode: str | None,
-        climate_target_temperature_c: float | None = None,
-        climate_fan_mode: str | None = None,
-        climate_swing_mode: str | None = None,
-        pv_deadline_active: bool = False,
-        manual_change_candidate: bool = True,
-        direct_sun: bool = False,
-        irradiance_w_m2: float | None = None,
-        shade_open_percent: float | None = None,
-    ) -> PilotAction:
-        """Evaluate the small Speis as a productive zone with a fast overshoot guard."""
-        speis_zone = next((zone for zone in self.config.house_zones if zone.name.strip().casefold() == "speis"), None)
-        if not self.config.living_room_pilot_enabled:
-            self.last_speis_pilot_action = PilotAction("none", None, "pilot_disabled", "Speis-Pilot ist in der GUI ausgeschaltet.")
-            return self.last_speis_pilot_action
-        if speis_zone is None:
-            self.last_speis_pilot_action = PilotAction("none", None, "speis_zone_missing", "Speis ist nicht als Zone konfiguriert.")
-            return self.last_speis_pilot_action
-        if not speis_zone.pilot_enabled:
-            self.last_speis_pilot_action = PilotAction("none", None, "zone_pilot_disabled", "Speis-Pilot ist für diesen Raum ausgeschaltet.")
-            return self.last_speis_pilot_action
-        grant = 0 if self.last_ems_grant is None else self.last_ems_grant.stages
-        forecast = self.last_zone_forecasts.get(speis_zone.zone_id)
-        self.last_speis_pilot_action = self.speis_pilot.decide(
-            replace(self.config, zone=speis_zone),
-            temperature_c=temperature_c,
-            climate_mode=climate_mode,
-            granted_stages=grant,
-            export_power_w=self.last_energy.export_power_w,
-            outdoor_unit_power_w=self.last_energy.outdoor_unit_power_w,
-            heat_pump_priority_active=self.heat_pump_priority_active,
-            heat_pump_power_w=self.last_energy.heat_pump_power_w,
-            heat_pump_relief_step_interval_s=60.0 * max(1, self.active_cooling_zone_count),
-            thermal_profile=self.last_thermal_profiles.get(speis_zone.zone_id),
-            temperature_trend_c_per_h=None if forecast is None else forecast.trend_c_per_h,
-            predicted_temperature_60m_c=None if forecast is None else forecast.predicted_temperature_60m_c,
-            direct_sun=direct_sun,
-            irradiance_w_m2=irradiance_w_m2,
-            shade_open_percent=shade_open_percent,
-            active_cooling_zone_count=self.active_cooling_zone_count,
-            climate_target_temperature_c=climate_target_temperature_c,
-            climate_fan_mode=climate_fan_mode,
-            climate_swing_mode=climate_swing_mode,
-            pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=manual_change_candidate,
-        )
-        return self.last_speis_pilot_action
-
-    async def async_apply_pilot_action(self, action: PilotAction, executor, *, zone: ZoneConfig | None = None, room_pilot: LivingRoomPilot | None = None) -> CommandResult:
-        """Send a pilot action only through the guarded, rate-limited boundary."""
-        target_zone = zone or self.config.zone
-        active_pilot = room_pilot or self.pilot
-        if action.action not in {"start", "adjust", "stop"} or target_zone is None:
-            return CommandResult("noop", action.reason_text)
-        authority = self.v2_authority_for(target_zone.zone_id)
-        if not authority.v1_may_write:
-            # During handoff and rollback neither controller may create a
-            # command.  When V2 later becomes active this is the V1 half of
-            # the single-writer guarantee, ahead of the shared adapter.
-            return CommandResult("authority_blocked", authority.reason_text)
-        # Wärmepumpenentlastung advances only one indoor-unit degree per
-        # minute. Urgency bypasses the five-minute per-device cadence, while
-        # the shared adapter preserves the one-command-per-minute house ramp.
-        urgent_reasons = {
-            "heat_pump_priority_relief_step",
-            "heat_pump_priority_recovery_step",
-            "heat_pump_priority_comfort_guard",
-            "hard_temperature_limit_failsafe",
-            "pv_comfort_recovery",
-            "pv_wind_down",
-        }
-        command = Command(
-            target_zone.climate_entity_id,
-            f"pilot_{action.action}",
-            action.target_temperature_c,
-            urgent=action.reason_code in urgent_reasons,
-        )
-        if action.reason_code == "pilot_target_drift":
-            # This path is reached only after the pilot compared the desired
-            # target with the reported device target beyond its ack grace.
-            # Let every room re-send that exact command through the normal
-            # rate-limited boundary instead of treating an old send as proof.
-            self.command_adapter.invalidate_confirmed_signature(command)
-        result = await self.command_adapter.async_request(command, executor)
-        if result.status == "sent":
-            active_pilot.mark_sent(action)
-        return result
 
     async def async_apply_v2_command(self, plan: V2CommandPlan, executor) -> CommandResult:
         """Use V1's sole adapter and supplied executor after explicit authority.

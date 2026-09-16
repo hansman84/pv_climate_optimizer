@@ -19,12 +19,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         ControllerStateSensor(controller, entry.entry_id, "controller_state"),
         DecisionReasonSensor(controller, entry.entry_id, "decision_reason"),
-        PilotActionSensor(controller, entry.entry_id, "pilot_action"),
         WohnzimmerOutdoorCoolingGateSensor(controller, entry.entry_id, "wohnzimmer_outdoor_cooling_gate"),
         LivingRoomOutdoorComfortSensor(controller, entry.entry_id, "living_room_outdoor_comfort"),
         BedroomOutdoorComfortSensor(controller, entry.entry_id, "bedroom_outdoor_comfort"),
-        OfficePilotActionSensor(controller, entry.entry_id, "office_pilot_action"),
-        SpeisPilotActionSensor(controller, entry.entry_id, "speis_pilot_action"),
         RequestedStagesSensor(controller, entry.entry_id, "requested_stages"),
         GrantedStagesSensor(controller, entry.entry_id, "granted_stages"),
         PVPowerSensor(controller, entry.entry_id, "pv_power"),
@@ -39,11 +36,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         V2ShadowDecisionSensor(controller, entry.entry_id, "v2_shadow_house_decision"),
         V2AuthoritySensor(controller, entry.entry_id, "v2_room_authority"),
     ]
-    entities.extend(
-        BedroomPilotActionSensor(controller, entry.entry_id, f"bedroom_pilot_action_{index}", zone.zone_id)
-        for index, zone in enumerate(controller.config.house_zones, start=1)
-        if zone.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}
-    )
     entities.extend(
         ZonePlanSensor(controller, entry.entry_id, f"zone_plan_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
@@ -275,67 +267,6 @@ class V2AuthoritySensor(ControllerEntity, SensorEntity):
         }
 
 
-class PilotActionSensor(ControllerEntity, SensorEntity):
-    """Expose the productive pilot's own decision separately from Shadow plans."""
-
-    _attr_name = "Wohnzimmer-Pilotentscheidung"
-
-    @property
-    def native_value(self) -> str:
-        action = self.controller.last_pilot_action
-        return "Pilot noch nicht ausgewertet." if action is None else action.reason_text
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | float | None]:
-        action = self.controller.last_pilot_action
-        if action is None:
-            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
-        zone = self.controller.config.zone
-        export_power_w = self.controller.last_energy.export_power_w
-        minimum_surplus_w = self.controller.config.min_pv_surplus_w
-        return {
-            "action": action.action,
-            "reason_code": action.reason_code,
-            "target_temperature_c": action.target_temperature_c,
-            "planned_target_temperature_c": action.planned_target_temperature_c,
-            "export_power_w": export_power_w,
-            "minimum_surplus_w": minimum_surplus_w,
-            "outdoor_unit_power_w": self.controller.last_energy.outdoor_unit_power_w,
-            "heat_pump_priority_active": self.controller.heat_pump_priority_active,
-            "heat_pump_power_w": self.controller.last_energy.heat_pump_power_w,
-            "no_pv_hold_max_power_w": self.controller.config.no_pv_hold_max_power_w,
-            "pv_surplus_available": export_power_w is not None and export_power_w >= minimum_surplus_w,
-            "comfort_temperature_c": None if zone is None else zone.comfort_temperature,
-            "hard_temperature_limit_c": None if zone is None else zone.hard_max_temperature,
-            "effective_comfort_temperature_c": self.controller.effective_living_room_comfort_temperature,
-        }
-
-
-async def _async_update_wohnzimmer_weather_forecast(hass, weather_entity_id: str) -> None:
-    """Refresh the visible forecast list of the configured weather entity.
-
-    The outdoor cooling gate reads the live state and ``attributes.forecast``.
-    HA weather integrations that publish only hourly entries normally refresh
-    those entries on a 15-minute cadence.  This helper explicitly requests a
-    forecast refresh via the official ``weather.get_forecasts`` service so the
-    gate never depends on a passive cache hit.  Failures are logged and
-    silently tolerated: missing data simply keeps the gate in its conservative
-    state.
-    """
-    if not weather_entity_id:
-        return
-    try:
-        await hass.services.async_call(
-            "weather",
-            "get_forecasts",
-            {"entity_id": weather_entity_id, "type": "hourly"},
-            blocking=False,
-            return_response=False,
-        )
-    except Exception:  # noqa: BLE001 - logging only; gate must keep working
-        _LOGGER.debug("wohnzimmer outdoor cooling gate: forecast refresh failed", exc_info=True)
-
-
 class WohnzimmerOutdoorCoolingGateSensor(ControllerEntity, SensorEntity):
     """Transparent Wohnzimmer weather/forecast gate, read-only, never a command."""
 
@@ -401,71 +332,6 @@ class BedroomOutdoorComfortSensor(ControllerEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, float | int | None]:
         status = self.controller.bedroom_outdoor_comfort_status()
         return {key: value for key, value in status.items() if key != "state"}
-
-
-class OfficePilotActionSensor(PilotActionSensor):
-    """Expose the productive Arbeitszimmer pilot independently."""
-
-    _attr_name = "Arbeitszimmer-Pilotentscheidung"
-
-    @property
-    def native_value(self) -> str:
-        action = self.controller.last_office_pilot_action
-        return "Pilot noch nicht ausgewertet." if action is None else action.reason_text
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | float | None]:
-        action = self.controller.last_office_pilot_action
-        if action is None:
-            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
-        return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}
-
-
-class SpeisPilotActionSensor(PilotActionSensor):
-    """Expose the small-room Speis pilot independently."""
-
-    _attr_name = "Speis-Pilotentscheidung"
-
-    @property
-    def native_value(self) -> str:
-        action = self.controller.last_speis_pilot_action
-        return "Pilot noch nicht ausgewertet." if action is None else action.reason_text
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | float | None]:
-        action = self.controller.last_speis_pilot_action
-        if action is None:
-            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
-        return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}
-
-
-class BedroomPilotActionSensor(PilotActionSensor):
-    """Explain the scheduled decision for one explicitly configured sleeping room."""
-
-    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
-        super().__init__(controller, entry_id, key)
-        self._zone_id = zone_id
-
-    @property
-    def _zone_name(self) -> str:
-        zone = next((item for item in self.controller.config.house_zones if item.zone_id == self._zone_id), None)
-        return self._zone_id if zone is None else zone.name
-
-    @property
-    def name(self) -> str:
-        return f"{self._zone_name} – Schlafraum-Entscheidung"
-
-    @property
-    def native_value(self) -> str:
-        action = self.controller.last_bedroom_pilot_actions.get(self._zone_id)
-        return "Schlafraum-Modus noch nicht ausgewertet." if action is None else action.reason_text
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | float | None]:
-        action = self.controller.last_bedroom_pilot_actions.get(self._zone_id)
-        if action is None:
-            return {"action": "none", "reason_code": "not_evaluated", "target_temperature_c": None}
-        return {"action": action.action, "reason_code": action.reason_code, "target_temperature_c": action.target_temperature_c}
 
 
 class RequestedStagesSensor(ControllerEntity, SensorEntity):

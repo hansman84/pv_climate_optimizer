@@ -257,7 +257,6 @@ def _safety_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required(CONF_V2_SHADOW_ENABLED, default=values.get(CONF_V2_SHADOW_ENABLED, False)): bool,
         vol.Optional(CONF_V2_VACATION_ENTITY_ID, default=values.get(CONF_V2_VACATION_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain=["binary_sensor", "input_boolean", "switch"], multiple=False)),
         vol.Optional(CONF_V2_COOLING_SEASON_ENTITY_ID, default=values.get(CONF_V2_COOLING_SEASON_ENTITY_ID)): EntitySelector(EntitySelectorConfig(domain=["binary_sensor", "input_boolean", "switch"], multiple=False)),
-        vol.Required(CONF_LIVING_ROOM_PILOT_ENABLED, default=values.get(CONF_LIVING_ROOM_PILOT_ENABLED, False)): bool,
         vol.Required(CONF_MANUAL_OVERRIDE_ENABLED, default=values.get(CONF_MANUAL_OVERRIDE_ENABLED, True)): bool,
         vol.Required(CONF_EMS_STALE_AFTER_S, default=values.get(CONF_EMS_STALE_AFTER_S, 300.0)): vol.All(vol.Coerce(float), vol.Range(min=1)),
         vol.Required(CONF_USE_EMS_GRANT, default=bool(values.get(CONF_EMS_GRANTED_STAGES_ENTITY_ID))): bool,

@@ -9,8 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_HOUSE_ZONES, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, DOMAIN
-from .controller import serialize_zone_config
+from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_EXPORT_POWER_POSITIVE, CONF_MANUAL_OVERRIDE_ENABLED, CONF_SHADOW_MODE, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, DOMAIN
 from .entity import ControllerEntity
 from .storage import pack
 
@@ -21,17 +20,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ShadowModeSwitch(controller, entry.entry_id, "shadow_mode"),
         V2ShadowSwitch(controller, entry.entry_id, "v2_shadow"),
         V2HouseControlSwitch(controller, entry.entry_id, "v2_house_control"),
-        LivingRoomPilotSwitch(controller, entry.entry_id, "living_room_pilot"),
         ManualOverrideSwitch(controller, entry.entry_id, "manual_override"),
         BedroomModeSwitch(controller, entry.entry_id, "bedroom_mode"),
         BedroomCutoffSwitch(controller, entry.entry_id, "child_bedroom_quiet"),
         BedroomQuietSwitch(controller, entry.entry_id, "bedroom_quiet"),
         ExportPowerPositiveSwitch(controller, entry.entry_id, "export_power_positive"),
     ]
-    entities.extend(
-        ZonePilotSwitch(controller, entry.entry_id, f"zone_pilot_{index}", zone.zone_id)
-        for index, zone in enumerate(controller.config.house_zones, start=1)
-    )
     entities.extend(
         V2RoomControlSwitch(controller, entry.entry_id, f"v2_room_control_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
@@ -210,65 +204,21 @@ class V2RoomControlSwitch(ControllerEntity, SwitchEntity):
         # writer while making a user-approved V2 handoff operational.
         plan = self.controller.v2_command_plan_for(self._zone_id)
         if plan is None:
-            self.controller.failback_v2_to_v1(self._zone_id)
+            self.controller.note_v2_transport_failure(self._zone_id)
             await self._async_persist_authority()
             self.controller.notify_state_listeners()
             raise HomeAssistantError("V2-Übergabe zurückgenommen: freigegebener Befehl ist nicht mehr vorhanden.")
-        from . import _pilot_service_executor
+        from . import _climate_service_executor
 
-        result = await self.controller.async_apply_v2_command(plan, _pilot_service_executor(self.hass))
+        result = await self.controller.async_apply_v2_command(plan, _climate_service_executor(self.hass))
         if result.status in {"failed", "blocked", "shadow", "authority_blocked", "invalid", "manual_override", "backoff"}:
-            self.controller.failback_v2_to_v1(self._zone_id)
+            self.controller.note_v2_transport_failure(self._zone_id)
             await self._async_persist_authority()
             self.controller.notify_state_listeners()
             raise HomeAssistantError(f"V2-Übergabe zurückgenommen: {result.reason}")
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Exclude this room from V2 and preserve its current manual state.
-
-        House V2 keeps the remaining rooms under the orchestrator.  The
-        excluded room deliberately returns to V1 authority, whose pilot is
-        disabled in house mode, so neither controller changes it until the
-        user explicitly hands it back to V2.
-        """
-        if not self._observed_state_is_aligned():
-            raise HomeAssistantError("V1-Rückfall gesperrt: beobachteter Klima-Zustand hat sich geändert.")
-        pending = self.controller.begin_v1_rollback(self._zone_id)
-        if pending.authority.value != "rollback_pending":
-            raise HomeAssistantError(pending.reason_text)
-        await self._async_persist_authority()
-        self.controller.notify_state_listeners()
-        # When no V2 command is waiting for cloud/device confirmation, the
-        # failback is immediate.  Otherwise _async_refresh_controller completes
-        # it after the exact observed device state has arrived.
-        zone = self._zone
-        if zone is not None and "command_ack_pending" not in self.controller.command_adapter.handoff_blockers(zone.climate_entity_id):
-            restored = self.controller.complete_v1_rollback(self._zone_id, observed_state_aligned=True)
-            await self._async_persist_authority()
-            self.controller.notify_state_listeners()
-            if not restored.v1_may_write:
-                raise HomeAssistantError(restored.reason_text)
-
-class LivingRoomPilotSwitch(ControllerEntity, SwitchEntity):
-    """Explicit productive gate for the confirmed Wohnzimmer pilot only."""
-
-    _attr_name = "PV-Pilot aktiv"
-
-    @property
-    def is_on(self) -> bool:
-        return self.controller.config.living_room_pilot_enabled
-
-    async def async_turn_on(self, **kwargs) -> None:
-        if self.controller.config.v2_house_control_enabled:
-            raise HomeAssistantError("V1-Pilot bleibt deaktiviert, solange V2 die Haussteuerung führt.")
-        self.controller.set_living_room_pilot_enabled(True)
-        await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, True)
-        self.controller.notify_state_listeners()
-
-    async def async_turn_off(self, **kwargs) -> None:
-        self.controller.set_living_room_pilot_enabled(False)
-        await self.async_persist_option(CONF_LIVING_ROOM_PILOT_ENABLED, False)
-        self.controller.notify_state_listeners()
+        raise HomeAssistantError("V2-Steuerung bleibt aktiv; ein Rückfall zu V1 ist entfernt.")
 
 
 class ManualOverrideSwitch(ControllerEntity, SwitchEntity):
@@ -351,45 +301,6 @@ class BedroomQuietSwitch(ControllerEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs) -> None:
         self.controller.set_bedroom_quiet_enabled(False)
         await self.async_persist_option(CONF_BEDROOM_QUIET_ENABLED, False)
-        self.controller.notify_state_listeners()
-
-class ZonePilotSwitch(ControllerEntity, SwitchEntity):
-    """Explicit per-room permission for productive pilot commands."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
-        super().__init__(controller, entry_id, key)
-        self._zone_id = zone_id
-
-    @property
-    def _zone(self):
-        return next((zone for zone in self.controller.config.house_zones if zone.zone_id == self._zone_id), None)
-
-    @property
-    def name(self) -> str:
-        zone = self._zone
-        return f"{zone.name if zone else self._zone_id} – Pilot aktiv"
-
-    @property
-    def is_on(self) -> bool:
-        zone = self._zone
-        return bool(zone and zone.pilot_enabled)
-
-    async def async_turn_on(self, **kwargs) -> None:
-        if self.controller.config.v2_house_control_enabled:
-            raise HomeAssistantError("V1-Pilot bleibt deaktiviert, solange V2 die Haussteuerung führt.")
-        await self._async_set(True)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        await self._async_set(False)
-
-    async def _async_set(self, enabled: bool) -> None:
-        self.controller.set_zone_pilot_enabled(self._zone_id, enabled)
-        await self.async_persist_option(
-            CONF_HOUSE_ZONES,
-            [serialize_zone_config(zone) for zone in self.controller.config.house_zones],
-        )
         self.controller.notify_state_listeners()
 
 class ExportPowerPositiveSwitch(ControllerEntity, SwitchEntity):

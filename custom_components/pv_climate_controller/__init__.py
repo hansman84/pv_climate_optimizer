@@ -14,7 +14,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .command_adapter import is_climate_control_change
+from .command_adapter import Command, is_climate_control_change
 from .const import DOMAIN
 from .controller import PVClimateController
 from .forecasting import contextual_temperature_forecast
@@ -126,7 +126,6 @@ def _handle_state_change(hass: HomeAssistant, controller: PVClimateController, s
                 controller,
                 store,
                 changed_entity_id=event.data.get("entity_id"),
-                user_initiated_change=bool(getattr(event.context, "user_id", None)),
                 climate_control_change=is_climate_control_change(
                     event.data.get("old_state"), event.data.get("new_state")
                 ),
@@ -141,7 +140,6 @@ async def _async_refresh_controller(
     controller: PVClimateController,
     store: Store | None = None,
     changed_entity_id: str | None = None,
-    user_initiated_change: bool = False,
     climate_control_change: bool = False,
 ) -> None:
     """Refresh diagnostics from HA state; no service calls are made."""
@@ -184,7 +182,6 @@ async def _async_refresh_controller(
     irradiance = _temperature_value(None if irradiance_state is None else irradiance_state.state)
     sun_azimuth = _temperature_value(None if sun_state is None else sun_state.attributes.get("azimuth"))
     sun_elevation = _temperature_value(None if sun_state is None else sun_state.attributes.get("elevation"))
-    pv_deadline_active = _pv_deadline_active(sun_state)
     house_states = {}
     manual_room_takeover_detected = False
     contexts = {}
@@ -252,9 +249,7 @@ async def _async_refresh_controller(
             # safely blocked in the runner.
             available_budget_w=max(0.0, controller.last_energy.export_power_w or 0.0),
         )
-        # V2 can only reach this shared command boundary after a room-specific
-        # handoff.  A failed transport immediately returns that room to V1;
-        # no retrying V2 loop or second climate executor is introduced here.
+        # V2 reaches the shared command boundary only after room-specific authority.
         zones_by_id = {zone.zone_id: zone for zone in config.house_zones}
         inputs_by_id = {room_input.policy.room_id: room_input for room_input in room_inputs}
         for zone_id in controller.v2_execution_order():
@@ -272,107 +267,21 @@ async def _async_refresh_controller(
                         _LOGGER.warning("v2 settle %s -> %s (%s)", house_zone.name, plan.action.value, plan.reason_code)
                 if plan is None:
                     continue
-            result = await controller.async_apply_v2_command(plan, _pilot_service_executor(hass))
+            result = await controller.async_apply_v2_command(plan, _climate_service_executor(hass))
             _LOGGER.warning("v2 apply %s -> %s (%s)", house_zone.name, plan.action.value, result.status)
             if result.status == "failed":
-                controller.failback_v2_to_v1(house_zone.zone_id)
+                controller.note_v2_transport_failure(house_zone.zone_id)
+                _LOGGER.warning("v2 transport failed for %s; Safe-Hold noted", house_zone.name)
+                relaxed_target = house_zone.pilot_max_target_temperature
+                if relaxed_target is not None:
+                    try:
+                        await _climate_service_executor(hass)(
+                            Command(house_zone.climate_entity_id, "pilot_adjust", relaxed_target, urgent=True)
+                        )
+                    except Exception:  # noqa: BLE001 - one-shot Safe-Hold only
+                        _LOGGER.warning("v2 Safe-Hold failed for %s", house_zone.name, exc_info=True)
                 if store is not None:
                     await store.async_save(pack(controller.export_learning_state()))
-    # A user can switch V2 off while its final cloud command is still pending.
-    # Keep both writers frozen until the observed state above acknowledges it;
-    # then V1 resumes without racing an in-flight V2 command.
-    for house_zone in config.house_zones:
-        if controller.v2_authority_for(house_zone.zone_id).authority.value != "rollback_pending":
-            continue
-        if "command_ack_pending" in controller.command_adapter.handoff_blockers(house_zone.climate_entity_id):
-            continue
-        controller.complete_v1_rollback(house_zone.zone_id, observed_state_aligned=True)
-        if store is not None:
-            await store.async_save(pack(controller.export_learning_state()))
-    controller.observe_outdoor_power(tuple(
-        house_zone.zone_id for house_zone in config.house_zones
-        if house_states[house_zone.zone_id][1] in {"cool", "dry"}
-    ), {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance})
-    action = controller.decide_living_room_pilot(
-        temperature_c=_temperature_value(None if temperature is None else temperature.state),
-        climate_mode=None if climate is None else climate.state,
-        climate_target_temperature_c=_temperature_value(None if climate is None else climate.attributes.get("temperature")),
-        climate_fan_mode=None if climate is None else climate.attributes.get("fan_mode"),
-        climate_swing_mode=None if climate is None else climate.attributes.get("swing_mode"),
-        pv_deadline_active=pv_deadline_active,
-        manual_change_candidate=(
-            controller.config.manual_override_enabled
-            and user_initiated_change
-            and controller.config.zone is not None
-            and changed_entity_id == controller.config.zone.climate_entity_id
-        ),
-        direct_sun=bool(contexts.get(controller.config.zone.zone_id, {}).get("direct_sun", False)) if controller.config.zone is not None else False,
-        irradiance_w_m2=irradiance,
-        shade_open_percent=(
-            contexts.get(controller.config.zone.zone_id, {}).get("shade_open_percent")
-            if controller.config.zone is not None
-            else None
-        ),
-        outdoor_temperature_c=outside_temperature,
-    )
-    await controller.async_apply_pilot_action(action, _pilot_service_executor(hass))
-    office_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "spielzimmer"), None)
-    if office_zone is not None:
-        office_climate = hass.states.get(office_zone.climate_entity_id)
-        office_sample = house_states.get(office_zone.zone_id, (ZoneInput(None, False), "unavailable", None))[0]
-        office_action = controller.decide_office_pilot(
-            temperature_c=office_sample.temperature_c,
-            climate_mode=None if office_climate is None else office_climate.state,
-            climate_target_temperature_c=_temperature_value(None if office_climate is None else office_climate.attributes.get("temperature")),
-            climate_fan_mode=None if office_climate is None else office_climate.attributes.get("fan_mode"),
-            climate_swing_mode=None if office_climate is None else office_climate.attributes.get("swing_mode"),
-            pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == office_zone.climate_entity_id,
-            direct_sun=bool(contexts.get(office_zone.zone_id, {}).get("direct_sun", False)),
-            irradiance_w_m2=irradiance,
-            shade_open_percent=contexts.get(office_zone.zone_id, {}).get("shade_open_percent"),
-            outdoor_temperature_c=outside_temperature,
-        )
-        await controller.async_apply_pilot_action(office_action, _pilot_service_executor(hass), zone=office_zone, room_pilot=controller.office_pilot)
-    speis_zone = next((item for item in config.house_zones if item.name.strip().casefold() == "speis"), None)
-    if speis_zone is not None:
-        speis_climate = hass.states.get(speis_zone.climate_entity_id)
-        speis_sample = house_states.get(speis_zone.zone_id, (ZoneInput(None, False), "unavailable", None))[0]
-        speis_action = controller.decide_speis_pilot(
-            temperature_c=speis_sample.temperature_c,
-            climate_mode=None if speis_climate is None else speis_climate.state,
-            climate_target_temperature_c=_temperature_value(None if speis_climate is None else speis_climate.attributes.get("temperature")),
-            climate_fan_mode=None if speis_climate is None else speis_climate.attributes.get("fan_mode"),
-            climate_swing_mode=None if speis_climate is None else speis_climate.attributes.get("swing_mode"),
-            pv_deadline_active=pv_deadline_active,
-            manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == speis_zone.climate_entity_id,
-            direct_sun=bool(contexts.get(speis_zone.zone_id, {}).get("direct_sun", False)),
-            irradiance_w_m2=irradiance,
-            shade_open_percent=contexts.get(speis_zone.zone_id, {}).get("shade_open_percent"),
-        )
-        await controller.async_apply_pilot_action(speis_action, _pilot_service_executor(hass), zone=speis_zone, room_pilot=controller.speis_pilot)
-    for bedroom_zone in (item for item in config.house_zones if item.name.strip().casefold() in {"schlafzimmer", "kinderzimmer"}):
-        bedroom_climate = hass.states.get(bedroom_zone.climate_entity_id)
-        bedroom_sample = house_states.get(bedroom_zone.zone_id, (ZoneInput(None, False), "unavailable", None))[0]
-        bedroom_action = controller.decide_bedroom_pilot(
-            bedroom_zone,
-            temperature_c=bedroom_sample.temperature_c,
-            climate_mode=None if bedroom_climate is None else bedroom_climate.state,
-            climate_target_temperature_c=_temperature_value(None if bedroom_climate is None else bedroom_climate.attributes.get("temperature")),
-            climate_fan_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("fan_mode"),
-            climate_swing_mode=None if bedroom_climate is None else bedroom_climate.attributes.get("swing_mode"),
-            manual_change_candidate=controller.config.manual_override_enabled and user_initiated_change and changed_entity_id == bedroom_zone.climate_entity_id,
-            direct_sun=bool(contexts.get(bedroom_zone.zone_id, {}).get("direct_sun", False)),
-            irradiance_w_m2=irradiance,
-            shade_open_percent=contexts.get(bedroom_zone.zone_id, {}).get("shade_open_percent"),
-            outdoor_temperature_c=outside_temperature,
-        )
-        await controller.async_apply_pilot_action(
-            bedroom_action,
-            _pilot_service_executor(hass),
-            zone=bedroom_zone,
-            room_pilot=controller.bedroom_pilots[bedroom_zone.zone_id],
-        )
     if store is not None and manual_room_takeover_detected:
         # A remote control action must not disappear if HA is restarted before
         # the normal delayed learning snapshot has elapsed.
@@ -382,23 +291,7 @@ async def _async_refresh_controller(
     controller.notify_state_listeners()
 
 
-def _pv_deadline_active(sun_state) -> bool:
-    """Start evening PV ownership only during the final 45 minutes of sun."""
-    if sun_state is None:
-        return False
-    if sun_state.state == "below_horizon":
-        return False
-    next_setting = sun_state.attributes.get("next_setting")
-    if not isinstance(next_setting, str):
-        return False
-    try:
-        sunset = datetime.fromisoformat(next_setting.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return 0.0 <= (sunset - datetime.now(sunset.tzinfo)).total_seconds() <= 45 * 60
-
-
-def _pilot_service_executor(hass: HomeAssistant):
+def _climate_service_executor(hass: HomeAssistant):
     """Build the sole HA service route for the explicitly enabled PoC.
 
     Hisense requires power before mode and temperature commands, so this order
