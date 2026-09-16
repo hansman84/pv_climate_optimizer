@@ -76,6 +76,7 @@ class ClimateCommandAdapter:
         global_interval_s: float = 60.0,
         per_entity_interval_s: float = 300.0,
         backoff_s: float = 900.0,
+        ack_timeout_s: float = 180.0,
     ) -> None:
         self._shadow_mode = shadow_mode
         self._productive_enabled = productive_enabled
@@ -83,6 +84,7 @@ class ClimateCommandAdapter:
         self._global_interval_s = global_interval_s
         self._per_entity_interval_s = per_entity_interval_s
         self._backoff_s = backoff_s
+        self._ack_timeout_s = ack_timeout_s
         self._last_global_at: float | None = None
         self._last_entity_at: dict[str, float] = {}
         self._last_signature: dict[str, tuple[str, str, str | float | None, str | None]] = {}
@@ -111,13 +113,30 @@ class ClimateCommandAdapter:
         """Return exactly one room to the controller without touching its state."""
         self._manual_override_until.pop(entity_id, None)
 
+    def _pending_is_stale(self, entity_id: str, now: float) -> bool:
+        """True when a sent command was never acknowledged within the timeout.
+
+        A cloud echo can be lost (device offline, vendor hiccup, restart in
+        the middle of the turn-on sequence).  Without an expiry that single
+        lost acknowledgement blocks the room forever: every later command is
+        deferred behind it.  A stale pending entry is therefore dropped and
+        the next command is allowed to try again.
+        """
+        pending = self._pending.get(entity_id)
+        if pending is None:
+            return False
+        if now - pending[1] <= self._ack_timeout_s:
+            return False
+        self._pending.pop(entity_id, None)
+        return True
+
     def handoff_blockers(self, entity_id: str) -> tuple[str, ...]:
         """Return non-destructive reasons why a controller handoff is unsafe."""
         now = self._clock()
         blockers: list[str] = []
         if self._manual_override_until.get(entity_id, 0.0) > now:
             blockers.append("manual_override_active")
-        if entity_id in self._pending:
+        if entity_id in self._pending and not self._pending_is_stale(entity_id, now):
             blockers.append("command_ack_pending")
         if self._backoff_until.get(entity_id, 0.0) > now:
             blockers.append("command_backoff_active")
@@ -188,6 +207,9 @@ class ClimateCommandAdapter:
             )
 
         pending = self._pending.get(entity_id)
+        if pending is not None:
+            if self._pending_is_stale(entity_id, now):
+                pending = None
         if pending is not None:
             signature, sent_at = pending
             if matches(signature):
@@ -264,9 +286,13 @@ class ClimateCommandAdapter:
             # running past its explicit quiet-time cutoff.  ``pilot_stop`` is
             # idempotent and safer than the still-unconfirmed cooling command;
             # it replaces only a different pending command.  A duplicate stop
-            # remains deferred until the device confirms ``off``.
+            # remains deferred until the device confirms ``off``.  A stale
+            # unacknowledged command (lost echo) is dropped so it cannot block
+            # the room forever.
             if command.action == "pilot_stop" and pending[0][1] != "pilot_stop":
                 self._pending.pop(command.entity_id, None)
+            elif self._pending_is_stale(command.entity_id, now):
+                pending = None
             else:
                 return CommandResult("deferred", "Gerätebestätigung für den vorherigen Befehl steht noch aus.")
         if not command.batch_window and self._last_global_at is not None and now - self._last_global_at < self._global_interval_s:

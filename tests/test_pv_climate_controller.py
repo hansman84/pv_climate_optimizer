@@ -357,6 +357,45 @@ class Clock:
         return self.now
 
 
+def test_stale_unacknowledged_command_never_blocks_a_room_forever() -> None:
+    """A lost cloud echo must expire instead of deferring every later command."""
+    clock = Clock()
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock,
+        global_interval_s=0, per_entity_interval_s=0, ack_timeout_s=180.0,
+    )
+
+    async def executor(command):
+        return True
+
+    first = asyncio.run(command_adapter.async_request(adapter.Command("climate.living", "pilot_start", 24.0), executor))
+    assert first.status == "sent"
+    assert "command_ack_pending" in command_adapter.handoff_blockers("climate.living")
+
+    clock.now += 181.0
+    assert "command_ack_pending" not in command_adapter.handoff_blockers("climate.living")
+    second = asyncio.run(command_adapter.async_request(adapter.Command("climate.living", "pilot_adjust", 25.0), executor))
+    assert second.status == "sent", second.reason
+
+
+def test_fresh_pending_command_still_defers_the_next_step() -> None:
+    """The acknowledgement grace stays intact for a recently sent command."""
+    clock = Clock()
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, clock=clock,
+        global_interval_s=0, per_entity_interval_s=0, ack_timeout_s=180.0,
+    )
+
+    async def executor(command):
+        return True
+
+    asyncio.run(command_adapter.async_request(adapter.Command("climate.living", "pilot_start", 24.0), executor))
+    clock.now += 30.0
+    deferred = asyncio.run(command_adapter.async_request(adapter.Command("climate.living", "pilot_adjust", 25.0), executor))
+
+    assert deferred.status == "deferred"
+
+
 def test_shadow_mode_blocks_every_command_request() -> None:
     command_adapter = adapter.ClimateCommandAdapter(shadow_mode=True)
 
