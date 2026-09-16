@@ -1053,3 +1053,34 @@ def test_shadow_acute_guard_starts_a_room_when_it_is_eligible() -> None:
 
     assert candidates[0].reason_code == "indoor_acute_need"
     assert candidates[0].action is models.CandidateAction.START
+
+
+def test_shadow_relaxes_a_running_unit_while_the_gate_holds() -> None:
+    """Gate hold: a running unit is raised to the relaxed ceiling (0.4.60)."""
+    base = _shadow_room(budget_w=0.0)
+    gate = types.SimpleNamespace(
+        decision="hold",
+        reason_code="outdoor_equilibrium",
+        reason_text="Aussenluft reicht.",
+    )
+    room = models.V2RoomInput(
+        base.policy,
+        base.snapshot,
+        models.RoomEstimate("living", 23.5, 0.0, 23.45, 0.8, 0.5, ("trend",), "forecast_ready"),
+        models.EligibilityDecision(True, "v2_eligible", "Automatik ist zulaessig."),
+        24.0,
+        26.0,
+        0.0,
+        observed_hvac_mode="cool",
+        observed_target_temperature_c=24.0,
+        pilot_min_target_temperature_c=21.0,
+        pilot_max_target_temperature_c=26.0,
+        target_temperature_step_c=1.0,
+        outdoor_cooling_gate=gate,
+    )
+
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=3_000.0)
+
+    assert candidates[0].reason_code == "gate_hold_relaxed_target"
+    assert candidates[0].action is models.CandidateAction.ADJUST
+    assert candidates[0].target_after_c == 26.0

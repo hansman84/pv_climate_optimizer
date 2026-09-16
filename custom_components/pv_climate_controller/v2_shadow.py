@@ -126,6 +126,35 @@ class V2ShadowRunner:
         # this only suppresses normal comfort starts while keeping all other
         # V2 reasoning visible.
         gate = getattr(room, "outdoor_cooling_gate", None)
+        gate_decision = getattr(gate, "decision", None)
+        # Household rule (0.4.60): while the gate says "no cooling needed", a
+        # running unit must not keep a low setpoint and cool behind V2's back.
+        # Raise it to the relaxed ceiling instead (same idea as the no-PV
+        # wind-down, just triggered by the weather gate).
+        if gate_decision in {"hold", "rain_hold"}:
+            relaxed = room.pilot_max_target_temperature_c
+            target = room.observed_target_temperature_c
+            if (
+                room.observed_hvac_mode == "cool"
+                and relaxed is not None
+                and target is not None
+                and target < relaxed
+            ):
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.ADJUST,
+                    required_budget_w=0.0,
+                    comfort_gap_c=0.0,
+                    confidence=room.estimate.confidence,
+                    reason_code="gate_hold_relaxed_target",
+                    reason_text=(
+                        f"V2 Gate-Hold ({getattr(gate, 'reason_code', 'hold')}): das laufende Geraet wird auf die "
+                        f"entspannte Sollstufe {relaxed:.1f} C angehoben, damit es nicht ohne Bedarf kuehlt."
+                    ),
+                    safety_override=True,
+                    target_before_c=target,
+                    target_after_c=relaxed,
+                )
         if gate is not None and getattr(gate, "decision", None) == "hold":
             return RoomCandidate(
                 policy=room.policy,
