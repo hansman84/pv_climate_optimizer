@@ -25,6 +25,15 @@ planner_mod = _load("v2_command_planner")
 quiet = _load("quiet_fan_control")
 
 
+def test_targets_are_snapped_onto_the_device_step_grid() -> None:
+    """Split units round setpoints; V2 must send the value the device reports."""
+    assert planner_mod._snap_target(24.8, 1.0) == 25.0
+    assert planner_mod._snap_target(24.8, 0.5) == 25.0
+    assert planner_mod._snap_target(23.4, 1.0) == 23.0
+    assert planner_mod._snap_target(23.2, 0.5) == 23.0
+    assert planner_mod._snap_target(24.25, None) == 24.25
+
+
 class _Clock:
     def __init__(self):
         self.t = 1000.0

@@ -25,6 +25,20 @@ SETTLE_TARGET_TOL_C = 0.1      # allowed setpoint deviation from comfort
 CAPACITY_FLOOR_DELTA_C = 1.0   # compressor floor: comfort - 1 K before the fan may step up
 
 
+def _snap_target(value: float, step: float | None) -> float:
+    """Round a target onto the device's own step grid.
+
+    Split units round setpoints to whole (or half) degrees.  Sending the raw
+    comfort value (e.g. 24.8 C) made the device report 25 C, which never
+    matched the sent command - so V2 stayed blocked behind an unacknowledged
+    pending command.  Snapping happens before the command, the device grid is
+    the contract (2026-09-16).
+    """
+    if step is None or step <= 0:
+        return round(value, 2)
+    return round(round(value / step) * step, 2)
+
+
 class V2CommandPlanner:
     """Plan no more than one safe existing-device target step.
 
@@ -203,7 +217,10 @@ class V2CommandPlanner:
             # exact device; it does not invent a new setpoint.
             start_target = upper if upper is not None else room.observed_target_temperature_c
             if candidate.target_after_c is not None:
-                start_target = max(lower, min(upper if upper is not None else candidate.target_after_c, candidate.target_after_c))
+                start_target = _snap_target(
+                    max(lower, min(upper if upper is not None else candidate.target_after_c, candidate.target_after_c)),
+                    step,
+                )
             if room.evening_comfort_active and candidate.target_after_c is None and lower is not None:
                 # Evening comfort is a real temperature promise, not a
                 # permission to start at the relaxed 25 C ceiling.

@@ -396,6 +396,21 @@ def test_fresh_pending_command_still_defers_the_next_step() -> None:
     assert deferred.status == "deferred"
 
 
+def test_acknowledgement_accepts_the_device_rounding_of_a_sent_target() -> None:
+    """A sent 24.8 C reported back as 25 C must still clear the pending command."""
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0,
+    )
+
+    async def executor(command):
+        return True
+
+    sent = asyncio.run(command_adapter.async_request(adapter.Command("climate.living", "pilot_adjust", 24.8), executor))
+    assert sent.status == "sent"
+    assert command_adapter.confirm_observed_climate_state("climate.living", hvac_mode="cool", target_temperature_c=25.0)
+    assert "command_ack_pending" not in command_adapter.handoff_blockers("climate.living")
+
+
 def test_shadow_mode_blocks_every_command_request() -> None:
     command_adapter = adapter.ClimateCommandAdapter(shadow_mode=True)
 

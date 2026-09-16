@@ -35,6 +35,12 @@ def is_climate_control_change(old_state: Any, new_state: Any) -> bool:
     )
 
 
+_TARGET_TOLERANCE_C = 0.6
+"""Split units round setpoints to whole or half degrees, so a sent 24.8 C is
+reported back as 25 C.  Acknowledgement accepts that small rounding tolerance
+instead of demanding an exact float match (2026-09-16)."""
+
+
 @dataclass(frozen=True, slots=True)
 class Command:
     """A normalized, deduplicatable desired state."""
@@ -159,7 +165,11 @@ class ClimateCommandAdapter:
         if pending is None:
             return False
         _, action, value, _ = pending[0]
-        target_matches = isinstance(value, (int, float)) and target_temperature_c is not None and float(value) == target_temperature_c
+        target_matches = (
+            isinstance(value, (int, float))
+            and target_temperature_c is not None
+            and abs(float(value) - float(target_temperature_c)) <= _TARGET_TOLERANCE_C
+        )
         acknowledged = (
             (action == "pilot_start" and hvac_mode == "cool" and target_matches)
             or (action == "pilot_adjust" and target_matches)
@@ -199,7 +209,11 @@ class ClimateCommandAdapter:
 
         def matches(signature: tuple[str, str, str | float | None, str | None]) -> bool:
             _, action, value, _ = signature
-            target_matches = isinstance(value, (int, float)) and target_temperature_c is not None and float(value) == target_temperature_c
+            target_matches = (
+                isinstance(value, (int, float))
+                and target_temperature_c is not None
+                and abs(float(value) - float(target_temperature_c)) <= _TARGET_TOLERANCE_C
+            )
             return (
                 (action == "pilot_stop" and hvac_mode == "off")
                 or (action == "pilot_start" and hvac_mode == "cool" and target_matches)
