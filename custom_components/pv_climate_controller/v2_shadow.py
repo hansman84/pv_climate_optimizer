@@ -236,6 +236,33 @@ class V2ShadowRunner:
                 safety_override=True,
                 target_after_c=room.scheduled_target_temperature_c or room.comfort_temperature_c,
             )
+        # Household rule (0.5.3): the acute cooling guard outranks the no-PV
+        # wind-down.  While the room air sits at or above the configured acute
+        # limit the unit keeps cooling - the family explicitly asked for that
+        # even without PV surplus (it is the same rule that allows a start).
+        acute_limit = getattr(room, "acute_cooling_limit_c", None)
+        acute_air = room.estimate.temperature_c
+        if (
+            acute_limit is not None
+            and acute_air is not None
+            and acute_air >= acute_limit
+            and room.observed_hvac_mode == "cool"
+            and room.eligibility.allowed
+        ):
+            return RoomCandidate(
+                policy=room.policy,
+                action=CandidateAction.ADJUST,
+                required_budget_w=0.0,
+                comfort_gap_c=max(0.0, acute_air - room.comfort_temperature_c),
+                confidence=room.estimate.confidence,
+                reason_code="indoor_acute_need_hold",
+                reason_text=(
+                    f"V2 Akute Kuehlgrenze ({acute_limit:.1f} C): Raumluft {acute_air:.1f} C - "
+                    "die Kuehlung bleibt auch ohne PV-Ueberschuss aktiv."
+                ),
+                safety_override=True,
+                target_after_c=room.comfort_temperature_c,
+            )
         # V1's essential wind-down rule: without export, do not leave an
         # already comfortable room running merely because its old device
         # setpoint is still low.  Evening comfort is the deliberate exception

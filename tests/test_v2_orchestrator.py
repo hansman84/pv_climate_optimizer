@@ -966,6 +966,41 @@ def test_command_planner_keeps_quiet_airflow_when_relaxing() -> None:
     assert plan.fan_mode == "low"
 
 
+def test_shadow_keeps_cooling_above_the_acute_limit_even_without_pv() -> None:
+    """Household rule: the acute limit outranks the no-PV wind-down."""
+    base = _shadow_room(budget_w=0.0)
+    no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
+    snapshot = replace(
+        base.snapshot,
+        pv_export_w=no_pv,
+        vacation_active=models.InputValue(
+            "input_boolean.vacation", False, None, 1.0, models.InputQuality.VALID, "home"
+        ),
+    )
+    room = models.V2RoomInput(
+        base.policy,
+        snapshot,
+        models.RoomEstimate("living", 25.6, 0.2, 25.7, 0.8, -0.7, ("trend",), "forecast_ready"),
+        models.EligibilityDecision(True, "v2_eligible", "Automatik ist zulässig."),
+        23.5,
+        26.0,
+        0.0,
+        observed_hvac_mode="cool",
+        observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0,
+        pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+        acute_cooling_limit_c=24.8,
+    )
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+
+    candidates, _decision = runner.evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "indoor_acute_need_hold"
+    assert candidates[0].action is models.CandidateAction.ADJUST
+
+
 def test_shadow_dead_end_is_off_while_cooling_is_switched_off() -> None:
     """Household rule: cooling off means *nothing* cools - no dead-end."""
     base = _shadow_room()
