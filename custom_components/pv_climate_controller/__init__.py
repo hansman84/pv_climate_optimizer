@@ -455,7 +455,14 @@ def _v2_room_inputs(
         )
         gate_acute_target = getattr(outdoor_cooling_gate, "acute_target_c", None)
         if gate_acute_target is not None and zone.name.strip().casefold() == "wohnzimmer":
-            effective_comfort_temperature = float(gate_acute_target)
+            # The acute limit only *grants permission* to cool; the target stays
+            # the room's own comfort (or lower, if the household deliberately
+            # set the limit below comfort).  Using the limit itself as the
+            # target stopped the unit exactly at the limit and never reached
+            # comfort (2026-09-16).
+            effective_comfort_temperature = min(
+                float(effective_comfort_temperature), float(gate_acute_target)
+            )
         contextual_forecast = contextual_temperature_forecast(
             house_states[zone.zone_id][0].temperature_c,
             None if forecast is None else forecast.trend_c_per_h,
