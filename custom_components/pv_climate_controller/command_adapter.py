@@ -285,6 +285,20 @@ class ClimateCommandAdapter:
         self._last_signature = {
             key: tuple(value) for key, value in saved.get("last_signature", {}).items()
         }
+        # Manual room takeovers stay intact across a restart (the family's
+        # physical-remote session must survive), but only when the restored
+        # remaining time is plausible.  An absurd stale value would otherwise
+        # block the room exactly like the backoff did.
+        now = self._clock()
+        restored_overrides: dict[str, float] = {}
+        for entity_id, until in (saved.get("manual_override_until") or {}).items():
+            try:
+                remaining = float(until) - now
+            except (TypeError, ValueError):
+                continue
+            if 0.0 < remaining <= 7200.0:
+                restored_overrides[entity_id] = float(until)
+        self._manual_override_until = restored_overrides
 
     async def async_request(self, command: Command, executor: Executor | None = None) -> CommandResult:
         """Deduplicate and guard a command; retries exactly once only when enabled."""
