@@ -272,12 +272,19 @@ class ClimateCommandAdapter:
         }
 
     def restore_state(self, saved: dict[str, Any]) -> None:
-        """Restore only safe timestamps and signatures after a restart."""
-        self._last_global_at = saved.get("last_global_at")
-        self._last_entity_at = dict(saved.get("last_entity_at", {}))
-        self._last_signature = {key: tuple(value) for key, value in saved.get("last_signature", {}).items()}
-        self._backoff_until = dict(saved.get("backoff_until", {}))
-        self._manual_override_until = dict(saved.get("manual_override_until", {}))
+        """Restore only the command signature memory after a restart.
+
+        Every other field is *monotonic* clock data (``last_global_at``,
+        ``last_entity_at``, ``backoff_until``, ``manual_override_until``).
+        Those values are only meaningful inside the process that wrote them:
+        a restored stale value can block a room for days (2026-09-18: the
+        living room sat in a permanent command backoff that no tick could
+        clear).  After a restart the adapter therefore starts with clean
+        timers and only remembers which exact command was already confirmed.
+        """
+        self._last_signature = {
+            key: tuple(value) for key, value in saved.get("last_signature", {}).items()
+        }
 
     async def async_request(self, command: Command, executor: Executor | None = None) -> CommandResult:
         """Deduplicate and guard a command; retries exactly once only when enabled."""

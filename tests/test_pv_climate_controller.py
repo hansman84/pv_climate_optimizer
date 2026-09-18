@@ -411,6 +411,28 @@ def test_acknowledgement_accepts_the_device_rounding_of_a_sent_target() -> None:
     assert "command_ack_pending" not in command_adapter.handoff_blockers("climate.living")
 
 
+def test_restored_monotonic_timers_must_not_block_a_room() -> None:
+    """A restart must not inherit stale monotonic backoffs/overrides."""
+    command_adapter = adapter.ClimateCommandAdapter(
+        shadow_mode=False, productive_enabled=True, global_interval_s=0, per_entity_interval_s=0,
+    )
+    command_adapter.restore_state({
+        "last_global_at": 10_000_000.0,
+        "last_entity_at": {"climate.living": 10_000_000.0},
+        "backoff_until": {"climate.living": 10_000_000.0},
+        "manual_override_until": {"climate.living": 10_000_000.0},
+        "last_signature": {},
+    })
+
+    assert command_adapter.handoff_blockers("climate.living") == ()
+
+    async def executor(command):
+        return True
+
+    sent = asyncio.run(command_adapter.async_request(adapter.Command("climate.living", "pilot_start", 24.0), executor))
+    assert sent.status == "sent", sent.reason
+
+
 def test_shadow_mode_blocks_every_command_request() -> None:
     command_adapter = adapter.ClimateCommandAdapter(shadow_mode=True)
 
