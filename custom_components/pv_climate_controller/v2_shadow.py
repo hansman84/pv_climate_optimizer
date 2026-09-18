@@ -134,6 +134,29 @@ class V2ShadowRunner:
         if gate_decision in {"hold", "rain_hold"}:
             relaxed = room.pilot_max_target_temperature_c
             target = room.observed_target_temperature_c
+            air_now = room.estimate.temperature_c
+            # Household rule (0.5.5): "no cooling needed" plus a room already
+            # at/below comfort means the unit must stop - not keep blowing in
+            # cool mode on a relaxed setpoint (that is what made the living
+            # room feel cold on a mild morning).
+            if (
+                room.observed_hvac_mode == "cool"
+                and air_now is not None
+                and air_now <= room.comfort_temperature_c - 0.3
+            ):
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.STOP,
+                    required_budget_w=0.0,
+                    comfort_gap_c=0.0,
+                    confidence=room.estimate.confidence,
+                    reason_code="v2_comfort_stop",
+                    reason_text=(
+                        "V2 beendet die Kuehlung: das Gate meldet keinen Bedarf und die Raumluft "
+                        "liegt auf oder unter dem Komfortwert."
+                    ),
+                    safety_override=True,
+                )
             if (
                 room.observed_hvac_mode == "cool"
                 and relaxed is not None

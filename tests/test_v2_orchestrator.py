@@ -966,6 +966,36 @@ def test_command_planner_keeps_quiet_airflow_when_relaxing() -> None:
     assert plan.fan_mode == "low"
 
 
+def test_shadow_stops_a_running_unit_when_the_gate_holds_and_comfort_is_reached() -> None:
+    """A mild morning must not leave the unit blowing in cool mode."""
+    base = _shadow_room()
+    gate = types.SimpleNamespace(
+        decision="hold",
+        reason_code="outdoor_cooling_gate_hold",
+        reason_text="Gleichgewicht: Lueften reicht.",
+        acute_target_c=None,
+    )
+    room = models.V2RoomInput(
+        base.policy,
+        base.snapshot,
+        models.RoomEstimate("living", 23.0, -0.2, 22.9, 0.8, 1.0, ("trend",), "forecast_ready"),
+        base.eligibility,
+        24.0,
+        26.0,
+        0.0,
+        observed_hvac_mode="cool",
+        observed_target_temperature_c=25.0,
+        pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+        outdoor_cooling_gate=gate,
+    )
+
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidates[0].reason_code == "v2_comfort_stop"
+    assert candidates[0].action is models.CandidateAction.STOP
+
+
 def test_shadow_keeps_cooling_above_the_acute_limit_even_without_pv() -> None:
     """Household rule: the acute limit outranks the no-PV wind-down."""
     base = _shadow_room(budget_w=0.0)
@@ -1101,7 +1131,7 @@ def test_shadow_relaxes_a_running_unit_while_the_gate_holds() -> None:
     room = models.V2RoomInput(
         base.policy,
         base.snapshot,
-        models.RoomEstimate("living", 23.5, 0.0, 23.45, 0.8, 0.5, ("trend",), "forecast_ready"),
+        models.RoomEstimate("living", 24.6, 0.0, 24.55, 0.8, -0.5, ("trend",), "forecast_ready"),
         models.EligibilityDecision(True, "v2_eligible", "Automatik ist zulaessig."),
         24.0,
         26.0,
