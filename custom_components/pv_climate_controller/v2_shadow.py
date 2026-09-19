@@ -20,6 +20,14 @@ from .v2_models import (
 from .v2_orchestrator import HouseCoordinator
 
 
+_DEFAULT_SPLIT_BUDGET_W = 300.0
+"""Conservative demand used until a room has its own learned estimate.
+
+Chosen well below a real split's draw (400-1200 W measured on this house) so a
+start can never eat the last watts of export by mistake.
+"""
+
+
 class V2ShadowRunner:
     """Build candidates then apply the one-step house coordinator."""
 
@@ -393,7 +401,16 @@ class V2ShadowRunner:
         # compressor load.  It must never veto a no-PV wind-down or stop of
         # an already running, comfortable room above.
         if room.required_budget_w is None:
-            return V2ShadowRunner._hold(room, "budget_estimate_missing", "V2 wartet: für diesen Raum gibt es noch keine belastbare Leistungsabschätzung.")
+            # 0.5.7: a missing learned value must not pin a room forever.  The
+            # 0.5.0 refactor had silently dropped the learning feed, so this
+            # branch blocked every normal start and only the acute/dead-end
+            # guards could cool - the living room stayed warm while the sun was
+            # still shining.  Start with a conservative split estimate; the
+            # house budget still has to cover it and the learner replaces it
+            # with the measured value after a few clean samples.
+            budget_w = _DEFAULT_SPLIT_BUDGET_W
+        else:
+            budget_w = room.required_budget_w
         scheduled = room.scheduled_target_temperature_c
         if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:
             if abs(room.observed_target_temperature_c - scheduled) >= (room.target_temperature_step_c or 1.0) - 0.001:
@@ -552,7 +569,7 @@ class V2ShadowRunner:
             # An occupied evening promise and a hard limit may use the
             # available house capacity even when momentary export is zero.
             # They are still single, rate-limited device steps.
-            required_budget_w=0.0 if evening_priority or telemetry_fallback_active or living_no_pv_comfort else room.required_budget_w,
+            required_budget_w=0.0 if evening_priority or telemetry_fallback_active or living_no_pv_comfort else budget_w,
             comfort_gap_c=comfort_gap,
             confidence=room.estimate.confidence,
             reason_code=("evening_comfort_deadline_risk" if room.evening_deadline_at_risk else "evening_comfort_required" if evening_comfort else "sleep_deadline_risk" if deadline_priority else "living_room_comfort_priority_no_pv" if living_no_pv_comfort else "living_room_telemetry_fallback" if telemetry_fallback_active else "living_room_comfort_priority" if living_room_priority else "forecast_comfort_risk"),

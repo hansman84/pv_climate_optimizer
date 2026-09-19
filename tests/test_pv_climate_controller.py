@@ -964,6 +964,28 @@ def test_energy_values_are_normalized_only_for_explicit_sources() -> None:
     assert snapshot.outdoor_unit_power_w == 940
 
 
+def test_idle_outdoor_unit_teaches_the_baseline_not_a_room_demand() -> None:
+    """A unit idling in cool mode (~10 W) must not teach a 10 W room demand."""
+    learner = power_learning.OutdoorPowerLearner()
+    # Same mode reported for the room, but the meter shows standby power: the
+    # sample belongs to the idle baseline ().
+    assert learner.observe(("wohnzimmer",), 10.0, 0.0) is False
+    assert learner.observe(("wohnzimmer",), 10.4, 301.0) is True
+    assert learner.observe(("wohnzimmer",), 10.2, 602.0) is True
+    assert learner.observe(("wohnzimmer",), 10.6, 903.0) is True
+    idle = learner.estimate("wohnzimmer", ())
+    assert idle.data_quality == "insufficient_history"
+    # Now the compressor really runs: those samples belong to the room.
+    assert learner.observe(("wohnzimmer",), 743.0, 1_204.0) is False
+    assert learner.observe(("wohnzimmer",), 748.0, 1_505.0) is True
+    assert learner.observe(("wohnzimmer",), 739.0, 1_806.0) is True
+    learner.observe(("wohnzimmer",), 745.0, 2_107.0)
+    learned = learner.estimate("wohnzimmer", ())
+    assert learned.data_quality == "learned"
+    assert learned.incremental_w is not None and 700.0 < learned.incremental_w < 900.0
+    assert learner.status(2_200.0)["minimum_estimate_samples"] == 3
+
+
 def test_outdoor_power_learning_requires_stability_and_reports_conservative_increment() -> None:
     learner = power_learning.OutdoorPowerLearner()
 

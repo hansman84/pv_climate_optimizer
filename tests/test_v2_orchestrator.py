@@ -256,12 +256,32 @@ def test_shadow_runner_approves_one_explainable_step_without_an_executor() -> No
     assert decision.room_decisions[0].state is models.DecisionState.APPROVED_STEP
 
 
-def test_shadow_runner_fails_closed_without_a_learned_budget() -> None:
-    candidates, decision = shadow.V2ShadowRunner().evaluate((_shadow_room(budget_w=None),), available_budget_w=1_000.0)
+def test_shadow_runner_uses_a_conservative_estimate_instead_of_blocking_the_room() -> None:
+    """0.5.7: a missing learned budget must not pin a room forever.
 
-    assert candidates[0].action is models.CandidateAction.HOLD
-    assert candidates[0].reason_code == "budget_estimate_missing"
-    assert decision.room_decisions[0].state is models.DecisionState.NOT_REQUESTED
+    The 0.5.0 refactor had dropped the learning feed, so this branch held every
+    normal start; the living room then stayed warm while the sun was shining.
+    The runner now requests the conservative split estimate and lets the house
+    budget decide.
+    """
+    base = _shadow_room(budget_w=None)
+    room = models.V2RoomInput(
+        base.policy, base.snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="off", target_temperature_step_c=1.0,
+    )
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    runner.evaluate((room,), available_budget_w=1_000.0)
+    clock[0] = 4 * 60  # the surplus gate requires 3 stable minutes
+
+    candidates, decision = runner.evaluate((room,), available_budget_w=1_000.0)
+
+    candidate = candidates[0]
+    assert candidate.reason_code != "budget_estimate_missing"
+    assert candidate.required_budget_w == shadow._DEFAULT_SPLIT_BUDGET_W
+    assert candidate.required_budget_w > 0.0
+    assert decision.approved_room_ids == ("living",)
 
 
 def test_shadow_runner_allows_one_adjustment_for_an_already_running_room() -> None:

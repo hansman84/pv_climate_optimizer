@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from statistics import median
 
 
+_COMPRESSOR_IDLE_MAX_W = 150.0
+"""Below this the outdoor unit is idling (fans/electronics, ~10 W).
+
+A unit that sits in ``cool`` mode with a satisfied setpoint draws only standby
+power.  Counting that as "this room is cooling" taught the learner a 10 W
+demand and left every budget estimate unusable, so such samples are filed as
+the idle baseline instead (2026-09-19).
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class PowerEstimate:
     zone_id: str
@@ -31,6 +41,9 @@ class OutdoorPowerLearner:
         """
         if power_w is None or power_w < 0 or power_w > 20_000:
             return False
+        if power_w < _COMPRESSOR_IDLE_MAX_W:
+            # Idling hardware measures the baseline, never a room demand.
+            active_zone_ids = ()
         key = tuple(sorted(active_zone_ids))
         if key != self._active_set:
             self._active_set = key

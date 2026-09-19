@@ -282,6 +282,19 @@ async def _async_refresh_controller(
                         _LOGGER.warning("v2 Safe-Hold failed for %s", house_zone.name, exc_info=True)
                 if store is not None:
                     await store.async_save(pack(controller.export_learning_state()))
+    # Learning feed (0.5.7): the shared outdoor-unit meter is the only honest
+    # source for a per-room electrical demand.  The 0.5.0 refactor had dropped
+    # this call along with the V1 loop that hosted it, which is why no room ever
+    # received a learned budget and every normal start stayed blocked.  The
+    # learner itself treats a standby reading (<150 W) as the idle baseline.
+    controller.observe_outdoor_power(
+        tuple(
+            house_zone.zone_id
+            for house_zone in config.house_zones
+            if (house_states.get(house_zone.zone_id) or (None, None))[1] in {"cool", "dry"}
+        ),
+        {"outdoor_temperature_c": outside_temperature, "irradiance_w_m2": irradiance},
+    )
     if store is not None and manual_room_takeover_detected:
         # A remote control action must not disappear if HA is restarted before
         # the normal delayed learning snapshot has elapsed.
