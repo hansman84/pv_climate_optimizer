@@ -214,11 +214,24 @@ class V2ShadowRunner:
             else 0.0
         )
         hold_keep_floor_w = max(30.0, room.pv_surplus_threshold_w * 0.2)
+        # "Sparsam, nur mit PV" means the surplus must actually cover what the
+        # room's compressor will draw - otherwise the hold silently runs on
+        # grid power.  The room's own learned demand is the honest yardstick
+        # (fallback: the conservative split estimate).
+        hold_demand_w = (
+            room.required_budget_w
+            if room.required_budget_w is not None
+            else _DEFAULT_SPLIT_BUDGET_W
+        )
+        hold_entry_w = max(room.pv_surplus_threshold_w, 0.8 * float(hold_demand_w))
+        hold_keep_floor_w = max(hold_keep_floor_w, 0.25 * hold_entry_w)
         already_cooling = room.observed_hvac_mode == "cool"
         hold_pv_ok = (
             hold_surplus_w >= hold_keep_floor_w
             if already_cooling
-            else pv_available and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
+            else pv_available
+            and hold_surplus_w >= hold_entry_w
+            and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
         )
         if (
             hold_depth is not None
