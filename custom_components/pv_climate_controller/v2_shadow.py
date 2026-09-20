@@ -204,13 +204,28 @@ class V2ShadowRunner:
         # (they return above), and the hold itself stops below its own band.
         hold_depth = getattr(room, "hold_depth_c", None)
         hold_air = room.estimate.temperature_c
+        # The hold itself consumes the surplus it depends on, so the exit
+        # threshold must be lower than the entry threshold - otherwise the
+        # room cycles: hold eats the export, export drops, hold stops, export
+        # returns, hold starts (observed live 2026-09-20).
+        hold_surplus_w = (
+            float(room.snapshot.pv_export_w.value or 0.0)
+            if room.snapshot.pv_export_w.is_valid
+            else 0.0
+        )
+        hold_keep_floor_w = max(30.0, room.pv_surplus_threshold_w * 0.2)
+        already_cooling = room.observed_hvac_mode == "cool"
+        hold_pv_ok = (
+            hold_surplus_w >= hold_keep_floor_w
+            if already_cooling
+            else pv_available and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
+        )
         if (
             hold_depth is not None
             and hold_depth > 0.0
             and room.eligibility.allowed
-            and pv_available
+            and hold_pv_ok
             and hold_air is not None
-            and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
         ):
             hold_floor = (
                 room.pilot_min_target_temperature_c

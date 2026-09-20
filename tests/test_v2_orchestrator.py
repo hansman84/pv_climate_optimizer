@@ -351,6 +351,22 @@ def test_pv_hold_mode_outranks_a_soft_gate_hold() -> None:
     assert candidates[0].target_after_c == 23.0
 
 
+def test_pv_hold_mode_has_hysteresis_because_it_consumes_its_own_surplus() -> None:
+    """The hold eats the export it depends on, so exiting must be harder."""
+    base = _shadow_room(budget_w=400.0)
+    runner = shadow.V2ShadowRunner(clock=lambda: 0.0)
+
+    # Already cooling: a small remaining surplus keeps the hold alive.
+    running = _hold_room(base, mode="cool", target=23.0, surplus=100.0)
+    kept, _ = runner.evaluate((running,), available_budget_w=2_000.0)
+    assert kept[0].reason_code == "pv_hold"
+
+    # Not running: the same small surplus must not start a hold at all.
+    idle = _hold_room(base, mode="off", target=25.0, surplus=100.0)
+    blocked, _ = runner.evaluate((idle,), available_budget_w=2_000.0)
+    assert blocked[0].reason_code != "pv_hold_start"
+
+
 def test_pv_hold_mode_is_off_by_default() -> None:
     base = _shadow_room(budget_w=400.0)
     room = models.V2RoomInput(
