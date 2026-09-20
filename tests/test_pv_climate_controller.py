@@ -87,10 +87,17 @@ def test_persisted_housewide_v2_mode_keeps_the_runner_and_shared_adapter_enabled
 
 
 
+def test_hold_level_migrates_from_the_old_delta_setting() -> None:
+    """0.7.3: an existing "0.5 K unter Komfort" setting becomes 23.5 °C."""
+    assert controller._migrated_hold_level({"hold_depth_c": 0.5, "comfort_temperature": 24.0}) == 23.5
+    assert controller._migrated_hold_level({"hold_depth_c": 0.0, "comfort_temperature": 24.0}) == 0.0
+    assert controller._migrated_hold_level({"comfort_temperature": 24.0}) == 0.0
+
+
 def test_hold_quality_counts_time_in_band_and_starts() -> None:
     """0.7.2: the objective proof that a level is actually held."""
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
-    zone = replace(zone, comfort_temperature=24.0, hold_depth_c=0.5)
+    zone = replace(zone, comfort_temperature=24.0, hold_level_c=23.5)
     runtime = controller.PVClimateController(
         models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
         adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),

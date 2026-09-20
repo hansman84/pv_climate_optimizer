@@ -39,7 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZoneAcuteCoolingLimitNumber(controller, entry.entry_id, f"zone_acute_cooling_limit_{index}", zone.zone_id),
             ZoneMinOutdoorCoolingNumber(controller, entry.entry_id, f"zone_min_outdoor_cooling_{index}", zone.zone_id),
             ZoneForecastHorizonNumber(controller, entry.entry_id, f"zone_forecast_horizon_{index}", zone.zone_id),
-            ZoneHoldDepthNumber(controller, entry.entry_id, f"zone_hold_depth_{index}", zone.zone_id),
+            ZoneHoldLevelNumber(controller, entry.entry_id, f"zone_hold_level_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
 
@@ -345,22 +345,27 @@ class ZoneForecastHorizonNumber(ZoneComfortTemperatureNumber):
         self.controller.notify_state_listeners()
 
 
-class ZoneHoldDepthNumber(ZoneComfortTemperatureNumber):
-    """PV hold depth: keep the room at comfort minus this many K.
+class ZoneHoldLevelNumber(ZoneComfortTemperatureNumber):
+    """Pegel (Halteziel) in °C - die Temperatur, die gehalten werden soll.
 
-    While real PV surplus lasts the unit keeps running on this level instead of
-    switching off at comfort - that is what makes the temperature stable.
-    0 = off (classic start/stop behaviour).  Never uses grid power.
+    Solange echter PV-Überschuss da ist, läuft das Gerät auf diesem Pegel weiter,
+    statt bei Komfort abzuschalten - das ist die stabile Linie.  Bewusst eine
+    absolute Temperatur auf der Skala des Raum-Sensors (AirQ), damit im Dashboard
+    zwei vergleichbare Zahlen stehen ("Komfort 24,0" vs "Pegel 23,5") statt einer
+    Differenz, die wie ein Widerspruch aussieht.
+    0 = aus (klassisches Bedarfsverhalten).  Nie Netzstrom.
     """
+
+    _attr_native_unit_of_measurement = "°C"
 
     @property
     def name(self) -> str:
-        return f"{self._zone_name} – Pegel halten (K unter Komfort)"
+        return f"{self._zone_name} – Pegel (Halteziel)"
 
     @property
     def native_value(self) -> float:
         zone = self._zone
-        value = None if zone is None else getattr(zone, "hold_depth_c", None)
+        value = None if zone is None else getattr(zone, "hold_level_c", None)
         return 0.0 if value is None else float(value)
 
     @property
@@ -369,7 +374,7 @@ class ZoneHoldDepthNumber(ZoneComfortTemperatureNumber):
 
     @property
     def native_max_value(self) -> float:
-        return 2.5
+        return 30.0
 
     @property
     def native_step(self) -> float:

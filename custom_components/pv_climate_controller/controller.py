@@ -78,7 +78,7 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             ),
             quiet_fan=bool(item.get("quiet_fan", True)),
             forecast_horizon_minutes=float(item.get("forecast_horizon_minutes", 60.0)),
-            hold_depth_c=float(item.get("hold_depth_c", 0.0)),
+            hold_level_c=float(item.get("hold_level_c", 0.0)) or _migrated_hold_level(item),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
             facade_shade_entity_ids=facade_shades,
@@ -86,6 +86,20 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
         ))
     return tuple(result)
 
+
+def _migrated_hold_level(item: Mapping[str, object]) -> float:
+    """Read a stored hold setting, accepting the old "K unter Komfort" form.
+
+    Before 0.7.3 the level was stored as a delta (``hold_depth_c``).  Existing
+    installations are migrated to the absolute form so nobody's setting is lost.
+    """
+    raw_depth = item.get("hold_depth_c", 0.0)
+    depth = float(raw_depth) if isinstance(raw_depth, (int, float)) else 0.0
+    if depth <= 0.0:
+        return 0.0
+    raw_comfort = item.get("comfort_temperature", 0.0)
+    comfort = float(raw_comfort) if isinstance(raw_comfort, (int, float)) else 0.0
+    return max(0.0, comfort - depth)
 
 def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
     """Persist every configured zone field without silently dropping geometry."""
@@ -108,7 +122,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "min_outdoor_cooling_temperature_c": zone.min_outdoor_cooling_temperature_c,
         "quiet_fan": zone.quiet_fan,
         "forecast_horizon_minutes": zone.forecast_horizon_minutes,
-        "hold_depth_c": zone.hold_depth_c,
+        "hold_level_c": zone.hold_level_c,
         "shade_entity_ids": list(zone.shade_entity_ids),
         "facade_azimuths": list(zone.facade_azimuths),
         "facade_shade_entity_ids": [list(group) for group in zone.facade_shade_entity_ids],
@@ -353,11 +367,11 @@ class PVClimateController:
         started, and the day's spread.  Only rooms with a configured hold depth
         are recorded; nothing here is inferred from the device's own sensor.
         """
-        depth = float(getattr(zone, "hold_depth_c", 0.0) or 0.0)
-        if depth <= 0.0 or temperature_c is None:
+        hold_level = float(getattr(zone, "hold_level_c", 0.0) or 0.0)
+        if hold_level <= 0.0 or temperature_c is None:
             return
         now_s = monotonic() if now_s is None else now_s
-        level = float(zone.comfort_temperature) - depth
+        level = hold_level
         today = datetime.now().date()
         stats = self._hold_quality.get(zone.zone_id)
         if stats is None or stats["date"] != today:
@@ -1178,7 +1192,7 @@ class PVClimateController:
         acute_cooling_limit_c: float | None = None,
         min_outdoor_cooling_temperature_c: float | None = None,
         forecast_horizon_minutes: float | None = None,
-        hold_depth_c: float | None = None,
+        hold_level_c: float | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
         updated: list[ZoneConfig] = []
@@ -1217,10 +1231,10 @@ class PVClimateController:
                     if forecast_horizon_minutes is None
                     else max(30.0, min(180.0, float(forecast_horizon_minutes)))
                 ),
-                hold_depth_c=(
-                    zone.hold_depth_c
-                    if hold_depth_c is None
-                    else max(0.0, min(2.5, float(hold_depth_c)))
+                hold_level_c=(
+                    zone.hold_level_c
+                    if hold_level_c is None
+                    else (0.0 if float(hold_level_c) <= 0.0 else max(16.0, min(30.0, float(hold_level_c))))
                 ),
             ))
         zones = tuple(updated)

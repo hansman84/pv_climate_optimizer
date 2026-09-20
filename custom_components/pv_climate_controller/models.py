@@ -44,11 +44,15 @@ class ZoneConfig:
     # comfort limit (household request 2026-09-20: "im Wohnzimmer besonders
     # praediktiv arbeiten").
     forecast_horizon_minutes: float = 60.0
-    # PV hold mode: while real PV surplus is available the room is kept at a
-    # constant level (comfort minus this many K) instead of switching the unit
-    # off as soon as comfort is reached.  0 = off (classic demand behaviour).
+    # PV hold mode: while real PV surplus is available the room is kept on a
+    # constant level instead of switching the unit off as soon as comfort is
+    # reached.  Stored as an ABSOLUTE temperature on the room's own sensor
+    # scale, so the dashboard shows two comparable numbers ("Komfort 24,0" and
+    # "Pegel 23,5") instead of a delta that invites arithmetic and looks like a
+    # contradiction (household feedback 2026-09-20: "woher kommen die 23,5?
+    # im dashboard ist komfort auf 24").  0 = off.
     # Household decision 2026-09-20: hold with PV only, never on grid power.
-    hold_depth_c: float = 0.0
+    hold_level_c: float = 0.0
     shade_entity_ids: tuple[str, ...] = ()
     facade_azimuths: tuple[float, ...] = ()
     facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()

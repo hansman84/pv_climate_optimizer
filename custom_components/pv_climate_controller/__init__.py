@@ -628,8 +628,9 @@ def _v2_room_inputs(
             occupied_window_active=_v2_occupied_window_active(local_now.time()),
             quiet_fan_active=bool(getattr(zone, "quiet_fan", True)),
             hold_depth_c=(
-                float(zone.hold_depth_c)
-                if float(getattr(zone, "hold_depth_c", 0.0) or 0.0) > 0.0
+                max(0.0, float(zone.comfort_temperature) - float(zone.hold_level_c))
+                if float(getattr(zone, "hold_level_c", 0.0) or 0.0) > 0.0
+                and float(zone.hold_level_c) <= float(zone.comfort_temperature) - 0.3
                 else None
             ),
             acute_cooling_limit_c=_v2_effective_acute_limit(controller, zone),
