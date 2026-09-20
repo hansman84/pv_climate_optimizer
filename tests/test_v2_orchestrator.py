@@ -264,6 +264,72 @@ def test_shadow_runner_approves_one_explainable_step_without_an_executor() -> No
     assert decision.room_decisions[0].state is models.DecisionState.APPROVED_STEP
 
 
+def _hold_room(base: object, *, mode: str, target: float | None, surplus: float, hold: float | None = 1.0) -> object:
+    export = models.InputValue("sensor.export", surplus, "W", 1.0, models.InputQuality.VALID, "export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        export, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    return models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        24.0, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode=mode, observed_target_temperature_c=target,
+        pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, hold_depth_c=hold,
+    )
+
+
+def test_pv_hold_mode_keeps_the_room_running_instead_of_stopping_at_comfort() -> None:
+    """Household goal 2026-09-20: a steady level instead of saw-toothing.
+
+    With PV surplus the room runs on at comfort minus the hold depth; the
+    comfort-stop logic must not end the run, and no grid power is used (the
+    hold is simply not offered once the surplus is gone).
+    """
+    base = _shadow_room(budget_w=400.0)
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+
+    # First tick opens the stable-surplus window; the second one has it.
+    runner.evaluate((_hold_room(base, mode="off", target=25.0, surplus=800.0),), available_budget_w=2_000.0)
+    clock[0] = 4 * 60
+    started, decision = runner.evaluate((_hold_room(base, mode="off", target=25.0, surplus=800.0),), available_budget_w=2_000.0)
+
+    assert started[0].reason_code == "pv_hold_start"
+    assert started[0].target_after_c == 23.0
+    assert decision.approved_room_ids == ("living",)
+
+    # Running on the hold level: the classic comfort stop must not fire.
+    running, _ = runner.evaluate((_hold_room(base, mode="cool", target=23.0, surplus=800.0),), available_budget_w=2_000.0)
+    assert running[0].reason_code == "pv_hold"
+    assert running[0].action is models.CandidateAction.HOLD
+    assert running[0].required_budget_w == 0.0
+
+    # A setpoint that drifted away is nudged back onto the hold level.
+    settled, _ = runner.evaluate((_hold_room(base, mode="cool", target=25.0, surplus=800.0),), available_budget_w=2_000.0)
+    assert settled[0].reason_code == "pv_hold_settle"
+    assert settled[0].target_after_c == 23.0
+
+    # Without PV surplus the hold is off: the unit is wound down again.
+    clock[0] = 4 * 60 + 30 * 60 + 1
+    no_surplus, _ = runner.evaluate((_hold_room(base, mode="cool", target=23.0, surplus=0.0),), available_budget_w=2_000.0)
+    assert no_surplus[0].reason_code != "pv_hold"
+
+
+def test_pv_hold_mode_is_off_by_default() -> None:
+    base = _shadow_room(budget_w=400.0)
+    room = models.V2RoomInput(
+        base.policy, base.snapshot, base.estimate, base.eligibility,
+        24.0, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=24.0,
+        target_temperature_step_c=1.0,
+    )
+    candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=2_000.0)
+    assert candidates[0].reason_code != "pv_hold"
+
+
 def test_shadow_debounces_a_restart_after_the_unit_switched_itself_off() -> None:
     """Regression: 2-5 minute on/off cycling reported on 2026-09-20."""
     base = _shadow_room(predicted=24.2)

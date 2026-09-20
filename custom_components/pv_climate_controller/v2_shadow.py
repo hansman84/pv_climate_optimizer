@@ -414,6 +414,78 @@ class V2ShadowRunner:
             budget_w = _DEFAULT_SPLIT_BUDGET_W
         else:
             budget_w = room.required_budget_w
+        # PV hold mode (household decision 2026-09-20): "Stabilitaet der
+        # Temperatur ist das Ziel" - but only while real PV surplus lasts,
+        # never on grid power.  The room runs on at comfort minus its hold
+        # depth instead of being switched off when comfort is reached, so the
+        # inverter holds a steady level instead of saw-toothing.  It sits here
+        # deliberately: after the no-PV wind-down (which owns the unit once the
+        # surplus is gone) and before the comfort-stop logic (which must not
+        # end the run while the hold applies).
+        hold_depth = getattr(room, "hold_depth_c", None)
+        hold_air = room.estimate.temperature_c
+        if (
+            hold_depth is not None
+            and hold_depth > 0.0
+            and room.eligibility.allowed
+            and pv_available
+            and hold_air is not None
+            and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
+        ):
+            hold_floor = (
+                room.pilot_min_target_temperature_c
+                if room.pilot_min_target_temperature_c is not None
+                else room.comfort_temperature_c - 2.5
+            )
+            hold_target = max(hold_floor, room.comfort_temperature_c - hold_depth)
+            too_cold = hold_air <= room.comfort_temperature_c - hold_depth - 0.5
+            needs_hold = hold_air >= room.comfort_temperature_c - 0.5 or (
+                predicted is not None and predicted >= room.comfort_temperature_c
+            )
+            if not too_cold and needs_hold:
+                if room.observed_hvac_mode == "cool":
+                    current = room.observed_target_temperature_c
+                    step = room.target_temperature_step_c or 1.0
+                    if current is not None and abs(current - hold_target) >= step - 0.001:
+                        return RoomCandidate(
+                            policy=room.policy,
+                            action=CandidateAction.ADJUST,
+                            required_budget_w=0.0,
+                            comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                            confidence=room.estimate.confidence,
+                            reason_code="pv_hold_settle",
+                            reason_text=(
+                                "V2 Pegel halten: das Geraet laeuft mit PV-Ueberschuss auf der "
+                                f"Halte-Stufe {hold_target:.1f} C weiter, statt bei Komfort abzuschalten."
+                            ),
+                            target_before_c=current,
+                            target_after_c=hold_target,
+                        )
+                    return RoomCandidate(
+                        policy=room.policy,
+                        action=CandidateAction.HOLD,
+                        required_budget_w=0.0,
+                        comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                        confidence=room.estimate.confidence,
+                        reason_code="pv_hold",
+                        reason_text=(
+                            f"V2 Pegel halten: {hold_air:.1f} C bei PV-Ueberschuss - die Kuehlung "
+                            f"laeuft ruhig auf {hold_target:.1f} C weiter."
+                        ),
+                    )
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.START,
+                    required_budget_w=budget_w,
+                    comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                    confidence=room.estimate.confidence,
+                    reason_code="pv_hold_start",
+                    reason_text=(
+                        "V2 Pegel halten: PV-Ueberschuss vorhanden - die Kuehlung startet auf die "
+                        f"Halte-Stufe {hold_target:.1f} C und laeuft dann ruhig weiter."
+                    ),
+                    target_after_c=hold_target,
+                )
         scheduled = room.scheduled_target_temperature_c
         if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:
             if abs(room.observed_target_temperature_c - scheduled) >= (room.target_temperature_step_c or 1.0) - 0.001:

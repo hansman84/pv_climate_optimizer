@@ -44,6 +44,11 @@ class ZoneConfig:
     # comfort limit (household request 2026-09-20: "im Wohnzimmer besonders
     # praediktiv arbeiten").
     forecast_horizon_minutes: float = 60.0
+    # PV hold mode: while real PV surplus is available the room is kept at a
+    # constant level (comfort minus this many K) instead of switching the unit
+    # off as soon as comfort is reached.  0 = off (classic demand behaviour).
+    # Household decision 2026-09-20: hold with PV only, never on grid power.
+    hold_depth_c: float = 0.0
     shade_entity_ids: tuple[str, ...] = ()
     facade_azimuths: tuple[float, ...] = ()
     facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()

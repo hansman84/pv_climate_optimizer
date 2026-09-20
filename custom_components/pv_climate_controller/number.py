@@ -39,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZoneAcuteCoolingLimitNumber(controller, entry.entry_id, f"zone_acute_cooling_limit_{index}", zone.zone_id),
             ZoneMinOutdoorCoolingNumber(controller, entry.entry_id, f"zone_min_outdoor_cooling_{index}", zone.zone_id),
             ZoneForecastHorizonNumber(controller, entry.entry_id, f"zone_forecast_horizon_{index}", zone.zone_id),
+            ZoneHoldDepthNumber(controller, entry.entry_id, f"zone_hold_depth_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
 
@@ -340,6 +341,52 @@ class ZoneForecastHorizonNumber(ZoneComfortTemperatureNumber):
         self.controller.set_zone_thermal_settings(
             self._zone_id, forecast_horizon_minutes=float(value)
         )
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZoneHoldDepthNumber(ZoneComfortTemperatureNumber):
+    """PV hold depth: keep the room at comfort minus this many K.
+
+    While real PV surplus lasts the unit keeps running on this level instead of
+    switching off at comfort - that is what makes the temperature stable.
+    0 = off (classic start/stop behaviour).  Never uses grid power.
+    """
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Pegel halten (K unter Komfort)"
+
+    @property
+    def native_value(self) -> float:
+        zone = self._zone
+        value = None if zone is None else getattr(zone, "hold_depth_c", None)
+        return 0.0 if value is None else float(value)
+
+    @property
+    def native_min_value(self) -> float:
+        return 0.0
+
+    @property
+    def native_max_value(self) -> float:
+        return 2.5
+
+    @property
+    def native_step(self) -> float:
+        return 0.5
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            "erklaerung": (
+                "0 = aus (Kuehlung schaltet bei Komfort ab). Groesser 0 = das Geraet laeuft mit "
+                "PV-Ueberschuss ruhig auf 'Komfort minus diesem Wert' weiter, statt zu takten - "
+                "das haelt die Temperatur stabil. Ohne PV-Ueberschuss wird nicht gehalten."
+            )
+        }
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(self._zone_id, hold_depth_c=float(value))
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 

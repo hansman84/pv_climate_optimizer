@@ -77,6 +77,7 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             ),
             quiet_fan=bool(item.get("quiet_fan", True)),
             forecast_horizon_minutes=float(item.get("forecast_horizon_minutes", 60.0)),
+            hold_depth_c=float(item.get("hold_depth_c", 0.0)),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
             facade_shade_entity_ids=facade_shades,
@@ -106,6 +107,7 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "min_outdoor_cooling_temperature_c": zone.min_outdoor_cooling_temperature_c,
         "quiet_fan": zone.quiet_fan,
         "forecast_horizon_minutes": zone.forecast_horizon_minutes,
+        "hold_depth_c": zone.hold_depth_c,
         "shade_entity_ids": list(zone.shade_entity_ids),
         "facade_azimuths": list(zone.facade_azimuths),
         "facade_shade_entity_ids": [list(group) for group in zone.facade_shade_entity_ids],
@@ -1098,6 +1100,7 @@ class PVClimateController:
         acute_cooling_limit_c: float | None = None,
         min_outdoor_cooling_temperature_c: float | None = None,
         forecast_horizon_minutes: float | None = None,
+        hold_depth_c: float | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
         updated: list[ZoneConfig] = []
@@ -1135,6 +1138,11 @@ class PVClimateController:
                     zone.forecast_horizon_minutes
                     if forecast_horizon_minutes is None
                     else max(30.0, min(180.0, float(forecast_horizon_minutes)))
+                ),
+                hold_depth_c=(
+                    zone.hold_depth_c
+                    if hold_depth_c is None
+                    else max(0.0, min(2.5, float(hold_depth_c)))
                 ),
             ))
         zones = tuple(updated)

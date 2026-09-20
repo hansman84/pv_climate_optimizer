@@ -39,6 +39,25 @@ So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
 Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 `dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
+## Pegel halten (Haltemodus, 0.5.11)
+
+Hausziel: **stabile Temperatur** statt Takten. Stellschraube pro Raum:
+`number.pv_climate…_<raum>_pegel_halten_k_unter_komfort` (0 = aus, bis 2,5 K).
+
+- **> 0** und **echter PV-Überschuss** stabil vorhanden → das Gerät läuft ruhig auf
+  „Komfort minus Wert" **weiter** (z. B. 24 − 1 = 23 °C) und schaltet **nicht** bei
+  Komfort ab. Die Inverter-Anlage moduliert selbst → Pegel statt Sägezahn.
+- Sinkt der Raum unter „Komfort − Wert − 0,5 K", hält V2 nicht mehr (Schutz vor Auskühlen).
+- **Ohne PV-Überschuss wird nicht gehalten** (Hausentscheidung): dann greift wieder der
+  normale Auslauf/Stop.
+- Notfälle unverändert: Akutgrenze und 26-°C-Dead-End haben immer Vorrang.
+
+## Vorausschau pro Raum (0.5.10)
+
+`…_<raum>_vorausschau_minuten` (30–180, Standard 60): wie weit die Prognose nach vorn
+schaut. Länger = früher vorkühlen. Wohnzimmer ist auf **120** gesetzt, weil der Glasraum
+schnell überhitzt (gemessen: Sonne +0,43 °C/h, Kühlen −0,75 °C/h).
+
 ## Wohnzimmer: nur noch 3 Regeln (0.5.9)
 
 Auf Wunsch aufgeräumt — die früheren WZ-Sonderregeln sind **entfernt**:

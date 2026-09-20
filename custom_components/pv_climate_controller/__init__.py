@@ -611,6 +611,11 @@ def _v2_room_inputs(
             evening_window_active=evening_window_active,
             occupied_window_active=_v2_occupied_window_active(local_now.time()),
             quiet_fan_active=bool(getattr(zone, "quiet_fan", True)),
+            hold_depth_c=(
+                float(zone.hold_depth_c)
+                if float(getattr(zone, "hold_depth_c", 0.0) or 0.0) > 0.0
+                else None
+            ),
             acute_cooling_limit_c=zone.acute_cooling_limit_c,
             evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
                 controller, zone.name, local_now.time(),
