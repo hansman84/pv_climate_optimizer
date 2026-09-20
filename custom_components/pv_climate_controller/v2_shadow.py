@@ -163,6 +163,114 @@ class V2ShadowRunner:
                 safety_override=True,
                 target_after_c=room.comfort_temperature_c,
             )
+        # --- PV availability bookkeeping (used by the hold mode and by the
+        # no-PV wind-down further down) -------------------------------------
+        # A few watts are meter noise, not usable compressor capacity, so the
+        # house has exactly one definition of usable PV.
+        pv_available = (
+            room.snapshot.pv_export_w.is_valid
+            and float(room.snapshot.pv_export_w.value or 0.0) >= room.pv_surplus_threshold_w
+        )
+        # A valid 0 W reading is an authoritative no-PV result.
+        # 0.5.9 cleanup (Johannes: "WZ-Sonderregeln auf 3 reduzieren"): the
+        # living room used to carry three extra exceptions - a missing-inverter
+        # "telemetry fallback", a no-export comfort priority and a
+        # "Wohnzimmer first" priority step.  They competed for the same
+        # setpoint and produced the visible flapping.  The room now uses
+        # exactly the same three rules as every other room: comfort target,
+        # acute limit, hard limit - with real PV surplus as the precondition.
+        predicted = room.estimate.predicted_temperature_60m_c
+        usable_cooling_authority = pv_available
+        now = self._clock()
+        if usable_cooling_authority:
+            self._pv_missing_since.pop(room.policy.room_id, None)
+        else:
+            self._pv_missing_since.setdefault(room.policy.room_id, now)
+        if pv_available:
+            self._pv_available_since.setdefault(room.policy.room_id, now)
+        else:
+            self._pv_available_since.pop(room.policy.room_id, None)
+        no_pv_for_s = 0.0 if usable_cooling_authority else now - self._pv_missing_since[room.policy.room_id]
+        wind_down_s = (
+            self._EVENING_WIND_DOWN_S
+            if room.solar_irradiance_w_m2 is not None and room.solar_irradiance_w_m2 <= self._EVENING_IRRADIANCE_W_M2
+            else self._PV_WIND_DOWN_S
+        )
+        # --- PV hold mode (household goal 2026-09-20: a steady level instead
+        # of saw-toothing, PV only - never grid power).  It sits above the
+        # outdoor gate on purpose: the gate is a "no cooling needed" heuristic,
+        # while an explicitly configured hold depth is a household wish for a
+        # stable temperature.  Hard limit and the acute guard keep priority
+        # (they return above), and the hold itself stops below its own band.
+        hold_depth = getattr(room, "hold_depth_c", None)
+        hold_air = room.estimate.temperature_c
+        if (
+            hold_depth is not None
+            and hold_depth > 0.0
+            and room.eligibility.allowed
+            and pv_available
+            and hold_air is not None
+            and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
+        ):
+            hold_floor = (
+                room.pilot_min_target_temperature_c
+                if room.pilot_min_target_temperature_c is not None
+                else room.comfort_temperature_c - 2.5
+            )
+            hold_target = max(hold_floor, room.comfort_temperature_c - hold_depth)
+            too_cold = hold_air <= room.comfort_temperature_c - hold_depth - 0.5
+            needs_hold = hold_air >= room.comfort_temperature_c - 0.5 or (
+                predicted is not None and predicted >= room.comfort_temperature_c
+            )
+            if not too_cold and needs_hold:
+                hold_budget_w = (
+                    room.required_budget_w
+                    if room.required_budget_w is not None
+                    else _DEFAULT_SPLIT_BUDGET_W
+                )
+                if room.observed_hvac_mode == "cool":
+                    current = room.observed_target_temperature_c
+                    step = room.target_temperature_step_c or 1.0
+                    if current is not None and abs(current - hold_target) >= step - 0.001:
+                        return RoomCandidate(
+                            policy=room.policy,
+                            action=CandidateAction.ADJUST,
+                            required_budget_w=0.0,
+                            comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                            confidence=room.estimate.confidence,
+                            reason_code="pv_hold_settle",
+                            reason_text=(
+                                "V2 Pegel halten: das Geraet laeuft mit PV-Ueberschuss auf der "
+                                f"Halte-Stufe {hold_target:.1f} C weiter, statt bei Komfort abzuschalten."
+                            ),
+                            target_before_c=current,
+                            target_after_c=hold_target,
+                        )
+                    return RoomCandidate(
+                        policy=room.policy,
+                        action=CandidateAction.HOLD,
+                        required_budget_w=0.0,
+                        comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                        confidence=room.estimate.confidence,
+                        reason_code="pv_hold",
+                        reason_text=(
+                            f"V2 Pegel halten: {hold_air:.1f} C bei PV-Ueberschuss - die Kuehlung "
+                            f"laeuft ruhig auf {hold_target:.1f} C weiter."
+                        ),
+                    )
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.START,
+                    required_budget_w=hold_budget_w,
+                    comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                    confidence=room.estimate.confidence,
+                    reason_code="pv_hold_start",
+                    reason_text=(
+                        "V2 Pegel halten: PV-Ueberschuss vorhanden - die Kuehlung startet auf die "
+                        f"Halte-Stufe {hold_target:.1f} C und laeuft dann ruhig weiter."
+                    ),
+                    target_after_c=hold_target,
+                )
         # The outdoor cooling gate is a transparent, weather-aware pause that
         # lives between the hard failsafe and the bedroom quiet-time handling.
         # The hard failsafe, manual takeover and bedroom rules are unaffected;
@@ -324,47 +432,11 @@ class V2ShadowRunner:
         # running room cooling indefinitely.  It blocks new starts elsewhere;
         # here it triggers the same graceful V1 wind-down path as measured
         # zero export.
-        # A few watts are meter noise, not usable compressor capacity.  Using
-        # ``> 0`` here let tiny evening/cloud export readings reset the
-        # wind-down clock indefinitely, while a V1 start correctly requires
-        # the configured minimum reserve.  Apply that same threshold to an
-        # already-running room, so the house has one definition of usable PV.
-        pv_available = (
-            room.snapshot.pv_export_w.is_valid
-            and float(room.snapshot.pv_export_w.value or 0.0) >= room.pv_surplus_threshold_w
-        )
-        # A valid 0 W reading is an authoritative no-PV result.
-        # 0.5.9 cleanup (Johannes: "WZ-Sonderregeln auf 3 reduzieren"): the
-        # living room used to carry three extra exceptions - a missing-inverter
-        # "telemetry fallback", a no-export comfort priority and a
-        # "Wohnzimmer first" priority step.  They competed for the same
-        # setpoint and produced the visible flapping.  The room now uses
-        # exactly the same three rules as every other room: comfort target,
-        # acute limit, hard limit - with real PV surplus as the precondition.
-        predicted = room.estimate.predicted_temperature_60m_c
-        usable_cooling_authority = pv_available
-        now = self._clock()
-        if usable_cooling_authority:
-            self._pv_missing_since.pop(room.policy.room_id, None)
-        else:
-            self._pv_missing_since.setdefault(room.policy.room_id, now)
-        if pv_available:
-            self._pv_available_since.setdefault(room.policy.room_id, now)
-        else:
-            self._pv_available_since.pop(room.policy.room_id, None)
-        no_pv_for_s = 0.0 if usable_cooling_authority else now - self._pv_missing_since[room.policy.room_id]
-        wind_down_s = (
-            self._EVENING_WIND_DOWN_S
-            if room.solar_irradiance_w_m2 is not None and room.solar_irradiance_w_m2 <= self._EVENING_IRRADIANCE_W_M2
-            else self._PV_WIND_DOWN_S
-        )
         if (
             room.observed_hvac_mode == "cool"
             and not usable_cooling_authority
             and temperature is not None
             and temperature < room.hard_max_temperature_c
-            # The daytime living-room comfort priority owns the unit while a
-            # bright-day forecast still exceeds comfort.  Once that forecast
             # recovers, this branch resumes the normal no-PV wind-down.
             # A sleeping-room deadline is a comfort promise.  Once it is at
             # risk, do not oscillate between no-PV stop and a deadline start;
@@ -414,78 +486,6 @@ class V2ShadowRunner:
             budget_w = _DEFAULT_SPLIT_BUDGET_W
         else:
             budget_w = room.required_budget_w
-        # PV hold mode (household decision 2026-09-20): "Stabilitaet der
-        # Temperatur ist das Ziel" - but only while real PV surplus lasts,
-        # never on grid power.  The room runs on at comfort minus its hold
-        # depth instead of being switched off when comfort is reached, so the
-        # inverter holds a steady level instead of saw-toothing.  It sits here
-        # deliberately: after the no-PV wind-down (which owns the unit once the
-        # surplus is gone) and before the comfort-stop logic (which must not
-        # end the run while the hold applies).
-        hold_depth = getattr(room, "hold_depth_c", None)
-        hold_air = room.estimate.temperature_c
-        if (
-            hold_depth is not None
-            and hold_depth > 0.0
-            and room.eligibility.allowed
-            and pv_available
-            and hold_air is not None
-            and now - self._pv_available_since.get(room.policy.room_id, now) >= self._NORMAL_START_SURPLUS_STABLE_S
-        ):
-            hold_floor = (
-                room.pilot_min_target_temperature_c
-                if room.pilot_min_target_temperature_c is not None
-                else room.comfort_temperature_c - 2.5
-            )
-            hold_target = max(hold_floor, room.comfort_temperature_c - hold_depth)
-            too_cold = hold_air <= room.comfort_temperature_c - hold_depth - 0.5
-            needs_hold = hold_air >= room.comfort_temperature_c - 0.5 or (
-                predicted is not None and predicted >= room.comfort_temperature_c
-            )
-            if not too_cold and needs_hold:
-                if room.observed_hvac_mode == "cool":
-                    current = room.observed_target_temperature_c
-                    step = room.target_temperature_step_c or 1.0
-                    if current is not None and abs(current - hold_target) >= step - 0.001:
-                        return RoomCandidate(
-                            policy=room.policy,
-                            action=CandidateAction.ADJUST,
-                            required_budget_w=0.0,
-                            comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
-                            confidence=room.estimate.confidence,
-                            reason_code="pv_hold_settle",
-                            reason_text=(
-                                "V2 Pegel halten: das Geraet laeuft mit PV-Ueberschuss auf der "
-                                f"Halte-Stufe {hold_target:.1f} C weiter, statt bei Komfort abzuschalten."
-                            ),
-                            target_before_c=current,
-                            target_after_c=hold_target,
-                        )
-                    return RoomCandidate(
-                        policy=room.policy,
-                        action=CandidateAction.HOLD,
-                        required_budget_w=0.0,
-                        comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
-                        confidence=room.estimate.confidence,
-                        reason_code="pv_hold",
-                        reason_text=(
-                            f"V2 Pegel halten: {hold_air:.1f} C bei PV-Ueberschuss - die Kuehlung "
-                            f"laeuft ruhig auf {hold_target:.1f} C weiter."
-                        ),
-                    )
-                return RoomCandidate(
-                    policy=room.policy,
-                    action=CandidateAction.START,
-                    required_budget_w=budget_w,
-                    comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
-                    confidence=room.estimate.confidence,
-                    reason_code="pv_hold_start",
-                    reason_text=(
-                        "V2 Pegel halten: PV-Ueberschuss vorhanden - die Kuehlung startet auf die "
-                        f"Halte-Stufe {hold_target:.1f} C und laeuft dann ruhig weiter."
-                    ),
-                    target_after_c=hold_target,
-                )
         scheduled = room.scheduled_target_temperature_c
         if scheduled is not None and room.observed_hvac_mode == "cool" and room.observed_target_temperature_c is not None:
             if abs(room.observed_target_temperature_c - scheduled) >= (room.target_temperature_step_c or 1.0) - 0.001:

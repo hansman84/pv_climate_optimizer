@@ -318,6 +318,39 @@ def test_pv_hold_mode_keeps_the_room_running_instead_of_stopping_at_comfort() ->
     assert no_surplus[0].reason_code != "pv_hold"
 
 
+def test_pv_hold_mode_outranks_a_soft_gate_hold() -> None:
+    """An explicitly configured hold depth beats the "no cooling needed" gate."""
+    base = _shadow_room(budget_w=400.0)
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    gate = types.SimpleNamespace(
+        decision="rain_hold",
+        reason_code="outdoor_rain_forecast",
+        reason_text="Regenstrecke: Aussenluft reicht.",
+    )
+    export = models.InputValue("sensor.export", 800.0, "W", 1.0, models.InputQuality.VALID, "export")
+    snapshot = models.InputSnapshot(
+        base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
+        export, base.snapshot.outdoor_unit_power_w, base.snapshot.outdoor_temperature,
+        base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+        base.snapshot.vacation_active, base.snapshot.cooling_season_allowed,
+    )
+    room = models.V2RoomInput(
+        base.policy, snapshot, base.estimate, base.eligibility,
+        24.0, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0, hold_depth_c=1.0, outdoor_cooling_gate=gate,
+    )
+
+    runner.evaluate((room,), available_budget_w=2_000.0)
+    clock[0] = 4 * 60
+    candidates, _decision = runner.evaluate((room,), available_budget_w=2_000.0)
+
+    assert candidates[0].reason_code == "pv_hold_settle"
+    assert candidates[0].target_after_c == 23.0
+
+
 def test_pv_hold_mode_is_off_by_default() -> None:
     base = _shadow_room(budget_w=400.0)
     room = models.V2RoomInput(
