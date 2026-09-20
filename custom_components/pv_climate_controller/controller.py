@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, time
 from time import monotonic
 
+
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
 from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy, CONF_OUTDOOR_NO_ACTIVE_COOLING_C, CONF_OUTDOOR_PV_BOOST_EXTRA_W, CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, CONF_OUTDOOR_RELAXATION_BAND_C, CONF_WEATHER_FORECAST_ENTITY_ID
 from .ems_adapter import parse_grant, requested_stages
@@ -130,6 +131,8 @@ class PVClimateController:
     _temperature_samples: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     _mode_samples: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
     _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = field(default_factory=dict)
+    # Daily holding quality per room ("is the temperature held better?").
+    _hold_quality: dict[str, dict] = field(default_factory=dict)
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
     last_outdoor_gate_decision: object = None
     last_outdoor_gate_snapshot: object = None
@@ -273,6 +276,7 @@ class PVClimateController:
             profile = self._record_thermal_profile(zone, sample.temperature_c, mode, (contexts or {}).get(zone.zone_id, {}))
             if profile is not None:
                 self.last_thermal_profiles[zone.zone_id] = profile
+            self.observe_hold_quality(zone, sample.temperature_c, mode)
             try:
                 delivered = float(str(cooling))
             except (TypeError, ValueError):
@@ -332,6 +336,61 @@ class PVClimateController:
             if zone.zone_id not in active_zone_ids
         }
         return captured
+
+    def observe_hold_quality(
+        self,
+        zone: ZoneConfig,
+        temperature_c: float | None,
+        mode: str | None,
+        now_s: float | None = None,
+    ) -> None:
+        """Daily holding quality for a room that is kept on a level.
+
+        Household question 2026-09-20: "how do we make sure the temperature is
+        held better?"  This records the objective answer per day - how long the
+        room air (the configured AirQ sensor, the value V2 regulates on)
+        actually stayed within +/-0.3 K of its level, how often the unit
+        started, and the day's spread.  Only rooms with a configured hold depth
+        are recorded; nothing here is inferred from the device's own sensor.
+        """
+        depth = float(getattr(zone, "hold_depth_c", 0.0) or 0.0)
+        if depth <= 0.0 or temperature_c is None:
+            return
+        now_s = monotonic() if now_s is None else now_s
+        level = float(zone.comfort_temperature) - depth
+        today = datetime.now().date()
+        stats = self._hold_quality.get(zone.zone_id)
+        if stats is None or stats["date"] != today:
+            stats = {
+                "date": today,
+                "zone_name": zone.name,
+                "level_c": level,
+                "seconds_total": 0.0,
+                "seconds_in_band": 0.0,
+                "starts": 0,
+                "mode": None,
+                "temperature_min_c": None,
+                "temperature_max_c": None,
+                "last_observed_s": None,
+            }
+        previous = stats["last_observed_s"]
+        elapsed = 0.0 if previous is None else max(0.0, min(300.0, now_s - previous))
+        stats["level_c"] = level
+        stats["seconds_total"] += elapsed
+        if abs(float(temperature_c) - level) <= 0.3:
+            stats["seconds_in_band"] += elapsed
+        low, high = stats["temperature_min_c"], stats["temperature_max_c"]
+        stats["temperature_min_c"] = temperature_c if low is None else min(low, temperature_c)
+        stats["temperature_max_c"] = temperature_c if high is None else max(high, temperature_c)
+        if mode == "cool" and stats["mode"] != "cool":
+            stats["starts"] += 1
+        stats["mode"] = mode
+        stats["last_observed_s"] = now_s
+        self._hold_quality[zone.zone_id] = stats
+
+    def hold_quality(self, zone_id: str) -> dict | None:
+        """Today's holding quality for one room (None when no level is set)."""
+        return self._hold_quality.get(zone_id)
 
     def _record_thermal_profile(self, zone: ZoneConfig, temperature_c: float | None, mode: str, context: Mapping[str, object]) -> ThermalProfile | None:
         if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:

@@ -247,8 +247,14 @@ class V2ShadowRunner:
             )
             hold_target = max(hold_floor, room.comfort_temperature_c - hold_depth)
             too_cold = hold_air <= room.comfort_temperature_c - hold_depth - 0.5
-            needs_hold = hold_air >= room.comfort_temperature_c - 0.5 or (
-                predicted is not None and predicted >= room.comfort_temperature_c
+            # 0.7.2: a real level regulator on the household's own (AirQ) scale.
+            # Enter 0.4 K *above* the level (or when the 2 h forecast would
+            # exceed it) so the room never drifts up first; stop 0.5 K below.
+            # That is a deadband of ~0.9 K around the level instead of waiting
+            # until the room is almost at comfort before cooling starts.
+            hold_enter_c = room.comfort_temperature_c - hold_depth + 0.4
+            needs_hold = hold_air >= hold_enter_c or (
+                predicted is not None and predicted >= hold_enter_c
             )
             if not too_cold and needs_hold:
                 hold_budget_w = (

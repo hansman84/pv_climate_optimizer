@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import sys
 import types
+from dataclasses import replace
 from datetime import time
 from pathlib import Path
 from time import monotonic
@@ -84,6 +85,35 @@ def test_persisted_housewide_v2_mode_keeps_the_runner_and_shared_adapter_enabled
     assert runtime.command_adapter._productive_enabled
 
 
+
+
+def test_hold_quality_counts_time_in_band_and_starts() -> None:
+    """0.7.2: the objective proof that a level is actually held."""
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    zone = replace(zone, comfort_temperature=24.0, hold_depth_c=0.5)
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    runtime.observe_hold_quality(zone, 23.6, "cool", 1_000.0)
+    runtime.observe_hold_quality(zone, 23.6, "cool", 1_060.0)   # in band
+    runtime.observe_hold_quality(zone, 24.4, "cool", 1_120.0)   # above the band
+    runtime.observe_hold_quality(zone, 23.5, "off", 1_180.0)    # restart observed
+    runtime.observe_hold_quality(zone, 23.5, "cool", 1_240.0)
+    stats = runtime.hold_quality("living")
+
+    assert stats is not None
+    assert stats["level_c"] == 23.5
+    assert stats["seconds_total"] == 240.0
+    assert stats["seconds_in_band"] == 180.0  # 23.6/23.6/23.5, not 24.4
+    assert stats["starts"] == 2
+    assert stats["temperature_min_c"] == 23.5 and stats["temperature_max_c"] == 24.4
+
+    # A room without a configured level records nothing at all.
+    plain = models.ZoneConfig("office", "Büro", "climate.office", "sensor.office")
+    runtime.observe_hold_quality(plain, 26.0, "cool", 1_300.0)
+    assert runtime.hold_quality("office") is None
 
 
 def test_sun_is_steady_requires_continuous_radiation() -> None:

@@ -49,6 +49,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
     entities.extend(
+        ZoneHoldQualitySensor(controller, entry.entry_id, f"zone_hold_quality_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
         ZoneThresholdTimeSensor(controller, entry.entry_id, f"zone_time_to_comfort_{index}", zone.zone_id, "comfort")
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
@@ -668,6 +672,44 @@ class ZoneRoomTemperatureSensor(ControllerEntity, SensorEntity):
         return {
             "source_entity_id": zone.temperature_entity_id if zone else None,
             "last_reported": state.last_updated if state else None,
+        }
+
+
+class ZoneHoldQualitySensor(_ZoneMetricSensor):
+    """Wie gut der Raum heute auf seinem Pegel gehalten wurde.
+
+    Erste Zahl = Anteil der Zeit, in der die Raumluft (der Sensor, auf dem V2
+    regelt) innerhalb ±0,3 K um den Pegel lag.  Das ist der objektive Beweis,
+    ob die Temperatur besser gehalten wird - nicht die Sollwert-Anzeige.
+    """
+
+    _attr_native_unit_of_measurement = "%"
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Pegelgüte"
+
+    @property
+    def native_value(self) -> float | None:
+        stats = self.controller.hold_quality(self._zone_id)
+        if not stats or not stats.get("seconds_total"):
+            return None
+        return round(100.0 * float(stats["seconds_in_band"]) / float(stats["seconds_total"]), 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        stats = self.controller.hold_quality(self._zone_id) or {}
+        total = float(stats.get("seconds_total") or 0.0)
+        in_band = float(stats.get("seconds_in_band") or 0.0)
+        return {
+            "meaning": "Anteil der Zeit im Band ±0,3 K um den Pegel (Raumluft, AirQ).",
+            "pegel_c": stats.get("level_c"),
+            "minuten_im_band": round(in_band / 60.0, 1),
+            "minuten_gesamt": round(total / 60.0, 1),
+            "starts_heute": stats.get("starts"),
+            "temperatur_min_c": stats.get("temperature_min_c"),
+            "temperatur_max_c": stats.get("temperature_max_c"),
+            "tag": str(stats.get("date")) if stats.get("date") else None,
         }
 
 
