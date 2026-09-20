@@ -8,12 +8,18 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class ContextualForecast:
-    """One-hour room forecast enriched only by observed solar behaviour."""
+    """Room forecast enriched only by observed solar behaviour.
+
+    ``horizon_h`` is the look-ahead the household configured for this room.
+    A glazed living room heats quickly, so it can look further ahead (2 h) and
+    start its pre-cool step earlier instead of reacting at the comfort limit.
+    """
 
     predicted_temperature_60m_c: float | None
     trend_c_per_h: float | None
     confidence_adjustment: float
     thermal_factors: tuple[str, ...]
+    horizon_h: float = 1.0
 
 
 def temperature_trend_c_per_h(samples: Sequence[tuple[float, float]]) -> float | None:
@@ -28,9 +34,13 @@ def temperature_trend_c_per_h(samples: Sequence[tuple[float, float]]) -> float |
     return (end_c - start_c) / elapsed_h
 
 
-def predicted_temperature_60m(current_c: float, trend_c_per_h: float | None) -> float:
-    """Predict one hour forward without pretending certainty for missing history."""
-    return current_c if trend_c_per_h is None else current_c + trend_c_per_h
+def predicted_temperature_60m(current_c: float, trend_c_per_h: float | None, horizon_h: float = 1.0) -> float:
+    """Predict forward by ``horizon_h`` hours (default: the classic one hour).
+
+    A room trend is a linear extrapolation; the caller decides how far ahead it
+    is useful.  Missing history never pretends certainty.
+    """
+    return current_c if trend_c_per_h is None else current_c + trend_c_per_h * max(0.05, horizon_h)
 
 
 def contextual_temperature_forecast(
@@ -42,6 +52,7 @@ def contextual_temperature_forecast(
     irradiance_w_m2: float | None,
     passive_sun_trend_c_per_h: float | None,
     passive_shaded_trend_c_per_h: float | None,
+    horizon_h: float = 1.0,
 ) -> ContextualForecast:
     """Blend the measured trend with the matching, learned solar context.
 
@@ -50,28 +61,36 @@ def contextual_temperature_forecast(
     passive response.  This prevents a new or incompletely configured room
     from receiving a speculative cooling request merely because the sun is out.
     """
-    if current_c is None or observed_trend_c_per_h is None:
-        return ContextualForecast(None, observed_trend_c_per_h, 0.0, ("Temperaturtrend wird noch gesammelt",))
-
     factors: list[str] = []
+
+    def predict(trend_c_per_h: float | None) -> float:
+        """Linear look-ahead over this room's configured horizon."""
+        return round(predicted_temperature_60m(current_c, trend_c_per_h, horizon_h), 2)
+
+    def _forecast(predicted_value: float | None, trend: float | None, adjustment: float, factors_in: tuple[str, ...]) -> ContextualForecast:
+        return ContextualForecast(predicted_value, trend, adjustment, factors_in, horizon_h)
+
+    if current_c is None or observed_trend_c_per_h is None:
+        return _forecast(None, observed_trend_c_per_h, 0.0, ("Temperaturtrend wird noch gesammelt",))
+
     if not direct_sun:
-        return ContextualForecast(
-            round(predicted_temperature_60m(current_c, observed_trend_c_per_h), 2),
+        return _forecast(
+            predict(observed_trend_c_per_h),
             observed_trend_c_per_h,
             0.0,
             ("keine direkte Sonne auf der Raumfassade",),
         )
     factors.append("direkte Sonne auf der Raumfassade")
     if irradiance_w_m2 is None:
-        return ContextualForecast(
-            round(predicted_temperature_60m(current_c, observed_trend_c_per_h), 2),
+        return _forecast(
+            predict(observed_trend_c_per_h),
             observed_trend_c_per_h,
             0.0,
             tuple(factors + ["Strahlungswert fehlt"]),
         )
     if shade_open_percent is None:
-        return ContextualForecast(
-            round(predicted_temperature_60m(current_c, observed_trend_c_per_h), 2),
+        return _forecast(
+            predict(observed_trend_c_per_h),
             observed_trend_c_per_h,
             0.0,
             tuple(factors + [f"Einstrahlung {round(irradiance_w_m2)} W/m²", "Beschattungszustand fehlt"]),
@@ -83,8 +102,8 @@ def contextual_temperature_forecast(
     context_name = "Sonnenprofil" if sun_exposed else "Beschattungsprofil"
     factors.extend((f"Einstrahlung {round(irradiance_w_m2)} W/m²", f"Beschattung offen {round(shade_open)} %"))
     if learned_trend is None:
-        return ContextualForecast(
-            round(predicted_temperature_60m(current_c, observed_trend_c_per_h), 2),
+        return _forecast(
+            predict(observed_trend_c_per_h),
             observed_trend_c_per_h,
             0.0,
             tuple(factors + [f"{context_name} wird noch gelernt"]),
@@ -99,8 +118,8 @@ def contextual_temperature_forecast(
     adjustment = max(-0.5, min(0.5, (learned_trend - observed_trend_c_per_h) * blend))
     adjusted_trend = round(observed_trend_c_per_h + adjustment, 3)
     factors.append(f"gelerntes {context_name}: {round(learned_trend, 2)} °C/h")
-    return ContextualForecast(
-        round(predicted_temperature_60m(current_c, adjusted_trend), 2),
+    return _forecast(
+        predict(adjusted_trend),
         adjusted_trend,
         round(min(0.25, 0.05 + 0.20 * irradiance_weight * openness_weight), 2),
         tuple(factors),

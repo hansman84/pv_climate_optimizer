@@ -484,6 +484,9 @@ def _v2_room_inputs(
             irradiance_w_m2=context.get("irradiance_w_m2") if isinstance(context.get("irradiance_w_m2"), (int, float)) else None,
             passive_sun_trend_c_per_h=None if profile is None else profile.passive_sun_trend_c_per_h,
             passive_shaded_trend_c_per_h=None if profile is None else profile.passive_shaded_trend_c_per_h,
+            # Per-room look-ahead: the glass living room can act earlier
+            # (household request 2026-09-20).
+            horizon_h=max(0.5, min(3.0, float(getattr(zone, "forecast_horizon_minutes", 60.0) or 60.0) / 60.0)),
         )
         estimate = controller.last_power_estimates.get(zone.zone_id)
         vacation_active = _v2_boolean_input(

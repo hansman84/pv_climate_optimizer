@@ -38,6 +38,12 @@ class ZoneConfig:
     # own commands.  Sleep/child rooms may disable this and let the device
     # automatic fan modulation run (2026-09-06 household request).
     quiet_fan: bool = True
+    # Look-ahead of this room's temperature forecast, in minutes.  The glass
+    # living room heats quickly (+0.43 C/h measured), so it can look two hours
+    # ahead and start its pre-cool step earlier instead of reacting at the
+    # comfort limit (household request 2026-09-20: "im Wohnzimmer besonders
+    # praediktiv arbeiten").
+    forecast_horizon_minutes: float = 60.0
     shade_entity_ids: tuple[str, ...] = ()
     facade_azimuths: tuple[float, ...] = ()
     facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()

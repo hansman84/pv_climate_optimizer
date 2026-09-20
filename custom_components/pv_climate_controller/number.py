@@ -38,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZonePriorityNumber(controller, entry.entry_id, f"zone_priority_{index}", zone.zone_id),
             ZoneAcuteCoolingLimitNumber(controller, entry.entry_id, f"zone_acute_cooling_limit_{index}", zone.zone_id),
             ZoneMinOutdoorCoolingNumber(controller, entry.entry_id, f"zone_min_outdoor_cooling_{index}", zone.zone_id),
+            ZoneForecastHorizonNumber(controller, entry.entry_id, f"zone_forecast_horizon_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
 
@@ -291,6 +292,53 @@ class ZoneMinOutdoorCoolingNumber(ZoneComfortTemperatureNumber):
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_zone_thermal_settings(
             self._zone_id, min_outdoor_cooling_temperature_c=float(value)
+        )
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZoneForecastHorizonNumber(ZoneComfortTemperatureNumber):
+    """How far ahead this room's forecast looks, in minutes.
+
+    The glazed living room heats quickly, so a longer look-ahead lets V2 start
+    its pre-cool step earlier instead of reacting at the comfort limit.
+    """
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Vorausschau (Minuten)"
+
+    @property
+    def native_value(self) -> float:
+        zone = self._zone
+        value = None if zone is None else getattr(zone, "forecast_horizon_minutes", None)
+        return 60.0 if value is None else float(value)
+
+    @property
+    def native_min_value(self) -> float:
+        return 30.0
+
+    @property
+    def native_max_value(self) -> float:
+        return 180.0
+
+    @property
+    def native_step(self) -> float:
+        return 15.0
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            "erklaerung": (
+                "Wie weit der Regler für diesen Raum nach vorn schaut. Laenger = frueher "
+                "vorkuehlen (gut fuer Raeume, die schnell warm werden), kuerzer = reagiert "
+                "spaeter und sparsamer."
+            )
+        }
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(
+            self._zone_id, forecast_horizon_minutes=float(value)
         )
         await self._async_persist_zones()
         self.controller.notify_state_listeners()

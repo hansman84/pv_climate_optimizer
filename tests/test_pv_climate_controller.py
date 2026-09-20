@@ -986,6 +986,22 @@ def test_idle_outdoor_unit_teaches_the_baseline_not_a_room_demand() -> None:
     assert learner.status(2_200.0)["minimum_estimate_samples"] == 3
 
 
+def test_forecast_horizon_scales_the_look_ahead_per_room() -> None:
+    """Per-room look-ahead (0.5.10): the glass living room may look 2 h ahead."""
+    one_hour = forecasting.contextual_temperature_forecast(
+        24.0, 0.5, direct_sun=False, shade_open_percent=0.0, irradiance_w_m2=None,
+        passive_sun_trend_c_per_h=None, passive_shaded_trend_c_per_h=None,
+    )
+    two_hours = forecasting.contextual_temperature_forecast(
+        24.0, 0.5, direct_sun=False, shade_open_percent=0.0, irradiance_w_m2=None,
+        passive_sun_trend_c_per_h=None, passive_shaded_trend_c_per_h=None,
+        horizon_h=2.0,
+    )
+    assert one_hour.predicted_temperature_60m_c == 24.5
+    assert two_hours.predicted_temperature_60m_c == 25.0
+    assert two_hours.horizon_h == 2.0
+
+
 def test_outdoor_power_learning_requires_stability_and_reports_conservative_increment() -> None:
     learner = power_learning.OutdoorPowerLearner()
 
