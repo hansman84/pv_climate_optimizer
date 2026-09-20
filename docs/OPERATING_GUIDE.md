@@ -39,6 +39,14 @@ So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
 Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 `dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
+## Nachtsperre Wohnzimmer (0.8.0)
+
+Die **Abendkomfort-Endzeit** (`Abendkomfort bis`) ist zugleich der **Start der Nachtsperre**
+(Hausentscheidung 2026-09-20: „benutze die Abendkomfort-Endzeit als Ruhezeit"). Sie endet um
+**07:00**. In dieser Zeit startet **keine neue Kühlung** (auch nicht über die akute
+Kühlgrenze) — nur die **harte Temperaturgrenze 26,0 °C** startet noch. Laufende Geräte werden
+nicht neu gestartet, sondern laufen nach den normalen Regeln aus.
+
 ## Pegel (Halteziel) — Haltemodus (0.5.11, absolute Temperatur seit 0.7.3)
 
 Hausziel: **stabile Temperatur** statt Takten. Stellschraube pro Raum:

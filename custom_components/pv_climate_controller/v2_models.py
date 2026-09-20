@@ -160,6 +160,12 @@ class V2RoomInput:
     # Unlike ``evening_comfort_active``, this stays true for the whole
     # configured evening window, even when the room is already comfortable.
     evening_window_active: bool = False
+    # Night quiet time: starts at the end of the evening comfort window and
+    # runs until the morning.  No *new* cooling start happens then - only the
+    # hard temperature limit may start the room (household decision 2026-09-20:
+    # "nachtsperre soll greifen im wohnzimmer ... benutze die abendkomfort
+    # endzeit als ruhezeit").
+    night_block_active: bool = False
     # The living-room evening promise can need a short, calm lead-in before
     # the occupied window itself begins.  It is deliberately distinct from
     # the active-window flag so ordinary daytime PV policy remains unchanged.

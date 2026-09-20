@@ -878,6 +878,21 @@ class PVClimateController:
             return start <= local_time < end
         return local_time >= start or local_time < end
 
+    def living_night_block_active(self, now: time | None = None) -> bool:
+        """Night quiet time that starts when the Abendkomfort window ends.
+
+        Household decision 2026-09-20: the evening comfort end time ("Abendkomfort
+        bis", e.g. 23:00) is at the same time the start of the air conditioner's
+        night quiet time - one knob, two jobs.  It ends at 07:00; only the hard
+        temperature limit may start a room during it.
+        """
+        local_time = now or datetime.now().astimezone().time()
+        start = self._schedule_time(self.config.living_evening_end_time, time(23, 30))
+        end = time(7, 0)
+        if start <= end:
+            return start <= local_time < end
+        return local_time >= start or local_time < end
+
     @staticmethod
     def _schedule_time(value: str, fallback: time) -> time:
         """Parse persisted HH:MM values defensively."""

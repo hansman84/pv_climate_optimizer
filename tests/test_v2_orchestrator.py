@@ -277,8 +277,50 @@ def _hold_room(base: object, *, mode: str, target: float | None, surplus: float,
         24.0, base.hard_max_temperature_c, base.required_budget_w,
         observed_hvac_mode=mode, observed_target_temperature_c=target,
         pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
-        target_temperature_step_c=1.0, hold_depth_c=hold, evening_comfort_active=evening,
+        target_temperature_step_c=1.0, hold_depth_c=hold,
+        evening_comfort_active=evening, evening_window_active=evening,
     )
+
+
+def test_night_quiet_time_blocks_new_starts_but_not_the_hard_limit() -> None:
+    """Household decision 2026-09-20: no AC starts at night, only the 26 C net.
+
+    The night block starts at the Abendkomfort end time and blocks every new
+    cooling start - including the acute limit.  The hard temperature limit
+    stays the emergency net.
+    """
+    base = _shadow_room(predicted=25.2, budget_w=400.0)
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+
+    def _night_room(temperature: float) -> object:
+        # The shared fixture marks vacation as active; the night rules are about
+        # the cooling season being ON, so build an explicit snapshot here.
+        on_vacation = models.InputValue("sensor.vacation", False, None, 1.0, models.InputQuality.VALID, "off")
+        snapshot = models.InputSnapshot(
+            base.snapshot.observed_at, models.InputValue("sensor.room", temperature, "°C", 1.0, models.InputQuality.VALID, "airq"),
+            base.snapshot.climate_available, base.snapshot.pv_export_w, base.snapshot.outdoor_unit_power_w,
+            base.snapshot.outdoor_temperature, base.snapshot.heat_pump_priority, base.snapshot.automation_enabled,
+            on_vacation, base.snapshot.cooling_season_allowed,
+        )
+        return models.V2RoomInput(
+            base.policy, snapshot,
+            models.RoomEstimate("living", temperature, 0.2, temperature, 0.8, -0.7, ("trend",), "forecast_ready"),
+            base.eligibility,
+            24.0, 26.0, base.required_budget_w,
+            observed_hvac_mode="off", observed_target_temperature_c=24.0,
+            pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
+            target_temperature_step_c=1.0, night_block_active=True,
+        )
+
+    above_acute, _ = runner.evaluate((_night_room(25.2),), available_budget_w=1_000.0)
+    assert above_acute[0].reason_code == "night_quiet_time"
+    assert above_acute[0].action is models.CandidateAction.HOLD
+
+    above_hard, decision = runner.evaluate((_night_room(26.4),), available_budget_w=1_000.0)
+    assert above_hard[0].reason_code == "hard_temperature_limit_failsafe"
+    assert above_hard[0].action in {models.CandidateAction.START, models.CandidateAction.ADJUST}
+    assert decision.approved_room_ids == ("living",)
 
 
 def test_pv_hold_mode_yields_to_the_evening_comfort_window() -> None:

@@ -163,6 +163,20 @@ class V2ShadowRunner:
                 safety_override=True,
                 target_after_c=room.comfort_temperature_c,
             )
+        # --- Night quiet time (household decision 2026-09-20) -----------------
+        # The end of the Abendkomfort window is also the start of the air
+        # conditioner's night quiet time: from then on the living room starts no
+        # new cooling at all - neither over the peg nor over the acute limit.
+        # Only the hard limit above (and the global cooling-season switch) may
+        # still start it, because that is the emergency net.  A unit that is
+        # already running is left to the normal rules (comfort stop, PV
+        # wind-down); it is never restarted just to hold a level at night.
+        if room.night_block_active and room.observed_hvac_mode != "cool":
+            return self._hold(
+                room,
+                "night_quiet_time",
+                "V2 Nachtsperre: ab Ende des Abendkomfort-Fensters startet keine Kühlung mehr – nur die harte Temperaturgrenze greift.",
+            )
         # --- PV availability bookkeeping (used by the hold mode and by the
         # no-PV wind-down further down) -------------------------------------
         # A few watts are meter noise, not usable compressor capacity, so the
@@ -239,11 +253,12 @@ class V2ShadowRunner:
             and room.eligibility.allowed
             and hold_pv_ok
             and hold_air is not None
-            # The household's evening comfort (Abendkomfort) is deliberately
-            # relaxed: inside that window nothing holds a low level, so the
-            # evening target and the night-time gate keep governing the room
-            # (household reminder 2026-09-20).
-            and not room.evening_comfort_active
+            # The household's evening window (Abendkomfort) is deliberately
+            # relaxed and the night that follows is quiet: inside the window
+            # nothing holds a low level, and from its end no new cooling starts
+            # at all (household reminder 2026-09-20).  The whole window is used,
+            # not just the part where the room is above the evening target.
+            and not room.evening_window_active
         ):
             hold_floor = (
                 room.pilot_min_target_temperature_c

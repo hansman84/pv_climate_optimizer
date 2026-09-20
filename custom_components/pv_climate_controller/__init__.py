@@ -625,6 +625,7 @@ def _v2_room_inputs(
             ),
             evening_comfort_active=evening_comfort_active,
             evening_window_active=evening_window_active,
+            night_block_active=_v2_living_night_block_active(controller, zone.name, local_now.time()),
             occupied_window_active=_v2_occupied_window_active(local_now.time()),
             quiet_fan_active=bool(getattr(zone, "quiet_fan", True)),
             hold_depth_c=(
@@ -778,6 +779,13 @@ def _v2_living_evening_comfort_active(
     if zone_name.strip().casefold() != "wohnzimmer" or temperature_c is None:
         return False
     return _v2_living_evening_window_active(controller, zone_name, local_time) and temperature_c > controller.config.living_evening_comfort_temperature + 0.25
+
+
+def _v2_living_night_block_active(controller: PVClimateController, zone_name: str, local_time: time) -> bool:
+    """Night quiet time for the living room, starting at the evening end time."""
+    if zone_name.strip().casefold() != "wohnzimmer":
+        return False
+    return controller.living_night_block_active(local_time)
 
 
 def _v2_occupied_window_active(local_time: time) -> bool:
