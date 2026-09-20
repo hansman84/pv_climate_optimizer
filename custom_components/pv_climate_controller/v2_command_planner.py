@@ -155,11 +155,25 @@ class V2CommandPlanner:
         if target is None:
             return None
         stop_reserve_c = 0.4 if room.occupied_window_active else SETTLE_STOP_RESERVE_C
-        if measured is not None and measured <= comfort - stop_reserve_c:
+        # A configured level ("Pegel halten") below comfort owns the stop line:
+        # stopping at comfort - 0.6 while the level is 23.5 would fight the
+        # level and cycle the unit (0.7.1).
+        peg_active = target <= comfort - 0.3 and getattr(room, "hold_depth_c", None) is not None
+        stop_line_c = (target - 0.5) if peg_active else (comfort - stop_reserve_c)
+        if measured is not None and measured <= stop_line_c:
             # Comfort reached: stop instead of holding the room cold.
             return V2CommandPlan(room.policy.room_id, CandidateAction.STOP, None, "v2_comfort_reached",
                                  f"V2 beendet die Kühlung: Raum ({measured:.1f} °C) liegt {stop_reserve_c:.1f} K unter dem Komfortziel {comfort:.1f} °C – kein kaltes Halten, keine Zugluft.", None)
-        if target < comfort - SETTLE_TARGET_TOL_C and measured is not None and measured < comfort + 0.5:
+        # A level the household configured on purpose must survive: only an
+        # unintended precool setpoint is raised back to comfort (0.7.1).  The
+        # fan governor below still runs either way - that is the fine actuator.
+        level_configured = getattr(room, "hold_depth_c", None) is not None
+        if (
+            target < comfort - SETTLE_TARGET_TOL_C
+            and not level_configured
+            and measured is not None
+            and measured < comfort + 0.5
+        ):
             # Over-eager setpoint: raise gently to comfort (less cold, less draft).
             new_target = min(comfort, target + step)
             if new_target > target:

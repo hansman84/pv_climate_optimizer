@@ -64,6 +64,7 @@ class _Room:
         self.observed_fan_mode = observed_fan
         self.supported_fan_modes = tuple(supported or ["auto", "low", "middle_low", "medium", "middle_high", "high"])
         self.evening_comfort_active = False
+        self.hold_depth_c = None
 
 
 def _candidate(action="adjust", target_after=22.5, reason="v2_scheduled_cooling_step", gap=1.0):
@@ -99,6 +100,28 @@ def test_setpoint_damping_keeps_a_room_calm_between_changes() -> None:
     clock.t += 60
     acute = _candidate(reason="indoor_acute_need", target_after=23.0)
     assert planner.plan(room, acute, _house(["d1"])) is not None
+
+
+def test_settle_keeps_a_configured_level_and_only_stops_below_it() -> None:
+    """0.7.1: a configured level owns the stop line and is never raised away."""
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    holding = _Room("p1", measured=23.4, comfort=24.0, observed_target=23.5, observed_fan="low")
+    holding.hold_depth_c = 0.5
+    plan = planner.settle_plan(holding)
+    # 23.4 is still above the level's own stop line (23.0): keep holding, never
+    # raise the level back to comfort.
+    assert plan is None or plan.target_temperature_c == 23.5
+
+    too_cold = _Room("p2", measured=22.9, comfort=24.0, observed_target=23.5, observed_fan="low")
+    too_cold.hold_depth_c = 0.5
+    stop = planner.settle_plan(too_cold)
+    assert stop is not None and stop.action is v2_models.CandidateAction.STOP
+
+    # Without a configured level the old behaviour stands: an unintended
+    # precool setpoint is raised back towards comfort.
+    plain = _Room("p3", measured=24.2, comfort=24.0, observed_target=23.0, observed_fan="low")
+    assert planner.settle_plan(plain) is not None
 
 
 def test_adjust_carry_low_fan_when_room_in_control():
