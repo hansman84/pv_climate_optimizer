@@ -256,6 +256,58 @@ def test_shadow_runner_approves_one_explainable_step_without_an_executor() -> No
     assert decision.room_decisions[0].state is models.DecisionState.APPROVED_STEP
 
 
+def test_shadow_debounces_a_restart_after_the_unit_switched_itself_off() -> None:
+    """Regression: 2-5 minute on/off cycling reported on 2026-09-20."""
+    base = _shadow_room(predicted=24.2)
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+
+    def room(mode: str, *, acute: float | None = None) -> object:
+        return models.V2RoomInput(
+            base.policy, base.snapshot, base.estimate, base.eligibility,
+            base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+            observed_hvac_mode=mode, target_temperature_step_c=1.0, acute_cooling_limit_c=acute,
+        )
+
+    runner.evaluate((room("cool"),), available_budget_w=1_000.0)
+    clock[0] = 60.0
+    # The unit satisfied its own sensor and switched off two minutes into the run.
+    cooled, _ = runner.evaluate((room("off"),), available_budget_w=1_000.0)
+    assert cooled[0].reason_code == "restart_cooldown"
+    clock[0] = 300.0
+    still_waiting, _ = runner.evaluate((room("off"),), available_budget_w=1_000.0)
+    assert still_waiting[0].reason_code == "restart_cooldown"
+    clock[0] = 60.0 + runner._RESTART_COOLDOWN_S + 1
+    allowed, _ = runner.evaluate((room("off"),), available_budget_w=1_000.0)
+    assert allowed[0].reason_code != "restart_cooldown"
+    # The shadow expresses this as a modulation request; the planner turns it
+    # into a real start command for a room that is not running.
+    assert allowed[0].action in {models.CandidateAction.START, models.CandidateAction.ADJUST}
+    assert allowed[0].requests_modulation
+
+
+def test_shadow_acute_limit_still_starts_during_the_restart_cooldown() -> None:
+    base = _shadow_room()
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+
+    def room(mode: str, acute: float | None) -> object:
+        return models.V2RoomInput(
+            base.policy, base.snapshot, base.estimate, base.eligibility,
+            base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+            observed_hvac_mode=mode, target_temperature_step_c=1.0, acute_cooling_limit_c=acute,
+        )
+
+    runner.evaluate((room("cool", None),), available_budget_w=1_000.0)
+    clock[0] = 60.0
+    runner.evaluate((room("off", None),), available_budget_w=1_000.0)
+
+    urgent, _ = runner.evaluate((room("off", 24.0),), available_budget_w=1_000.0)
+
+    assert urgent[0].reason_code == "indoor_acute_need"
+    assert urgent[0].action is models.CandidateAction.START
+
+
 def test_shadow_runner_uses_a_conservative_estimate_instead_of_blocking_the_room() -> None:
     """0.5.7: a missing learned budget must not pin a room forever.
 
@@ -701,7 +753,10 @@ def test_missing_inverter_telemetry_allows_only_sunny_daytime_living_room_fallba
     assert candidates[0].safety_override
     assert decision.approved_room_ids == ("living",)
     assert plan is not None and plan.action is models.CandidateAction.START
-    assert plan.target_temperature_c == 25.0
+    # 0.5.8: a fresh start aims at comfort (snapped to the device step), not at
+    # the relaxed wind-down ceiling - starting at 25 C made the unit satisfy
+    # itself immediately and produced the reported on/off cycling.
+    assert plan.target_temperature_c == 24.0
 
 
 def test_living_comfort_priority_uses_measured_zero_but_never_evening_window() -> None:

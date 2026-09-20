@@ -215,7 +215,15 @@ class V2CommandPlanner:
             # Older room records may not yet have an explicit pilot ceiling.
             # A failsafe start may still use the last target confirmed by that
             # exact device; it does not invent a new setpoint.
-            start_target = upper if upper is not None else room.observed_target_temperature_c
+            # A fresh start aims at comfort, not at the relaxed wind-down
+            # ceiling: starting at 25 C let the unit satisfy its own sensor
+            # within minutes, switch off and trigger the next start - the
+            # nervous on/off pattern reported on 2026-09-20.  The ceiling
+            # remains a ceiling for *raising* an already running unit.
+            if upper is not None:
+                start_target = _snap_target(min(upper, room.comfort_temperature_c), step)
+            else:
+                start_target = room.observed_target_temperature_c
             if candidate.target_after_c is not None:
                 start_target = _snap_target(
                     max(lower, min(upper if upper is not None else candidate.target_after_c, candidate.target_after_c)),

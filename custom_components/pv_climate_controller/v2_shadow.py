@@ -69,12 +69,22 @@ class V2ShadowRunner:
     # softer band (room feels noticeably warmer with the strict values).
     _OCCUPIED_STOP_RESERVE_C = 0.4
     _OCCUPIED_RESTART_GAP_C = 0.5
+    # Short-cycling guard (household report 2026-09-20: "das Wohnzimmer
+    # schaltet nervös ein und aus").  A split that has just satisfied its own
+    # sensor switches itself off; re-issuing a start two minutes later produced
+    # 2-5 minute on/off cycles all morning.  After an observed cool->off
+    # transition V2 waits before requesting the next normal start.  Emergencies
+    # (hard limit, acute limit) and clearly warm rooms stay exempt.
+    _RESTART_COOLDOWN_S = 10 * 60
+    _RESTART_EXEMPT_COMFORT_GAP_C = 1.0
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:
         self._coordinator = coordinator or HouseCoordinator()
         self._clock = clock
         self._pv_missing_since: dict[str, float] = {}
         self._pv_available_since: dict[str, float] = {}
+        self._last_observed_mode: dict[str, str | None] = {}
+        self._cooling_off_since: dict[str, float] = {}
 
     def reset_room_wind_down(self, room_id: str) -> None:
         """Begin a newly adopted room's PV observation window from zero.
@@ -92,6 +102,42 @@ class V2ShadowRunner:
         return candidates, decision
 
     def _candidate(self, room: V2RoomInput) -> RoomCandidate:
+        """Debounce normal restarts after an observed cooling session ended.
+
+        The Hisense indoor unit switches itself off as soon as its own sensor
+        reaches the setpoint; V2 then saw an "off" room that was still slightly
+        warm and asked for the next start two minutes later.  That produced the
+        nervous 2-5 minute on/off pattern reported on 2026-09-20.  Emergency
+        paths (hard limit, acute limit) and clearly warm rooms stay exempt.
+        """
+        now = self._clock()
+        room_id = room.policy.room_id
+        mode = room.observed_hvac_mode
+        previous_mode = self._last_observed_mode.get(room_id)
+        self._last_observed_mode[room_id] = mode
+        if previous_mode == "cool" and mode != "cool":
+            self._cooling_off_since[room_id] = now
+        elif mode == "cool":
+            self._cooling_off_since.pop(room_id, None)
+        candidate = self._candidate_uncapped(room)
+        off_since = self._cooling_off_since.get(room_id)
+        if (
+            off_since is not None
+            and now - off_since < self._RESTART_COOLDOWN_S
+            and candidate.action in {CandidateAction.START, CandidateAction.ADJUST}
+            and mode != "cool"
+            and candidate.reason_code not in {"hard_temperature_limit_failsafe", "indoor_acute_need"}
+            and candidate.comfort_gap_c < self._RESTART_EXEMPT_COMFORT_GAP_C
+        ):
+            remaining_min = max(1, int((self._RESTART_COOLDOWN_S - (now - off_since) + 59) // 60))
+            return V2ShadowRunner._hold(
+                room,
+                "restart_cooldown",
+                f"V2 wartet {remaining_min} Min. bis zum naechsten Start: das Geraet hat seine Kuehlung gerade selbst beendet (Schutz vor Kurzzyklen).",
+            )
+        return candidate
+
+    def _candidate_uncapped(self, room: V2RoomInput) -> RoomCandidate:
         # Hard dead-end (household rule): at or above the hard limit the room
         # is cooled against per-room soft rules (outdoor floor, quiet time,
         # PV holds) - but only while cooling is switched on globally.  With
