@@ -264,7 +264,7 @@ def test_shadow_runner_approves_one_explainable_step_without_an_executor() -> No
     assert decision.room_decisions[0].state is models.DecisionState.APPROVED_STEP
 
 
-def _hold_room(base: object, *, mode: str, target: float | None, surplus: float, hold: float | None = 1.0) -> object:
+def _hold_room(base: object, *, mode: str, target: float | None, surplus: float, hold: float | None = 1.0, evening: bool = False) -> object:
     export = models.InputValue("sensor.export", surplus, "W", 1.0, models.InputQuality.VALID, "export")
     snapshot = models.InputSnapshot(
         base.snapshot.observed_at, base.snapshot.room_temperature, base.snapshot.climate_available,
@@ -277,8 +277,30 @@ def _hold_room(base: object, *, mode: str, target: float | None, surplus: float,
         24.0, base.hard_max_temperature_c, base.required_budget_w,
         observed_hvac_mode=mode, observed_target_temperature_c=target,
         pilot_min_target_temperature_c=20.0, pilot_max_target_temperature_c=25.0,
-        target_temperature_step_c=1.0, hold_depth_c=hold,
+        target_temperature_step_c=1.0, hold_depth_c=hold, evening_comfort_active=evening,
     )
+
+
+def test_pv_hold_mode_yields_to_the_evening_comfort_window() -> None:
+    """Household reminder 2026-09-20: evenings are relaxed, nights stay quiet.
+
+    Inside the Abendkomfort window nothing holds a low level - the evening
+    target (and the night gate) keep governing the room.  Outside it the level
+    applies again.
+    """
+    base = _shadow_room(budget_w=400.0)
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    room = _hold_room(base, mode="cool", target=23.5, surplus=1_200.0, evening=True)
+    runner.evaluate((room,), available_budget_w=1_000.0)
+    clock[0] = 6 * 60
+    candidates, _ = runner.evaluate((room,), available_budget_w=1_000.0)
+    assert not str(candidates[0].reason_code).startswith("pv_hold")
+
+    outside = _hold_room(base, mode="cool", target=23.5, surplus=1_200.0, evening=False)
+    clock[0] = 12 * 60
+    held, _ = runner.evaluate((outside,), available_budget_w=1_000.0)
+    assert str(held[0].reason_code).startswith("pv_hold")
 
 
 def test_pv_hold_mode_keeps_the_room_running_instead_of_stopping_at_comfort() -> None:

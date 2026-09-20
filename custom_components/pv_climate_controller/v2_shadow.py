@@ -239,6 +239,11 @@ class V2ShadowRunner:
             and room.eligibility.allowed
             and hold_pv_ok
             and hold_air is not None
+            # The household's evening comfort (Abendkomfort) is deliberately
+            # relaxed: inside that window nothing holds a low level, so the
+            # evening target and the night-time gate keep governing the room
+            # (household reminder 2026-09-20).
+            and not room.evening_comfort_active
         ):
             hold_floor = (
                 room.pilot_min_target_temperature_c
