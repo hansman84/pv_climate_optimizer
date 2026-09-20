@@ -39,17 +39,22 @@ So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
 Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 `dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
-## Pegel halten (Haltemodus, 0.5.11)
+## Pegel (Halteziel) — Haltemodus (0.5.11, absolute Temperatur seit 0.7.3)
 
 Hausziel: **stabile Temperatur** statt Takten. Stellschraube pro Raum:
-`number.pv_climate…_<raum>_pegel_halten_k_unter_komfort` (0 = aus, bis 2,5 K).
+`number.pv_klimaregler_<raum>_pegel_halteziel` in **°C** (`0 = aus`).
 
-- **> 0** und **echter PV-Überschuss** stabil vorhanden → das Gerät läuft ruhig auf
-  „Komfort minus Wert" **weiter** (z. B. 24 − 1 = 23 °C) und schaltet **nicht** bei
-  Komfort ab. Die Inverter-Anlage moduliert selbst → Pegel statt Sägezahn.
-- Sinkt der Raum unter „Komfort − Wert − 0,5 K", hält V2 nicht mehr (Schutz vor Auskühlen).
+- **Pegel unter Komfort − 0,3 K** (z. B. Komfort 24,0 · Pegel 23,5) und **echter
+  PV-Überschuss** stabil vorhanden → das Gerät läuft ruhig auf dem Pegel **weiter** und
+  schaltet **nicht** bei Komfort ab. Die Inverter-Anlage moduliert selbst → Pegel statt
+  Sägezahn.
+- **Einband:** Raum ≥ Pegel + 0,4 K (oder die Vorausschau geht darüber) → Halten beginnt.
+- **Ausband:** Raum ≤ Pegel − 0,5 K → Halten endet (Schutz vor Auskühlen).
 - **Ohne PV-Überschuss wird nicht gehalten** (Hausentscheidung): dann greift wieder der
   normale Auslauf/Stop.
+- Der Pegel ersetzt den Komfort **nie** — er liegt darunter. Beide Zahlen stehen auf
+  derselben (AirQ-)Skala im Dashboard.
+- Nachweis: `sensor.pv_klimaregler_<raum>_pegelgute` = % der Zeit im Band ±0,3 K.
 - Notfälle unverändert: Akutgrenze und 26-°C-Dead-End haben immer Vorrang.
 
 ## Vorausschau pro Raum (0.5.10)
