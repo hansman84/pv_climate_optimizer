@@ -504,7 +504,17 @@ class V2ShadowRunner:
             upper = room.pilot_max_target_temperature_c
             target = room.observed_target_temperature_c
             still_needs_evening_comfort = room.evening_comfort_active and temperature > room.comfort_temperature_c + 0.25
-            if not still_needs_evening_comfort and upper is not None and target is not None and target < upper:
+            if still_needs_evening_comfort:
+                # The evening promise keeps a running unit alive: no wind-down,
+                # no relaxed ceiling - it stays on until the promised evening
+                # temperature is reached.
+                return RoomCandidate(
+                    policy=room.policy, action=CandidateAction.HOLD, required_budget_w=0.0,
+                    comfort_gap_c=max(0.0, temperature - room.comfort_temperature_c), confidence=room.estimate.confidence,
+                    reason_code="evening_comfort_holding",
+                    reason_text="V2 Abendkomfort: das laufende Gerät bleibt an, bis die vereinbarte Abendtemperatur erreicht ist (kein Auslauf ohne PV).",
+                )
+            if upper is not None and target is not None and target < upper:
                 return RoomCandidate(
                     policy=room.policy, action=CandidateAction.ADJUST, required_budget_w=0.0,
                     comfort_gap_c=max(0.0, temperature - room.comfort_temperature_c), confidence=room.estimate.confidence,
@@ -668,9 +678,16 @@ class V2ShadowRunner:
             # into occupied evening use.  V1 immediately hands the device to
             # its evening target; V2 carries that target explicitly so the
             # planner can make the same non-aggressive transition.
+            # 0.8.1: that target is the room's normal comfort, exactly like V1
+            # (``evening_comfort_target = floor(comfort)``).  The evening
+            # comfort value (25 C) is the *allowance* that triggers the cooling,
+            # not a setpoint to overshoot: cooling towards 23 C made the room
+            # colder than its own daytime comfort and burned extra energy
+            # (household question 2026-09-20: "der abendkomfort heisst aber dann
+            # auch dass ab diesen 25 grad was passiert").
             evening_target = max(
                 room.pilot_min_target_temperature_c or room.comfort_temperature_c,
-                float(floor(room.comfort_temperature_c - 0.25)),
+                room.comfort_temperature_c,
             )
         return RoomCandidate(
             policy=room.policy,

@@ -323,6 +323,29 @@ def test_night_quiet_time_blocks_new_starts_but_not_the_hard_limit() -> None:
     assert decision.approved_room_ids == ("living",)
 
 
+def test_evening_comfort_triggers_at_the_allowance_and_targets_comfort() -> None:
+    """0.8.1: the evening value (25 C) is the trigger, the comfort (24) the goal.
+
+    Inside the Abendkomfort window the room is *allowed* to reach the evening
+    value.  Once it exceeds it, cooling starts - also without PV - and takes the
+    room back to its normal comfort, not 1 K below it (V1 behaviour).
+    """
+    base = _shadow_room(predicted=25.4, budget_w=400.0)
+    room = _hold_room(base, mode="off", target=None, surplus=0.0, hold=None, evening=True)
+    # The estimate must show the same warm room, otherwise the no-PV wind-down
+    # (which uses the estimate) takes the branch before the evening promise.
+    room = replace(
+        room,
+        estimate=models.RoomEstimate("living", 25.4, 0.2, 25.4, 0.8, -0.7, ("trend",), "forecast_ready"),
+    )
+    candidate, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
+
+    assert candidate[0].reason_code == "evening_comfort_required"
+    assert candidate[0].target_after_c == 24.0          # comfort, not 23
+    assert candidate[0].required_budget_w == 0.0        # promise may use grid
+    assert decision.approved_room_ids == ("living",)
+
+
 def test_pv_hold_mode_yields_to_the_evening_comfort_window() -> None:
     """Household reminder 2026-09-20: evenings are relaxed, nights stay quiet.
 
@@ -1154,7 +1177,9 @@ def test_evening_deadline_starts_calm_living_room_lead_in_without_export() -> No
     assert candidates[0].safety_override
     assert decision.approved_room_ids == ("living",)
     assert plan is not None and plan.action is models.CandidateAction.START
-    assert plan.target_temperature_c == 24.0
+    # 0.8.1: the evening lead-in aims at the room's own comfort (25.0 here), the
+    # same value V1 used - never one kelvin below it.
+    assert plan.target_temperature_c == 25.0
 
 
 def test_command_planner_adjusts_only_one_confirmed_device_step() -> None:
