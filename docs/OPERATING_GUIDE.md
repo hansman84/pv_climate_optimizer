@@ -39,6 +39,25 @@ So bleiben Lautstärke, Luftführung und Entfeuchtung unter manueller Kontrolle.
 Für das gemeinsame Leistungsbudget werden nur beobachtete BTU/h in `cool` oder
 `dry` summiert; `auto` wird nicht als Kühlung angenommen.
 
+## Wohnzimmer: nur noch 3 Regeln (0.5.9)
+
+Auf Wunsch aufgeräumt — die früheren WZ-Sonderregeln sind **entfernt**:
+
+- ❌ „Entspannen auf die Auslaufstufe" (Gate-Hold hat das Soll auf 25 °C gehoben) → hat mit dem Komfort-Soll um denselben Wert gestritten
+- ❌ „PV-Boost" (extra −1 K-Stufe als Ziel)
+- ❌ „Telemetrie-Ersatz" (Wechselrichterdaten fehlen + Sonne → trotzdem kühlen)
+- ❌ „Wohnzimmer-Priorität" (Start ohne stabile PV-Reserve)
+- ❌ Sonderfall „sonniger Tag ohne Einspeisung"
+
+**Es bleiben genau drei Regeln** (wie in jedem anderen Raum):
+1. **Komforttemperatur** (Soll; Start zielt immer auf Komfort, nie auf den Deckel)
+2. **Akute Kühlgrenze** (Notausgang, kühlt auch ohne PV)
+3. **Harte Temperaturgrenze** (26 °C Dead-End)
+
+Voraussetzung für normale Starts ist **echter PV-Überschuss** (≥ Schwelle, 3 Min stabil).
+Zusätzlich gilt seit 0.5.8 ein **Kurzzyklus-Schutz**: nach jedem Ausschalten 10 Min Pause
+(Notfälle ausgenommen).
+
 ## V1 entfernt (0.5.0)
 
 Der alte **V1-Pilot** ist vollständig entfernt: `pilot.py`, die `decide_*_pilot`-

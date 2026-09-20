@@ -249,7 +249,15 @@ def _shadow_room(*, predicted: float | None = 25.0, confidence: float = 0.8, bud
 
 
 def test_shadow_runner_approves_one_explainable_step_without_an_executor() -> None:
-    candidates, decision = shadow.V2ShadowRunner().evaluate((_shadow_room(),), available_budget_w=500.0)
+    base = _shadow_room()
+    room = models.V2RoomInput(
+        base.policy, base.snapshot, base.estimate, base.eligibility,
+        base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
+        observed_hvac_mode="cool", observed_target_temperature_c=25.0,
+        pilot_min_target_temperature_c=21.0, pilot_max_target_temperature_c=25.0,
+        target_temperature_step_c=1.0,
+    )
+    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=500.0)
 
     assert candidates[0].action is models.CandidateAction.ADJUST
     assert decision.approved_room_ids == ("living",)
@@ -270,14 +278,14 @@ def test_shadow_debounces_a_restart_after_the_unit_switched_itself_off() -> None
         )
 
     runner.evaluate((room("cool"),), available_budget_w=1_000.0)
-    clock[0] = 60.0
+    clock[0] = 200.0
     # The unit satisfied its own sensor and switched off two minutes into the run.
     cooled, _ = runner.evaluate((room("off"),), available_budget_w=1_000.0)
     assert cooled[0].reason_code == "restart_cooldown"
-    clock[0] = 300.0
+    clock[0] = 400.0
     still_waiting, _ = runner.evaluate((room("off"),), available_budget_w=1_000.0)
     assert still_waiting[0].reason_code == "restart_cooldown"
-    clock[0] = 60.0 + runner._RESTART_COOLDOWN_S + 1
+    clock[0] = 200.0 + runner._RESTART_COOLDOWN_S + 1
     allowed, _ = runner.evaluate((room("off"),), available_budget_w=1_000.0)
     assert allowed[0].reason_code != "restart_cooldown"
     # The shadow expresses this as a modulation request; the planner turns it
@@ -533,7 +541,7 @@ def test_weekly_real_world_export_samples_do_not_keep_a_room_running_on_meter_no
         ("night", 0.0, 0.0, 2.0, 29.0, 2 * 60 + 1, "pv_surplus_ended"),
         ("sunset", 13.0, 0.0, 7.0, 23.3, 2 * 60 + 1, "pv_surplus_ended"),
         ("cloud_noise", 378.0, 10.0, 93.0, 23.6, 30 * 60 + 1, "pv_surplus_ended"),
-        ("usable_pv", 2126.0, 678.0, 336.0, 28.5, 30 * 60 + 1, "living_room_comfort_priority"),
+        ("usable_pv", 2126.0, 678.0, 336.0, 28.5, 30 * 60 + 1, "forecast_comfort_risk"),
     )
     for _name, _pv_dc_w, export_w, irradiance_w_m2, _outdoor_c, elapsed_s, expected in samples:
         base = _shadow_room(budget_w=0.0)
@@ -648,8 +656,12 @@ def test_stopped_living_room_does_not_restart_on_forecast_risk_without_usable_pv
     assert command_planner.V2CommandPlanner().plan(room, candidates[0], decision) is None
 
 
-def test_sunny_living_room_holds_comfort_without_export_but_not_full_power() -> None:
-    """Wohnzimmer comfort wins on a bright day, at its mild comfort target."""
+def test_sunny_living_room_does_not_cool_without_export_after_the_cleanup() -> None:
+    """0.5.9: the no-export living-room exception is gone.
+
+    Sunlight alone no longer starts the living room - real PV surplus is the
+    precondition, exactly as for every other room.
+    """
     base = _shadow_room(predicted=24.6, confidence=0.8, budget_w=450.0)
     no_pv = models.InputValue("sensor.export", 0.0, "W", 5.0, models.InputQuality.VALID, "zero_export")
     snapshot = models.InputSnapshot(
@@ -670,11 +682,10 @@ def test_sunny_living_room_holds_comfort_without_export_but_not_full_power() -> 
     candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
     plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
 
-    assert candidates[0].reason_code == "living_room_comfort_priority_no_pv"
+    assert candidates[0].reason_code == "pv_start_blocked_no_surplus"
     assert candidates[0].required_budget_w == 0.0
-    assert decision.approved_room_ids == ("living",)
-    assert plan is not None and plan.action is models.CandidateAction.START
-    assert plan.target_temperature_c == 24.0
+    assert decision.approved_room_ids == ()
+    assert plan is None
 
 
 def test_normal_room_needs_stable_surplus_before_a_new_start() -> None:
@@ -728,7 +739,12 @@ def test_living_no_pv_priority_is_disabled_during_evening_window() -> None:
     assert decision.approved_room_ids == ()
 
 
-def test_missing_inverter_telemetry_allows_only_sunny_daytime_living_room_fallback() -> None:
+def test_missing_inverter_telemetry_no_longer_starts_the_living_room() -> None:
+    """0.5.9: the "inverter data missing + sunshine" exception is gone.
+
+    A failed meter is a failed meter: without a usable PV reading the living
+    room holds like every other room instead of guessing from irradiance.
+    """
     base = _shadow_room(predicted=24.7, confidence=0.8, budget_w=450.0)
     missing_export = models.InputValue("sensor.export", None, "W", None, models.InputQuality.INVALID, "source_unavailable")
     snapshot = models.InputSnapshot(
@@ -749,14 +765,9 @@ def test_missing_inverter_telemetry_allows_only_sunny_daytime_living_room_fallba
     candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=0.0)
     plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
 
-    assert candidates[0].reason_code == "living_room_telemetry_fallback"
-    assert candidates[0].safety_override
-    assert decision.approved_room_ids == ("living",)
-    assert plan is not None and plan.action is models.CandidateAction.START
-    # 0.5.8: a fresh start aims at comfort (snapped to the device step), not at
-    # the relaxed wind-down ceiling - starting at 25 C made the unit satisfy
-    # itself immediately and produced the reported on/off cycling.
-    assert plan.target_temperature_c == 24.0
+    assert candidates[0].reason_code == "pv_start_blocked_no_surplus"
+    assert decision.approved_room_ids == ()
+    assert plan is None
 
 
 def test_living_comfort_priority_uses_measured_zero_but_never_evening_window() -> None:
@@ -787,8 +798,8 @@ def test_living_comfort_priority_uses_measured_zero_but_never_evening_window() -
     zero_candidate, zero_decision = shadow.V2ShadowRunner().evaluate((measured_zero,), available_budget_w=0.0)
     evening_candidate, evening_decision = shadow.V2ShadowRunner().evaluate((evening,), available_budget_w=0.0)
 
-    assert zero_candidate[0].reason_code == "living_room_comfort_priority_no_pv"
-    assert zero_decision.approved_room_ids == ("living",)
+    assert zero_candidate[0].reason_code == "pv_start_blocked_no_surplus"
+    assert zero_decision.approved_room_ids == ()
     assert evening_candidate[0].reason_code == "pv_start_blocked_no_surplus"
     assert evening_decision.approved_room_ids == ()
 
@@ -909,18 +920,23 @@ def test_shadow_runner_never_requests_a_step_from_an_insufficient_forecast() -> 
 
 
 def test_command_planner_starts_with_the_mildest_explicit_pilot_target() -> None:
-    room = _shadow_room()
+    base = _shadow_room()
     room = models.V2RoomInput(
-        room.policy, room.snapshot, room.estimate, room.eligibility, room.comfort_temperature_c, room.hard_max_temperature_c, room.required_budget_w,
+        base.policy, base.snapshot, base.estimate, base.eligibility, base.comfort_temperature_c, base.hard_max_temperature_c, base.required_budget_w,
         observed_hvac_mode="off", pilot_min_target_temperature_c=21.0,
         pilot_max_target_temperature_c=24.0, target_temperature_step_c=1.0,
     )
-    candidates, decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=500.0)
+    clock = [0.0]
+    runner = shadow.V2ShadowRunner(clock=lambda: clock[0])
+    runner.evaluate((room,), available_budget_w=500.0)
+    clock[0] = 4 * 60  # the PV surplus must be stable for 3 minutes
+    candidates, decision = runner.evaluate((room,), available_budget_w=500.0)
 
     plan = command_planner.V2CommandPlanner().plan(room, candidates[0], decision)
 
     assert plan is not None
     assert plan.action is models.CandidateAction.START
+    # Comfort (23.5 C) snapped onto the 1 K device grid, capped by the pilot ceiling.
     assert plan.target_temperature_c == 24.0
 
 
@@ -1195,8 +1211,12 @@ def test_shadow_acute_guard_starts_a_room_when_it_is_eligible() -> None:
     assert candidates[0].action is models.CandidateAction.START
 
 
-def test_shadow_relaxes_a_running_unit_while_the_gate_holds() -> None:
-    """Gate hold: a running unit is raised to the relaxed ceiling (0.4.60)."""
+def test_shadow_gate_hold_no_longer_nudges_a_running_unit() -> None:
+    """0.5.9: the "relax to the ceiling" step was removed.
+
+    It fought the comfort target (23/24/25 flapping on 2026-09-20).  The gate
+    now either stops a comfortable running unit or reports a plain hold.
+    """
     base = _shadow_room(budget_w=0.0)
     gate = types.SimpleNamespace(
         decision="hold",
@@ -1221,6 +1241,7 @@ def test_shadow_relaxes_a_running_unit_while_the_gate_holds() -> None:
 
     candidates, _decision = shadow.V2ShadowRunner().evaluate((room,), available_budget_w=3_000.0)
 
-    assert candidates[0].reason_code == "gate_hold_relaxed_target"
-    assert candidates[0].action is models.CandidateAction.ADJUST
-    assert candidates[0].target_after_c == 26.0
+    assert candidates[0].reason_code == "outdoor_cooling_gate_hold"
+    assert candidates[0].action is models.CandidateAction.HOLD
+    assert not candidates[0].requests_modulation
+    assert candidates[0].target_after_c is None
