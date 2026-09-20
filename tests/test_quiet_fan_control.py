@@ -35,6 +35,34 @@ def _decide(gap_c, stable_s, boost=False, hard=False, stop=False, current="low",
     return fan.evaluate_fan_stage(features, state)
 
 
+def _decide_fine(gap_c, stable_s, current="low", changed_s=9999.0, hard=False):
+    features = fan.FanFeatures(
+        gap_c=gap_c, gap_stable_s=stable_s, hard_limit_exceeded=hard,
+        target_at_capacity_floor=True, fine_ladder=True,
+    )
+    state = fan.FanState(current_stage=current, fan_changed_recently_s=changed_s)
+    return fan.evaluate_fan_stage(features, state)
+
+
+def test_fine_ladder_steps_with_small_gaps_above_the_level():
+    """0.7.0: holding a level is an airflow job (0.4 K first step)."""
+    assert _decide_fine(gap_c=0.4, stable_s=60).stage == "low"          # not confirmed yet
+    assert _decide_fine(gap_c=0.2, stable_s=30 * 60).stage == "low"     # on level
+    assert _decide_fine(gap_c=0.6, stable_s=200).stage == "middle_low"  # one stage
+    assert _decide_fine(gap_c=1.2, stable_s=200, current="middle_low").stage == "medium"
+    assert _decide_fine(gap_c=0.6, stable_s=200, changed_s=10).stage == "low"  # step interval
+
+
+def test_fine_ladder_never_steps_more_than_one_stage_per_interval():
+    d = _decide_fine(gap_c=2.6, stable_s=200, current="low", changed_s=9999)
+    assert d.stage == "middle_low" and d.reason_code == "step_once"
+
+
+def test_fine_ladder_steps_down_gently_when_the_room_cools():
+    d = _decide_fine(gap_c=0.0, stable_s=0.0, current="medium", changed_s=9999)
+    assert d.stage == "middle_low"
+
+
 def test_fan_stays_quiet_until_setpoint_at_capacity_floor():
     # Big persistent gap but the setpoint can still be lowered: capacity comes
     # from the compressor, not the fan.

@@ -33,6 +33,16 @@ STEP_UP_GRACE_S = 20 * 60.0
 STEP_DOWN_HYSTERESIS_C = 0.5
 STEP_INTERVAL_S = 5 * 60.0
 
+# Fine air-speed ladder (0.7.0).  When a room is being held on a level (a
+# "hold" setpoint below comfort), airflow is the *fine* actuator: it changes the
+# delivered cooling in small increments without touching the setpoint, the
+# compressor keeps modulating instead of switching off, and the room stops
+# saw-toothing.  One stage per FINE_STEP_WIDTH_C above the level, observed for
+FINE_STEP_GAP_C = 0.4
+FINE_STEP_WIDTH_C = 0.55
+FINE_STABLE_S = 3 * 60.0
+FINE_STEP_DOWN_C = 0.4
+
 # Boost capacity comes from the compressor; never exceed this stage then.
 BOOST_MAX_INDEX = 1  # middle_low
 
@@ -47,6 +57,9 @@ class FanFeatures:
     hard_limit_exceeded: bool = False
     action_stop: bool = False
     target_at_capacity_floor: bool = False  # setpoint already ~1 K below comfort (max compressor)
+    # 0.7.0: the room is being held on a level, so the fan may step finely with
+    # the gap instead of waiting for the old 1.5 K / 20 minute ladder.
+    fine_ladder: bool = False
     supported_stages: tuple[str, ...] = (FAN_AUTO, FAN_QUIET, FAN_STEP, FAN_MEDIUM, "middle_high", FAN_HIGH)
 
 
@@ -76,10 +89,12 @@ class FanRuntime:
     band_since_at_s: float | None = None  # when the current gap band started
 
 
-def tick_fan_runtime(runtime: FanRuntime, gap_c: float, now_s: float) -> tuple[FanRuntime, float, float]:
+def tick_fan_runtime(
+    runtime: FanRuntime, gap_c: float, now_s: float, threshold_c: float = STEP_UP_GAP_C
+) -> tuple[FanRuntime, float, float]:
     """Advance the gap-band bookkeeping; return (runtime, gap_stable_s, changed_ago_s)."""
     band_since = runtime.band_since_at_s
-    if gap_c >= STEP_UP_GAP_C:
+    if gap_c >= threshold_c:
         if band_since is None:
             band_since = now_s
         stable_s = max(0.0, now_s - band_since)
@@ -127,7 +142,32 @@ def evaluate_fan_stage(features: FanFeatures, state: FanState) -> FanDecision:
             return FanDecision(stage, "boost_light_air", "Boost über Kompressor: Lüfter auf leichter Stufe gehalten.")
         return FanDecision(stage, "boost_keep", "Boost aktiv: leichte Stufe beibehalten.")
 
-    # 4. Comfort regulation: desired stage from the gap (with grace period).
+    # 4. Fine ladder (0.7.0): the room is held on a level, so airflow modulates
+    # with the gap - one stage every FINE_STEP_WIDTH_C above the level, after a
+    # short confirmation, one step per interval.  This is what keeps a glazed
+    # room on its level instead of cycling the compressor on and off.
+    if features.fine_ladder:
+        if features.gap_c >= FINE_STEP_GAP_C and features.gap_stable_s >= FINE_STABLE_S:
+            steps = 1 + int((features.gap_c - FINE_STEP_GAP_C) // FINE_STEP_WIDTH_C)
+            desired_index = min(FAN_ORDER.index(FAN_HIGH), steps)
+            reason = ("gap_fine_step", f"Feinregelung: {features.gap_c:.1f} K über dem Pegel – Lüfter fein nachgeführt.")
+        else:
+            desired_index = 0
+            reason = ("gap_small", "Raum auf Pegel: zugluftarme Stufe.")
+        if desired_index > current_index:
+            if state.fan_changed_recently_s < STEP_INTERVAL_S:
+                desired_index = current_index
+                reason = ("step_interval", "Stufenwechsel-Intervall (5 min) noch nicht abgelaufen.")
+            elif desired_index > current_index + 1:
+                desired_index = current_index + 1
+                reason = ("step_once", "Nur eine Stufe pro Intervall.")
+        elif desired_index < current_index:
+            # Cool down gently: never drop more than one stage at a time.
+            desired_index = max(desired_index, current_index - 1)
+        stage = _clamp_to_supported(supported, desired_index)
+        return FanDecision(stage, reason[0], reason[1])
+
+    # 4b. Comfort regulation: desired stage from the gap (with grace period).
     if features.gap_c >= STEP_UP_HARD_GAP_C and features.gap_stable_s >= STEP_UP_GRACE_S:
         desired_index = FAN_ORDER.index(FAN_MEDIUM)
         reason = ("gap_large_persistent", "Gap ≥ 2,5 K über 20 min: mittlere Stufe (temporär).")

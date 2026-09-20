@@ -79,6 +79,28 @@ def _house(approved):
                                    reserved_budget_w=0.0, available_budget_w=500.0)
 
 
+def test_setpoint_damping_keeps_a_room_calm_between_changes() -> None:
+    """0.7.0 (V1 mechanics): one device target change per room per 10 minutes."""
+    clock = _Clock()
+    planner = planner_mod.V2CommandPlanner(now_fn=clock)
+    room = _Room("d1", measured=25.0, observed_target=24.0, observed_fan="low")
+    cand = _candidate(reason="forecast_comfort_risk", target_after=23.0)
+
+    first = planner.plan(room, cand, _house(["d1"]))
+    assert first is not None and first.target_temperature_c == 23.0  # one 1 K step towards 23
+
+    clock.t += 60  # one minute later: still settling
+    assert planner.plan(room, cand, _house(["d1"])) is None
+
+    clock.t += 10 * 60  # window elapsed
+    assert planner.plan(room, cand, _house(["d1"])) is not None
+
+    # An emergency is never damped.
+    clock.t += 60
+    acute = _candidate(reason="indoor_acute_need", target_after=23.0)
+    assert planner.plan(room, acute, _house(["d1"])) is not None
+
+
 def test_adjust_carry_low_fan_when_room_in_control():
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
@@ -88,17 +110,20 @@ def test_adjust_carry_low_fan_when_room_in_control():
     assert plan.fan_mode == "low"
 
 
-def test_persistent_large_gap_keeps_quiet_until_setpoint_at_floor():
+def test_fine_ladder_follows_the_level_with_airflow_instead_of_cycling() -> None:
+    """0.7.0: holding a level is an airflow job, not an on/off job."""
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
-    room = _Room("r2", measured=24.5, observed_fan="auto")  # gap ~2.0 vs target 22.5
+    room = _Room("r2", measured=24.5, observed_fan="low")  # gap ~2.0 vs level 22.5/23.0
     for _ in range(2):
         planner.plan(room, _candidate(), _house(["r2"]))
-        clock.t += 15 * 60  # two 15-min ticks => 30 min gap stable
+        clock.t += 15 * 60  # two 15-min ticks => gap confirmed
     plan = planner.plan(room, _candidate(), _house(["r2"]))
-    # Target (23.0) is still above the comfort floor (22.5): capacity must come
-    # from the compressor, so the fan stays quiet until the setpoint reaches it.
-    assert plan is not None and plan.fan_mode == "low"
+    # The room is held on a level below comfort, so the fan is modulated finely
+    # (one stage per 0.55 K above the level, one step per 5 min interval).
+    assert plan is not None
+    assert plan.fan_mode in {"middle_low", "medium", "middle_high"}
+    assert plan.fan_mode != "low"
 
 
 def test_stop_plan_carries_no_fan_command():
@@ -151,7 +176,7 @@ def test_settle_quiets_fan_when_target_already_at_comfort():
     assert plan is not None
     assert plan.action.value == "adjust" and plan.target_temperature_c == 24.0
     assert plan.fan_mode == "low"
-    assert plan.reason_code == "v2_fan_normalize"
+    assert plan.reason_code == "v2_fan_fine_step"
     # Once the device reports the quiet stage, no further command is emitted.
     quiet = _Room("s4", measured=24.2, comfort=24.0, observed_target=24.0, observed_fan="low")
     assert planner.settle_plan(quiet) is None

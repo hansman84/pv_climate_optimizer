@@ -64,7 +64,7 @@ class V2ShadowRunner:
     # 2-5 minute on/off cycles all morning.  After an observed cool->off
     # transition V2 waits before requesting the next normal start.  Emergencies
     # (hard limit, acute limit) and clearly warm rooms stay exempt.
-    _RESTART_COOLDOWN_S = 10 * 60
+    _RESTART_COOLDOWN_S = 20 * 60
     _RESTART_EXEMPT_COMFORT_GAP_C = 1.0
 
     def __init__(self, coordinator: HouseCoordinator | None = None, *, clock=monotonic) -> None:

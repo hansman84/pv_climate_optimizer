@@ -9,6 +9,7 @@ from typing import Callable
 from .quiet_fan_control import (
     FAN_AUTO,
     FAN_QUIET,
+    FINE_STEP_GAP_C,
     STEP_UP_GAP_C,
     STEP_UP_GRACE_S,
     STEP_UP_HARD_GAP_C,
@@ -23,6 +24,12 @@ from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandP
 SETTLE_STOP_RESERVE_C = 0.6    # stop once the room is this far below comfort
 SETTLE_TARGET_TOL_C = 0.1      # allowed setpoint deviation from comfort
 CAPACITY_FLOOR_DELTA_C = 1.0   # compressor floor: comfort - 1 K before the fan may step up
+
+# Setpoint damping (0.7.0): at most one device target change per room in this
+# window - V1's calm mechanics ("Zielwechsel frühestens alle 15 min") tamed
+# against the 5-minute device command interval.  Emergencies bypass it.
+TARGET_SETTLE_S = 10 * 60.0
+_SETTLE_EXEMPT_REASONS = frozenset({"indoor_acute_need", "hard_temperature_limit_failsafe"})
 
 
 def _snap_target(value: float, step: float | None) -> float:
@@ -49,6 +56,8 @@ class V2CommandPlanner:
     def __init__(self, now_fn: Callable[[], float] = monotonic) -> None:
         self._now_fn = now_fn
         self._fan_runtimes: dict[str, FanRuntime] = {}
+        # Setpoint damping: the last time this room's device target was changed.
+        self._target_change_at_s: dict[str, float] = {}
 
     @staticmethod
     def _measured_room_temp_c(room: V2RoomInput) -> float | None:
@@ -85,9 +94,13 @@ class V2CommandPlanner:
 
         target_for_gap = target if target is not None else room.comfort_temperature_c
         gap_c = measured - target_for_gap
+        # A real level ("Pegel halten") makes airflow the fine actuator.
+        fine_ladder = target is not None and target <= room.comfort_temperature_c - 0.3
         now_s = self._now_fn()
         runtime = self._fan_runtimes.setdefault(room.policy.room_id, FanRuntime())
-        runtime, stable_s, changed_s = tick_fan_runtime(runtime, gap_c, now_s)
+        runtime, stable_s, changed_s = tick_fan_runtime(
+            runtime, gap_c, now_s, FINE_STEP_GAP_C if fine_ladder else STEP_UP_GAP_C
+        )
         self._fan_runtimes[room.policy.room_id] = runtime
 
         hard = room.hard_max_temperature_c is not None and measured >= room.hard_max_temperature_c
@@ -98,6 +111,7 @@ class V2CommandPlanner:
             hard_limit_exceeded=hard,
             action_stop=candidate.action is CandidateAction.STOP,
             target_at_capacity_floor=hard or (target is not None and target <= room.comfort_temperature_c - CAPACITY_FLOOR_DELTA_C),
+            fine_ladder=fine_ladder,
             supported_stages=supported,
         )
         decision = evaluate_fan_stage(features, FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s))
@@ -189,14 +203,50 @@ class V2CommandPlanner:
         # Target is at comfort (or in its grace window): only the fan may need settling.
         if not getattr(room, "quiet_fan_active", True):
             return None  # automatic fan modulation is allowed for this room
-        if quiet is None or quiet == room.observed_fan_mode:
+        if quiet is None:
             return None
-        if measured <= comfort + 0.5:
-            return V2CommandPlan(room.policy.room_id, CandidateAction.ADJUST, target, "v2_fan_normalize",
-                                 "V2 normalisiert den Lüfter auf die zugluftarme Stufe (gleicher Sollwert).", quiet)
-        return None
+        # Fine air-speed governor (0.7.0).  With a level set below comfort the
+        # fan follows the gap in small stages - same setpoint, no compressor
+        # cycling.  With a plain comfort target the room stays on the quiet
+        # stage as before.
+        reference = min(comfort, target)
+        gap = measured - reference
+        fine = target <= comfort - 0.3
+        now_s = self._now_fn()
+        runtime = self._fan_runtimes.setdefault(room.policy.room_id, FanRuntime())
+        runtime, stable_s, changed_s = tick_fan_runtime(
+            runtime, gap, now_s, FINE_STEP_GAP_C if fine else STEP_UP_GAP_C
+        )
+        self._fan_runtimes[room.policy.room_id] = runtime
+        decision = evaluate_fan_stage(
+            FanFeatures(
+                gap_c=gap,
+                gap_stable_s=stable_s,
+                fine_ladder=fine,
+                hard_limit_exceeded=room.hard_max_temperature_c is not None and measured >= room.hard_max_temperature_c,
+                target_at_capacity_floor=reference <= comfort - CAPACITY_FLOOR_DELTA_C,
+                supported_stages=supported,
+            ),
+            FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s),
+        )
+        selected = modes.get(decision.stage) if decision.stage != FAN_AUTO else None
+        if selected is None or selected == room.observed_fan_mode:
+            return None
+        self._fan_runtimes[room.policy.room_id] = FanRuntime(
+            current_stage=decision.stage, last_change_at_s=now_s, band_since_at_s=runtime.band_since_at_s
+        )
+        return V2CommandPlan(
+            room.policy.room_id,
+            CandidateAction.ADJUST,
+            target,
+            "v2_fan_fine_step",
+            f"V2 führt den Lüfter fein nach (Stufe {decision.stage}, {gap:+.1f} K über dem Pegel) – gleicher Sollwert, kein Tackten.",
+            selected,
+        )
 
     def _plan(self, room: V2RoomInput, candidate: RoomCandidate, action: CandidateAction, target: float | None, reason_code: str, reason_text: str) -> V2CommandPlan:
+        if target is not None and target != room.observed_target_temperature_c:
+            self._target_change_at_s[room.policy.room_id] = self._now_fn()
         return V2CommandPlan(room.policy.room_id, action, target, reason_code, reason_text, self._fan_mode(room, candidate, target))
 
     def plan(self, room: V2RoomInput, candidate: RoomCandidate, decision: HouseDecision) -> V2CommandPlan | None:
@@ -204,6 +254,14 @@ class V2CommandPlanner:
             return None
         if not candidate.requests_modulation:
             return None
+        # Setpoint damping (0.7.0, V1's calm mechanics).  A room's device target
+        # is changed at most once every TARGET_SETTLE_S unless it is an acute or
+        # hard-limit emergency: without it the peg was re-commanded every few
+        # minutes and the room never had time to settle.
+        if candidate.reason_code not in _SETTLE_EXEMPT_REASONS:
+            last_change_s = self._target_change_at_s.get(room.policy.room_id)
+            if last_change_s is not None and (self._now_fn() - last_change_s) < TARGET_SETTLE_S:
+                return None
         lower = room.pilot_min_target_temperature_c
         upper = room.pilot_max_target_temperature_c
         step = room.target_temperature_step_c
