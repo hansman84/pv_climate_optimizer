@@ -355,6 +355,25 @@ class PVClimateController:
         self._thermal_context_samples[zone.zone_id] = samples = [sample for sample in samples if sample[0] >= now - 7 * 86400]
         return learn_thermal_profile(samples)
 
+    def sun_is_steady(self, zone_id: str, *, minutes: float = 20.0, min_irradiance_w_m2: float = 200.0) -> bool:
+        """True when this room saw continuous solar radiation for ``minutes``.
+
+        Household observation 2026-09-20: "ab 25 Grad wird's meist spuerbar warm,
+        aber wenn keine konstante Sonneneinstrahlung kommt, ist es okay".  A
+        glazed room with steady sun keeps climbing (+0.5 K/h measured), so the
+        cooling trigger may act a little earlier then - and stay relaxed when
+        the sun only flickers through clouds.
+        """
+        samples = self._thermal_context_samples.get(zone_id) or []
+        if not samples:
+            return False
+        now = monotonic()
+        window = [sample for sample in samples if sample[0] >= now - minutes * 60]
+        readings = [sample[6] for sample in window if sample[6] is not None]
+        if len(readings) < 3:
+            return False
+        return all(value >= min_irradiance_w_m2 for value in readings)
+
     def _record_thermal_response(self, zone: ZoneConfig, temperature_c: float | None, mode: str) -> ThermalResponse | None:
         """Learn only from observed mode states; no device command is involved."""
         if temperature_c is None or not zone.minimum_plausible_temperature_c <= temperature_c <= zone.maximum_plausible_temperature_c:

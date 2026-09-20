@@ -86,6 +86,38 @@ def test_persisted_housewide_v2_mode_keeps_the_runner_and_shared_adapter_enabled
 
 
 
+def test_sun_is_steady_requires_continuous_radiation() -> None:
+    """Household rule 2026-09-20: act earlier under steady sun, relaxed when it flickers."""
+    from time import monotonic as _now
+
+    zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
+    runtime = controller.PVClimateController(
+        models.ControllerConfig(False, const.EnergyPolicy.PV_PREFERRED, True, zone),
+        adapter.ClimateCommandAdapter(shadow_mode=False, productive_enabled=True),
+    )
+
+    def sample(age_s: float, irradiance: float | None) -> tuple:
+        return (_now() - age_s, 24.0, "cool", True, 80.0, 25.0, irradiance)
+
+    # Fewer than three readings in the window: not steady.
+    runtime._thermal_context_samples["living"] = [sample(900.0, 500.0), sample(600.0, 500.0)]
+    assert runtime.sun_is_steady("living") is False
+
+    # A cloud inside the window breaks the steady state.
+    runtime._thermal_context_samples["living"] = [sample(900.0, 500.0), sample(600.0, 40.0), sample(300.0, 500.0)]
+    assert runtime.sun_is_steady("living") is False
+
+    # Continuous radiation: steady (values just above the threshold count too).
+    runtime._thermal_context_samples["living"] = [sample(900.0, 500.0), sample(600.0, 300.0), sample(300.0, 250.0)]
+    assert runtime.sun_is_steady("living") is True
+
+    # Readings older than the window do not count.
+    runtime._thermal_context_samples["living"] = [
+        sample(30 * 60.0, 500.0), sample(20 * 60.0, 500.0), sample(10 * 60.0, 500.0)
+    ]
+    assert runtime.sun_is_steady("living") is False
+
+
 def test_v2_handoff_readiness_requires_shadow_data_and_a_house_approval() -> None:
     zone = models.ZoneConfig("living", "Wohnzimmer", "climate.living", "sensor.living")
     runtime = controller.PVClimateController(

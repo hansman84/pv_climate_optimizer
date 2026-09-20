@@ -18,7 +18,7 @@ from .command_adapter import Command, is_climate_control_change
 from .const import DOMAIN
 from .controller import PVClimateController
 from .forecasting import contextual_temperature_forecast
-from .models import ZoneInput
+from .models import ZoneConfig, ZoneInput
 from .storage import pack, unpack
 from .v2_models import EligibilityDecision, InputQuality, InputSnapshot, InputValue, RoomEstimate, RoomPolicy, V2RoomInput
 
@@ -390,6 +390,22 @@ async def _async_refresh_outdoor_forecast(
         controller.last_outdoor_forecast_hours = tuple(hours[:48])
 
 
+def _v2_effective_acute_limit(controller: PVClimateController, zone: ZoneConfig) -> float | None:
+    """Acute cooling line, tightened a little while the sun is steady.
+
+    A glazed room under continuous radiation keeps climbing (+0,5 K/h learned)
+    and feels noticeably warm from ~25 C, while the same temperature under
+    flickering sun is acceptable.  With steady sun the trigger therefore moves
+    0,5 K down; without it the household number stands.
+    """
+    configured = zone.acute_cooling_limit_c
+    if configured is None:
+        return None
+    if not controller.sun_is_steady(zone.zone_id):
+        return configured
+    return max(16.0, configured - 0.5)
+
+
 def _v2_outdoor_cooling_gate(
     hass: HomeAssistant,
     controller: PVClimateController,
@@ -422,7 +438,7 @@ def _v2_outdoor_cooling_gate(
         weather_state,
         room_temperature_c=room_temperature_c,
         pv_forecast_w=pv_forecast_w,
-        acute_cooling_limit_c=living_zone.acute_cooling_limit_c,
+        acute_cooling_limit_c=_v2_effective_acute_limit(controller, living_zone),
     )
     if result is None:
         return None
@@ -616,7 +632,7 @@ def _v2_room_inputs(
                 if float(getattr(zone, "hold_depth_c", 0.0) or 0.0) > 0.0
                 else None
             ),
-            acute_cooling_limit_c=zone.acute_cooling_limit_c,
+            acute_cooling_limit_c=_v2_effective_acute_limit(controller, zone),
             evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
                 controller, zone.name, local_now.time(),
                 contextual_forecast.predicted_temperature_60m_c,
