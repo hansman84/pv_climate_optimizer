@@ -19,6 +19,7 @@ from .const import DOMAIN
 from .blend import blend_room_temperature
 from .controller import PVClimateController
 from .forecasting import contextual_temperature_forecast
+from .energy_budget import pv_available_for_cooling_w
 from .models import ZoneConfig, ZoneInput
 from .storage import pack, unpack
 from .v2_models import EligibilityDecision, InputQuality, InputSnapshot, InputValue, RoomEstimate, RoomPolicy, V2RoomInput
@@ -33,7 +34,7 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.BUTTON,
 )
 V2_INITIAL_SOURCE_MAX_AGE_S = 600.0
-V2_STABLE_ROOM_TEMPERATURE_MAX_AGE_S = 60 * 60.0
+V2_STABLE_ROOM_TEMPERATURE_MAX_AGE_S = 4 * 60 * 60.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -278,7 +279,7 @@ async def _async_refresh_controller(
             # source is configured, only observed positive export is exposed
             # as an upper bound and unknown room power keeps every candidate
             # safely blocked in the runner.
-            available_budget_w=max(0.0, controller.last_energy.export_power_w or 0.0),
+            available_budget_w=max(0.0, pv_available_for_cooling_w(controller.last_energy)),
         )
         # V2 reaches the shared command boundary only after room-specific authority.
         zones_by_id = {zone.zone_id: zone for zone in config.house_zones}
@@ -588,10 +589,13 @@ def _v2_room_inputs(
                     allow_stable_room_temperature=True,
                 ),
                 climate_available=_v2_availability_input(climate_state, zone.climate_entity_id),
-                pv_export_w=_v2_numeric_input(
-                    hass.states.get(controller.config.export_power_entity_id) if controller.config.export_power_entity_id else None,
+                pv_export_w=InputValue(
                     controller.config.export_power_entity_id,
+                    pv_available_for_cooling_w(controller.last_energy),
                     "W",
+                    0.0,
+                    InputQuality.VALID,
+                    "pv_available_for_cooling",
                 ),
                 outdoor_unit_power_w=_v2_numeric_input(
                     hass.states.get(controller.config.outdoor_unit_power_entity_id) if controller.config.outdoor_unit_power_entity_id else None,
