@@ -197,7 +197,7 @@ async def _async_refresh_controller(
         # Taster-Mittel des Loxone-Raumreglers) wird mit einem einstellbaren
         # Anteil eingemischt.  Fehlt sie, ist sie veraltet oder unplausibel, regelt
         # der Raum still auf der Luft weiter (siehe blend.py).
-        blend = blend_room_temperature(temperature_value, None, house_zone.blend_weight_pct)
+        blend = blend_room_temperature(temperature_value, None, 0.0)
         if house_zone.blend_entity_id:
             second_state = hass.states.get(house_zone.blend_entity_id)
             second_value = _temperature_value(None if second_state is None else second_state.state)
