@@ -197,13 +197,14 @@ async def _async_refresh_controller(
         # Taster-Mittel des Loxone-Raumreglers) wird mit einem einstellbaren
         # Anteil eingemischt.  Fehlt sie, ist sie veraltet oder unplausibel, regelt
         # der Raum still auf der Luft weiter (siehe blend.py).
-        blend = blend_room_temperature(temperature_value, None, 0.0)
+        primary_temperature = _temperature_value(None if temperature_state is None else temperature_state.state)
+        second_state = None if not house_zone.blend_entity_id else hass.states.get(house_zone.blend_entity_id)
+        second_temperature = _temperature_value(None if second_state is None else second_state.state)
+        blend = blend_room_temperature(primary_temperature, None, 0.0)
         if house_zone.blend_entity_id:
-            second_state = hass.states.get(house_zone.blend_entity_id)
-            second_value = _temperature_value(None if second_state is None else second_state.state)
             blend = blend_room_temperature(
-                temperature_value,
-                second_value,
+                primary_temperature,
+                second_temperature,
                 house_zone.blend_weight_pct,
                 second_age_s=None if second_state is None else _state_age_s(second_state),
             )
@@ -211,9 +212,9 @@ async def _async_refresh_controller(
                 temperature_value = blend.value_c
                 temperature_source = "combined_sources"
         controller.last_blend_info[house_zone.zone_id] = {
-            "primary_temperature_c": _temperature_value(None if temperature_state is None else temperature_state.state),
+            "primary_temperature_c": primary_temperature,
             "second_entity_id": house_zone.blend_entity_id or None,
-            "second_temperature_c": None if not house_zone.blend_entity_id or house_zone.blend_entity_id not in hass.states else _temperature_value(hass.states[house_zone.blend_entity_id].state),
+            "second_temperature_c": second_temperature,
             "weight_pct": blend.weight_pct,
             "value_c": temperature_value,
             "reason": blend.reason,
