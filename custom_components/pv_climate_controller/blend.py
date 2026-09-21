@@ -33,12 +33,36 @@ DEFAULT_MAX_DEVIATION_C = 2.5
 
 @dataclass(frozen=True, slots=True)
 class BlendResult:
-    """Ergebnis der Kombi-Logik, mit Begründung für den Entscheidungssensor."""
+    """Ergebnis einer Mischrechnung, immer mit Begründung."""
 
     value_c: float | None
     reason: str
     second_used: bool
     weight_pct: float
+
+
+def blend_source_candidates(states: object, *, exclude: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Plausible Temperatursensoren als Auswahlliste für die Zweitquelle.
+
+    Hauswunsch 2026-09-21: \"ich will im dashboard die entity einfach umstellen
+    können\" - eine Auswahlliste ist auf dem Telefon ein Tipp statt Tipparbeit.
+    Aufgenommen wird jeder Sensor mit Einheit °C, der weder zur Integration
+    selbst gehört noch ausgeschlossen wurde.  Sortiert nach Entity-ID.
+    """
+    found: list[str] = []
+    for state in states:  # type: ignore[union-attr]
+        entity_id = getattr(state, "entity_id", "")
+        attributes = getattr(state, "attributes", {}) or {}
+        if not isinstance(entity_id, str) or not entity_id.startswith("sensor."):
+            continue
+        if entity_id in exclude or "pv_klimaregler" in entity_id:
+            continue
+        if attributes.get("unit_of_measurement") not in {"°C", "C", "°C"}:
+            continue
+        if getattr(state, "state", None) in {"unknown", "unavailable", None, ""}:
+            continue
+        found.append(entity_id)
+    return tuple(sorted(set(found)))
 
 
 def blend_room_temperature(

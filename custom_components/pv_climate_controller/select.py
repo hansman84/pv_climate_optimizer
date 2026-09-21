@@ -8,7 +8,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_CHILD_BEDROOM_START_TIME, CONF_ENERGY_POLICY, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, DOMAIN, EnergyPolicy
+from .const import CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_CHILD_BEDROOM_START_TIME, CONF_ENERGY_POLICY, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, DOMAIN, EnergyPolicy
+from .blend import blend_source_candidates
+from .controller import serialize_zone_config
 from .entity import ControllerEntity
 
 
@@ -23,6 +25,79 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         LivingEveningScheduleSelect(controller, entry.entry_id, "living_evening_start_time", "Wohnzimmer-Abendkomfort ab", CONF_LIVING_EVENING_START_TIME, "start"),
         LivingEveningScheduleSelect(controller, entry.entry_id, "living_evening_end_time", "Wohnzimmer-Abendkomfort bis", CONF_LIVING_EVENING_END_TIME, "end"),
     ])
+    zone_sources = [
+        ZoneBlendSourceSelect(controller, entry.entry_id, f"zone_blend_source_select_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    ]
+    if zone_sources:
+        async_add_entities(zone_sources)
+
+
+NONE_OPTION = "keine (nur Luft)"
+
+
+class ZoneBlendSourceSelect(ControllerEntity, SelectEntity):
+    """Zweitquelle der Kombi-Logik je Raum (Hauswunsch 2026-09-21).
+
+    Im Dashboard soll die Quelle mit einem Tipp umstellbar sein.  Die Liste
+    enthält alle nutzbaren Temperatursensoren (Einheit °C, nicht die eigene
+    Integration) plus "keine (nur Luft)".  Die Freitext-Entity derselben
+    Einstellung bleibt als Notausgang für exotische Quellen bestehen.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, controller, entry_id: str, key: str, zone_id: str) -> None:
+        super().__init__(controller, entry_id, key)
+        self._zone_id = zone_id
+
+    @property
+    def _zone(self):
+        return next((zone for zone in self.controller.config.house_zones if zone.zone_id == self._zone_id), None)
+
+    @property
+    def _zone_name(self) -> str:
+        zone = self._zone
+        return zone.name if zone is not None else self._zone_id
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Zweitquelle (Kombi)"
+
+    @property
+    def options(self) -> list[str]:
+        zone = self._zone
+        current = "" if zone is None else getattr(zone, "blend_entity_id", "") or ""
+        options = [NONE_OPTION]
+        options.extend(blend_source_candidates(self.hass.states.async_all()))
+        if current and current not in options:
+            options.insert(1, current)
+        return options
+
+    @property
+    def current_option(self) -> str:
+        zone = self._zone
+        current = "" if zone is None else getattr(zone, "blend_entity_id", "") or ""
+        return current or NONE_OPTION
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            "erklaerung": (
+                "Zweite Temperaturquelle für die Regelgröße dieses Raums. "
+                "\"keine (nur Luft)\" schaltet die Kombi-Logik aus."
+            ),
+            "anteil_pct": None if self._zone is None else getattr(self._zone, "blend_weight_pct", None),
+        }
+
+    async def async_select_option(self, option: str) -> None:
+        value = "" if option == NONE_OPTION else option
+        self.controller.set_zone_thermal_settings(self._zone_id, blend_entity_id=value)
+        await self.async_persist_option(
+            CONF_HOUSE_ZONES,
+            [serialize_zone_config(zone) for zone in self.controller.config.house_zones],
+        )
+        self.controller.notify_state_listeners()
 
 
 class EnergyPolicySelect(ControllerEntity, SelectEntity):
