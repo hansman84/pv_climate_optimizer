@@ -112,6 +112,7 @@ class V2CommandPlanner:
             action_stop=candidate.action is CandidateAction.STOP,
             target_at_capacity_floor=hard or (target is not None and target <= room.comfort_temperature_c - CAPACITY_FLOOR_DELTA_C),
             fine_ladder=fine_ladder,
+            pull_down_c_per_h=getattr(room.estimate, "trend_c_per_h", None),
             supported_stages=supported,
         )
         decision = evaluate_fan_stage(features, FanState(current_stage=runtime.current_stage, fan_changed_recently_s=changed_s))

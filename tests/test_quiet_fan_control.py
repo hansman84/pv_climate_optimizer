@@ -44,6 +44,30 @@ def _decide_fine(gap_c, stable_s, current="low", changed_s=9999.0, hard=False):
     return fan.evaluate_fan_stage(features, state)
 
 
+def test_fan_stays_quiet_while_the_temperature_is_falling():
+    """0.11.0 Tradeoff: solange die Temperatur folgt, bleibt der Luefter leise."""
+    features = fan.FanFeatures(gap_c=1.2, gap_stable_s=10 * 60.0, fine_ladder=True, pull_down_c_per_h=-0.6)
+    decision = fan.evaluate_fan_stage(features, fan.FanState(current_stage="medium", fan_changed_recently_s=600.0))
+    # Sanftes Abschwellen: eine Stufe pro Tick in Richtung leise.
+    assert decision.stage == "middle_low"
+    assert decision.reason_code == "fan_quiet_following"
+
+
+def test_fan_steps_up_when_the_temperature_stalls():
+    """0.11.0 Tradeoff: folgt der Raum 20 min nicht, holt der Luefter eine Stufe."""
+    features = fan.FanFeatures(gap_c=1.2, gap_stable_s=25 * 60.0, fine_ladder=True, pull_down_c_per_h=0.05)
+    decision = fan.evaluate_fan_stage(features, fan.FanState(current_stage="low", fan_changed_recently_s=600.0))
+    assert decision.stage == "middle_low"
+    assert decision.reason_code == "capacity_boost"
+
+
+def test_fan_never_goes_louder_than_medium_in_normal_operation():
+    """0.11.0: ohne Notfall (harte Grenze) hoechstens medium - Zug vermeiden."""
+    features = fan.FanFeatures(gap_c=2.4, gap_stable_s=40 * 60.0, fine_ladder=True)
+    decision = fan.evaluate_fan_stage(features, fan.FanState(current_stage="medium", fan_changed_recently_s=600.0))
+    assert decision.stage == "medium"
+
+
 def test_fine_ladder_steps_with_small_gaps_above_the_level():
     """0.7.0: holding a level is an airflow job (0.4 K first step)."""
     assert _decide_fine(gap_c=0.4, stable_s=60).stage == "low"          # not confirmed yet

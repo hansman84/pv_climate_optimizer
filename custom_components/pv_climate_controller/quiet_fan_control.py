@@ -46,6 +46,20 @@ FINE_STEP_DOWN_C = 0.4
 # Boost capacity comes from the compressor; never exceed this stage then.
 BOOST_MAX_INDEX = 1  # middle_low
 
+# 0.11.0 Tradeoff Temperatur <-> Geblaese (Hauswunsch 2026-09-21 "finde einen
+# guten Tradeoff zwischen Temperatur und Geblaesestaerken"):
+#   1. Im Normalbetrieb wird nie lauter als *medium* gefahren - darueber
+#      entsteht Zug und Laerm.  Lautere Stufen gibt es nur im Notfall
+#      (harte Grenze / Dead-End), der oben separat behandelt wird.
+#   2. Der Luefter geht nur dann eine Stufe hoeher, wenn der Raum wirklich nicht
+#      folgt: Abweichung >= 0.4 K, mindestens 20 Minuten anhaltend, UND die
+#      Temperatur faellt nicht (Trend > -0.15 K/h).  Mehr Kaelteleistung kommt
+#      sonst zuerst ueber den Sollwert (Kompressor) - der ist zugfrei.
+NORMAL_MAX_STAGE_INDEX = 2  # medium
+CAPACITY_BOOST_GAP_C = 0.4
+CAPACITY_BOOST_TREND_C_PER_H = -0.15
+CAPACITY_BOOST_AFTER_S = 20 * 60.0
+
 
 @dataclass(frozen=True, slots=True)
 class FanFeatures:
@@ -60,6 +74,9 @@ class FanFeatures:
     # 0.7.0: the room is being held on a level, so the fan may step finely with
     # the gap instead of waiting for the old 1.5 K / 20 minute ladder.
     fine_ladder: bool = False
+    # 0.11.0: der gemessene Trend des Regelwerts.  Der Luefter geht nur eine
+    # Stufe hoeher, wenn die Temperatur trotz Abweichung nicht folgt.
+    pull_down_c_per_h: float | None = None
     supported_stages: tuple[str, ...] = (FAN_AUTO, FAN_QUIET, FAN_STEP, FAN_MEDIUM, "middle_high", FAN_HIGH)
 
 
@@ -147,9 +164,40 @@ def evaluate_fan_stage(features: FanFeatures, state: FanState) -> FanDecision:
     # short confirmation, one step per interval.  This is what keeps a glazed
     # room on its level instead of cycling the compressor on and off.
     if features.fine_ladder:
-        if features.gap_c >= FINE_STEP_GAP_C and features.gap_stable_s >= FINE_STABLE_S:
+        # 0.11.0 Tradeoff: solange die Temperatur folgt, bleibt der Luefter
+        # leise (die Kaelte kommt aus dem Sollwert/Kompressor, das ist zugfrei).
+        # Erst wenn der Raum NICHT folgt, darf der Luefter nachfuehren - eine
+        # Stufe, gedeckelt auf medium.
+        follows = (
+            features.pull_down_c_per_h is not None
+            and features.pull_down_c_per_h <= CAPACITY_BOOST_TREND_C_PER_H
+        )
+        stalled = (
+            features.pull_down_c_per_h is not None
+            and features.pull_down_c_per_h > CAPACITY_BOOST_TREND_C_PER_H
+        )
+        if stalled and features.gap_c >= CAPACITY_BOOST_GAP_C and features.gap_stable_s >= CAPACITY_BOOST_AFTER_S:
+            desired_index = min(NORMAL_MAX_STAGE_INDEX, current_index + 1)
+            reason = (
+                "capacity_boost",
+                (
+                    f"Temperatur folgt nicht ({features.pull_down_c_per_h:+.2f} K/h bei "
+                    f"{features.gap_c:.1f} K Abweichung): Luefter eine Stufe hoeher."
+                ),
+            )
+        elif follows and features.gap_c >= FINE_STEP_GAP_C:
+            desired_index = 0
+            reason = (
+                "fan_quiet_following",
+                (
+                    f"Temperatur faellt ausreichend ({features.pull_down_c_per_h:+.2f} K/h) - "
+                    "Kaelte kommt ueber den Sollwert, Luefter bleibt leise."
+                ),
+            )
+        elif features.gap_c >= FINE_STEP_GAP_C and features.gap_stable_s >= FINE_STABLE_S:
             steps = 1 + int((features.gap_c - FINE_STEP_GAP_C) // FINE_STEP_WIDTH_C)
             desired_index = min(FAN_ORDER.index(FAN_HIGH), steps)
+            desired_index = min(desired_index, NORMAL_MAX_STAGE_INDEX)
             reason = ("gap_fine_step", f"Feinregelung: {features.gap_c:.1f} K über dem Pegel – Lüfter fein nachgeführt.")
         else:
             desired_index = 0
@@ -184,6 +232,10 @@ def evaluate_fan_stage(features: FanFeatures, state: FanState) -> FanDecision:
     if desired_index > 0 and not features.target_at_capacity_floor:
         desired_index = 0
         reason = ("capacity_via_target", "Mehr Kälteleistung über den Sollwert (Kompressor), Lüfter bleibt leise.")
+
+    # 4a2. 0.11.0: im Normalbetrieb nie lauter als medium (Zug vermeiden) - der
+    # Notfall (harte Grenze) ist oben bereits mit hoechster Stufe abgehandelt.
+    desired_index = min(desired_index, NORMAL_MAX_STAGE_INDEX)
 
     # 5. Step discipline: at most one step up per interval; step down freely.
     if desired_index > current_index:
