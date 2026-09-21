@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from time import monotonic
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
@@ -46,6 +46,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
     entities.extend(
         ZoneTemperatureGradientSensor(controller, entry.entry_id, f"zone_gradient_{index}", zone.zone_id)
+        for index, zone in enumerate(controller.config.house_zones, start=1)
+    )
+    entities.extend(
+        ZoneControlTemperatureSensor(controller, entry.entry_id, f"zone_control_temperature_{index}", zone.zone_id)
         for index, zone in enumerate(controller.config.house_zones, start=1)
     )
     entities.extend(
@@ -710,6 +714,43 @@ class ZoneHoldQualitySensor(_ZoneMetricSensor):
             "temperatur_min_c": stats.get("temperature_min_c"),
             "temperatur_max_c": stats.get("temperature_max_c"),
             "tag": str(stats.get("date")) if stats.get("date") else None,
+        }
+
+
+class ZoneControlTemperatureSensor(_ZoneMetricSensor):
+    """Die Regelgröße dieses Raums - inklusive Kombi-Logik (Hauswunsch 2026-09-21).
+
+    Zeigt den Wert, mit dem V2 wirklich rechnet: die Luft des Raums, gemischt mit
+    der optionalen zweiten Quelle (z. B. Taster-Mittel), sofern diese frisch und
+    plausibel ist.  Attribute zeigen beide Eingänge, den Anteil und die Begründung
+    - also "was + woher" auf einen Blick.
+    """
+
+    _attr_native_unit_of_measurement = "°C"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Regelgröße (Kombi)"
+
+    @property
+    def native_value(self) -> float | None:
+        info = self.controller.last_blend_info.get(self._zone_id) or {}
+        value = info.get("value_c")
+        return None if value is None else float(value)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        info = self.controller.last_blend_info.get(self._zone_id) or {}
+        return {
+            "bedeutung": "Temperatur, mit der V2 diesen Raum regelt (Luft + optionale Zweitquelle).",
+            "luft_c": info.get("primary_temperature_c"),
+            "zweitquelle_entity_id": info.get("second_entity_id"),
+            "zweitquelle_c": info.get("second_temperature_c"),
+            "zweitquelle_anteil_pct": info.get("weight_pct"),
+            "zweitquelle_aktiv": info.get("second_used"),
+            "begruendung": info.get("reason"),
         }
 
 

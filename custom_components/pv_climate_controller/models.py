@@ -53,6 +53,14 @@ class ZoneConfig:
     # im dashboard ist komfort auf 24").  0 = off.
     # Household decision 2026-09-20: hold with PV only, never on grid power.
     hold_level_c: float = 0.0
+    # Kombi-Logik (Hauswunsch 2026-09-21): optionale zweite Temperaturquelle
+    # (z. B. das Mittel der Loxone-Taster im Wohnzimmer).  Leer = aus; dann
+    # regelt der Raum unverändert auf seiner eigenen Quelle (Luft).
+    blend_entity_id: str = ""
+    blend_weight_pct: float = 40.0
+    # Anteil der Zweitquelle in Prozent (0 = aus, 40 = Hausstandard).  Die Luft
+    # bleibt immer die Mehrheit; bei fehlender/unplausibler Zweitquelle fällt
+    # die Regelung still auf die Luft zurück (siehe blend.py).
     shade_entity_ids: tuple[str, ...] = ()
     facade_azimuths: tuple[float, ...] = ()
     facade_shade_entity_ids: tuple[tuple[str, ...], ...] = ()

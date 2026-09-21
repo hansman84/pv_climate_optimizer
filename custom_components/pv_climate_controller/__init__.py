@@ -16,6 +16,7 @@ from homeassistant.helpers.storage import Store
 
 from .command_adapter import Command, is_climate_control_change
 from .const import DOMAIN
+from .blend import blend_room_temperature
 from .controller import PVClimateController
 from .forecasting import contextual_temperature_forecast
 from .models import ZoneConfig, ZoneInput
@@ -28,6 +29,7 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.SWITCH,
     Platform.SELECT,
     Platform.NUMBER,
+    Platform.TEXT,
     Platform.BUTTON,
 )
 V2_INITIAL_SOURCE_MAX_AGE_S = 600.0
@@ -191,6 +193,32 @@ async def _async_refresh_controller(
         cooling_state = None if house_zone.cooling_power_entity_id is None else hass.states.get(house_zone.cooling_power_entity_id)
         temperature_value = _temperature_value(None if temperature_state is None else temperature_state.state)
         temperature_source = "external_sensor"
+        # Kombi-Logik (Hauswunsch 2026-09-21): optionale zweite Quelle (z. B. das
+        # Taster-Mittel des Loxone-Raumreglers) wird mit einem einstellbaren
+        # Anteil eingemischt.  Fehlt sie, ist sie veraltet oder unplausibel, regelt
+        # der Raum still auf der Luft weiter (siehe blend.py).
+        blend = blend_room_temperature(temperature_value, None, house_zone.blend_weight_pct)
+        if house_zone.blend_entity_id:
+            second_state = hass.states.get(house_zone.blend_entity_id)
+            second_value = _temperature_value(None if second_state is None else second_state.state)
+            blend = blend_room_temperature(
+                temperature_value,
+                second_value,
+                house_zone.blend_weight_pct,
+                second_age_s=None if second_state is None else _state_age_s(second_state),
+            )
+            if blend.second_used:
+                temperature_value = blend.value_c
+                temperature_source = "combined_sources"
+        controller.last_blend_info[house_zone.zone_id] = {
+            "primary_temperature_c": _temperature_value(None if temperature_state is None else temperature_state.state),
+            "second_entity_id": house_zone.blend_entity_id or None,
+            "second_temperature_c": None if not house_zone.blend_entity_id or house_zone.blend_entity_id not in hass.states else _temperature_value(hass.states[house_zone.blend_entity_id].state),
+            "weight_pct": blend.weight_pct,
+            "value_c": temperature_value,
+            "reason": blend.reason,
+            "second_used": blend.second_used,
+        }
         house_states[house_zone.zone_id] = (
             ZoneInput(
                 temperature_c=temperature_value,

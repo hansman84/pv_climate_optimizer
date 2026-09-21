@@ -79,6 +79,8 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             quiet_fan=bool(item.get("quiet_fan", True)),
             forecast_horizon_minutes=float(item.get("forecast_horizon_minutes", 60.0)),
             hold_level_c=float(item.get("hold_level_c", 0.0)) or _migrated_hold_level(item),
+            blend_entity_id=str(item.get("blend_entity_id", "") or ""),
+            blend_weight_pct=float(item.get("blend_weight_pct", 40.0)),
             shade_entity_ids=shade_ids,
             facade_azimuths=azimuths,
             facade_shade_entity_ids=facade_shades,
@@ -123,6 +125,8 @@ def serialize_zone_config(zone: ZoneConfig) -> dict[str, object]:
         "quiet_fan": zone.quiet_fan,
         "forecast_horizon_minutes": zone.forecast_horizon_minutes,
         "hold_level_c": zone.hold_level_c,
+        "blend_entity_id": zone.blend_entity_id,
+        "blend_weight_pct": zone.blend_weight_pct,
         "shade_entity_ids": list(zone.shade_entity_ids),
         "facade_azimuths": list(zone.facade_azimuths),
         "facade_shade_entity_ids": [list(group) for group in zone.facade_shade_entity_ids],
@@ -147,6 +151,9 @@ class PVClimateController:
     _thermal_context_samples: dict[str, list[tuple[float, float, str, bool, float | None, float | None, float | None]]] = field(default_factory=dict)
     # Daily holding quality per room ("is the temperature held better?").
     _hold_quality: dict[str, dict] = field(default_factory=dict)
+    # Kombi-Logik: letzte Mischrechnung je Raum (Luft, Zweitquelle, Anteil,
+    # Ergebnis, Begruendung) - fuer die Anzeige "was + woher" im Dashboard.
+    last_blend_info: dict[str, dict] = field(default_factory=dict)
     last_thermal_profiles: dict[str, ThermalProfile] = field(default_factory=dict)
     last_outdoor_gate_decision: object = None
     last_outdoor_gate_snapshot: object = None
@@ -1208,6 +1215,8 @@ class PVClimateController:
         min_outdoor_cooling_temperature_c: float | None = None,
         forecast_horizon_minutes: float | None = None,
         hold_level_c: float | None = None,
+        blend_entity_id: str | None = None,
+        blend_weight_pct: float | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
         updated: list[ZoneConfig] = []
@@ -1250,6 +1259,16 @@ class PVClimateController:
                     zone.hold_level_c
                     if hold_level_c is None
                     else (0.0 if float(hold_level_c) <= 0.0 else max(16.0, min(30.0, float(hold_level_c))))
+                ),
+                blend_entity_id=(
+                    zone.blend_entity_id
+                    if blend_entity_id is None
+                    else str(blend_entity_id).strip()
+                ),
+                blend_weight_pct=(
+                    zone.blend_weight_pct
+                    if blend_weight_pct is None
+                    else max(0.0, min(70.0, float(blend_weight_pct)))
                 ),
             ))
         zones = tuple(updated)

@@ -40,6 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ZoneMinOutdoorCoolingNumber(controller, entry.entry_id, f"zone_min_outdoor_cooling_{index}", zone.zone_id),
             ZoneForecastHorizonNumber(controller, entry.entry_id, f"zone_forecast_horizon_{index}", zone.zone_id),
             ZoneHoldLevelNumber(controller, entry.entry_id, f"zone_hold_level_{index}", zone.zone_id),
+            ZoneBlendWeightNumber(controller, entry.entry_id, f"zone_blend_weight_{index}", zone.zone_id),
         ))
     async_add_entities(zone_numbers)
 
@@ -340,6 +341,63 @@ class ZoneForecastHorizonNumber(ZoneComfortTemperatureNumber):
     async def async_set_native_value(self, value: float) -> None:
         self.controller.set_zone_thermal_settings(
             self._zone_id, forecast_horizon_minutes=float(value)
+        )
+        await self._async_persist_zones()
+        self.controller.notify_state_listeners()
+
+
+class ZoneBlendWeightNumber(ZoneComfortTemperatureNumber):
+    """Zweitquelle-Anteil (%) - wie stark die zweite Quelle mitzaehlt.
+
+    Die Kombi-Logik mischt zum Luftwert eine zweite Temperaturquelle (z. B. das
+    Taster-Mittel des Loxone-Raumreglers im Wohnzimmer) mit diesem Anteil.
+    0 = aus (nur Luft), 40 = Hausstandard (60 % Luft / 40 % Zweitquelle).
+    Fehlt oder taugt die Zweitquelle nicht, regelt der Raum still auf der Luft.
+    """
+
+    _attr_native_unit_of_measurement = "%"
+
+    @property
+    def name(self) -> str:
+        return f"{self._zone_name} – Zweitquelle-Anteil"
+
+    @property
+    def native_value(self) -> float:
+        zone = self._zone
+        value = None if zone is None else getattr(zone, "blend_weight_pct", None)
+        return 40.0 if value is None else float(value)
+
+    @property
+    def native_min_value(self) -> float:
+        return 0.0
+
+    @property
+    def native_max_value(self) -> float:
+        return 70.0
+
+    @property
+    def native_step(self) -> float:
+        return 5.0
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        info = None if self.controller is None else self.controller.last_blend_info.get(self._zone_id)
+        return {
+            "erklaerung": (
+                "Anteil der zweiten Temperaturquelle an der Regelgröße. 0 = nur Luft. "
+                "Bei fehlender, veralteter oder unplausibler Zweitquelle regelt der Raum automatisch "
+                "wieder auf der Luft."
+            ),
+            "aktuelle_regelgroesse_c": None if info is None else info.get("value_c"),
+            "luft_c": None if info is None else info.get("primary_temperature_c"),
+            "zweitquelle_c": None if info is None else info.get("second_temperature_c"),
+            "zweitquelle_aktiv": None if info is None else info.get("second_used"),
+            "begruendung": None if info is None else info.get("reason"),
+        }
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.controller.set_zone_thermal_settings(
+            self._zone_id, blend_weight_pct=float(value)
         )
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
