@@ -219,6 +219,8 @@ async def _async_refresh_controller(
             "value_c": temperature_value,
             "reason": blend.reason,
             "second_used": blend.second_used,
+            "offset_c": blend.offset_c,
+            "offset_capped": blend.capped,
         }
         house_states[house_zone.zone_id] = (
             ZoneInput(

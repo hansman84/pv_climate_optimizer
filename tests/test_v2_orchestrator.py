@@ -454,6 +454,27 @@ def test_pv_hold_mode_has_hysteresis_because_it_consumes_its_own_surplus() -> No
     assert blocked[0].reason_code != "pv_hold_start"
 
 
+def test_hold_steps_the_device_down_when_the_control_value_stays_above_the_level() -> None:
+    """0.10.0: Halten darf nicht heissen 'nichts tun'.
+
+    Das Innengeraet haelt seinen eigenen Fuehler auf dem Sollwert (24 C) und ist
+    damit zufrieden, waehrend der Regelwert 1.4 K ueber dem Pegel liegt - dann
+    kommt der Raum nie herunter.  Erwartet: eine Stufe tiefer (23 C).
+    """
+    base = _shadow_room(predicted=24.9, budget_w=400.0)
+    room = _hold_room(base, mode="cool", target=24.0, surplus=900.0, hold=0.5)
+    room = replace(
+        room,
+        estimate=models.RoomEstimate("living", 24.9, 0.1, 24.9, 0.8, -0.2, ("trend",), "forecast_ready"),
+    )
+    candidates, _ = shadow.V2ShadowRunner().evaluate([room], available_budget_w=2_000.0)
+    candidate = candidates[0]
+    assert candidate is not None
+    assert candidate.reason_code == "pv_hold_step_down"
+    assert candidate.action is models.CandidateAction.ADJUST
+    assert candidate.target_after_c == 23.0
+
+
 def test_pv_hold_mode_is_off_by_default() -> None:
     base = _shadow_room(budget_w=400.0)
     room = models.V2RoomInput(

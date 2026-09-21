@@ -29,16 +29,23 @@ DEFAULT_BLEND_WEIGHT_PCT = 40.0
 MAX_BLEND_WEIGHT_PCT = 70.0
 DEFAULT_MAX_AGE_S = 60 * 60.0
 DEFAULT_MAX_DEVIATION_C = 2.5
+# 0.10.0: Deckel für den Zuschlag der Zweitquelle.  Ein Split-Geraet kuehlt nur
+# die Luft, die Wand folgt traege - ohne Deckel wird das gemischte Ziel
+# unerreichbar und die Anlage laeuft endlos.  1.0 K heisst: die Luft geht nie
+# mehr als 1.0 K unter das eingestellte Ziel, das Gefuehl stimmt trotzdem.
+DEFAULT_MAX_OFFSET_C = 1.0
 
 
 @dataclass(frozen=True, slots=True)
 class BlendResult:
-    """Ergebnis einer Mischrechnung, immer mit Begründung."""
+    """Ergebnis einer Mischrechnung, immer mit Begruendung."""
 
     value_c: float | None
     reason: str
     second_used: bool
     weight_pct: float
+    offset_c: float = 0.0
+    capped: bool = False
 
 
 def blend_source_candidates(states: object, *, exclude: tuple[str, ...] = ()) -> tuple[str, ...]:
@@ -73,6 +80,7 @@ def blend_room_temperature(
     second_age_s: float | None = None,
     max_age_s: float = DEFAULT_MAX_AGE_S,
     max_deviation_c: float = DEFAULT_MAX_DEVIATION_C,
+    max_offset_c: float | None = DEFAULT_MAX_OFFSET_C,
 ) -> BlendResult:
     """Kombiniere Luftwert und Zweitquelle zur Regelgröße des Raums.
 
@@ -96,5 +104,10 @@ def blend_room_temperature(
     if abs(second - primary) > max_deviation_c:
         return BlendResult(primary, "second_source_implausible", False, weight)
 
-    blended = primary + (weight / 100.0) * (second - primary)
-    return BlendResult(round(blended, 2), "blended", True, weight)
+    offset = (weight / 100.0) * (second - primary)
+    capped = False
+    if max_offset_c is not None and abs(offset) > float(max_offset_c):
+        offset = float(max_offset_c) if offset > 0.0 else -float(max_offset_c)
+        capped = True
+    blended = primary + offset
+    return BlendResult(round(blended, 2), "blended", True, weight, round(offset, 2), capped)

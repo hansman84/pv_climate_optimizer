@@ -21,6 +21,9 @@ from .v2_orchestrator import HouseCoordinator
 
 
 _DEFAULT_SPLIT_BUDGET_W = 300.0
+# 0.10.0: ab dieser Abweichung ueber dem Pegel darf der Halte-Modus den Sollwert
+# eine Stufe tiefer stellen (sonst haelt das Geraet nur seinen eigenen Fuehler).
+_HOLD_ACT_TOLERANCE_C = 0.3
 """Conservative demand used until a room has its own learned estimate.
 
 Chosen well below a real split's draw (400-1200 W measured on this house) so a
@@ -285,6 +288,38 @@ class V2ShadowRunner:
                 if room.observed_hvac_mode == "cool":
                     current = room.observed_target_temperature_c
                     step = room.target_temperature_step_c or 1.0
+                    device_floor = (
+                        room.pilot_min_target_temperature_c
+                        if room.pilot_min_target_temperature_c is not None
+                        else room.comfort_temperature_c - 3.0
+                    )
+                    # 0.10.0: Das Geraet haelt seinen EIGENEN Fuehler auf dem (ganzzahligen)
+                    # Sollwert und ist damit "zufrieden", waehrend der Regelwert noch
+                    # deutlich ueber dem Pegel liegt - dann kommt der Raum nie herunter.
+                    # In diesem Fall geht der Sollwert eine Stufe tiefer, der Luefter folgt.
+                    if (
+                        current is not None
+                        and current - hold_target > 0.2
+                        and hold_air - hold_target > _HOLD_ACT_TOLERANCE_C
+                        and current - step >= device_floor
+                        and abs(current - hold_target) < step - 0.001
+                    ):
+                        return RoomCandidate(
+                            policy=room.policy,
+                            action=CandidateAction.ADJUST,
+                            required_budget_w=0.0,
+                            comfort_gap_c=max(0.0, hold_air - room.comfort_temperature_c),
+                            confidence=room.estimate.confidence,
+                            reason_code="pv_hold_step_down",
+                            reason_text=(
+                                f"V2 Pegel halten: Regelwert {hold_air:.1f} C liegt noch "
+                                f"{hold_air - hold_target:.1f} K ueber dem Pegel - das Geraet "
+                                f"bekommt eine Stufe tiefer ({current - step:.0f} C), der Luefter "
+                                "folgt der Abweichung."
+                            ),
+                            target_before_c=current,
+                            target_after_c=current - step,
+                        )
                     if current is not None and abs(current - hold_target) >= step - 0.001:
                         return RoomCandidate(
                             policy=room.policy,
