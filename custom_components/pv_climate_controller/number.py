@@ -449,7 +449,10 @@ class ZoneHoldLevelNumber(ZoneComfortTemperatureNumber):
         }
 
     async def async_set_native_value(self, value: float) -> None:
-        self.controller.set_zone_thermal_settings(self._zone_id, hold_depth_c=float(value))
+        # 0.11.1: der Pegel ist seit 0.7.3 eine ABSOLUTE Temperatur.  Hier stand
+        # noch das alte Delta-Feld (hold_depth_c) - dadurch kam jede Aenderung an
+        # der Pegel-Kachel nie beim Regler an.
+        self.controller.set_zone_thermal_settings(self._zone_id, hold_level_c=float(value))
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 
