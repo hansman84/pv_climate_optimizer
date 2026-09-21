@@ -443,6 +443,20 @@ class V2ShadowRunner:
         if not room.snapshot.critical_inputs_valid:
             return V2ShadowRunner._hold(room, "critical_input_not_fresh", "V2 wartet: mindestens eine kritische Quelle ist fehlend, unplausibel oder veraltet.")
         if not room.eligibility.allowed:
+            # 0.12.1: ist der Raum gesperrt (z.B. "draussen zu kalt" im
+            # Obergeschoss), darf er nicht weiterkuehlen - sonst laufen Geraete
+            # bei 18 C Aussentemperatur weiter, obwohl V2 sie gar nicht will.
+            if room.observed_hvac_mode == "cool" and not room.evening_comfort_active:
+                return RoomCandidate(
+                    policy=room.policy,
+                    action=CandidateAction.STOP,
+                    required_budget_w=0.0,
+                    comfort_gap_c=0.0,
+                    confidence=room.estimate.confidence,
+                    reason_code="not_allowed_stop",
+                    reason_text=f"V2 beendet die Kuehlung: {room.eligibility.reason_text}",
+                    safety_override=True,
+                )
             return V2ShadowRunner._hold(room, room.eligibility.reason_code, room.eligibility.reason_text)
         temperature = room.estimate.temperature_c
         if (

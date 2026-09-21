@@ -475,6 +475,21 @@ def test_hold_steps_the_device_down_when_the_control_value_stays_above_the_level
     assert candidate.target_after_c == 23.0
 
 
+def test_a_blocked_room_stops_cooling_instead_of_running_on() -> None:
+    """0.12.1: gesperrter Raum (draussen zu kalt) darf nicht weiterkuehlen."""
+    base = _shadow_room(predicted=24.2, budget_w=400.0)
+    room = _hold_room(base, mode="cool", target=24.0, surplus=0.0)
+    room = replace(
+        room,
+        eligibility=models.EligibilityDecision(
+            False, "outdoor_too_cold_no_cooling", "Aussenluft 18.6 C unter der Kuehlgrenze"
+        ),
+    )
+    candidates, _ = shadow.V2ShadowRunner().evaluate([room], available_budget_w=0.0)
+    assert candidates[0].action is models.CandidateAction.STOP
+    assert candidates[0].reason_code == "not_allowed_stop"
+
+
 def test_pv_hold_mode_is_off_by_default() -> None:
     base = _shadow_room(budget_w=400.0)
     room = models.V2RoomInput(
