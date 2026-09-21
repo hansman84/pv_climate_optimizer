@@ -61,9 +61,19 @@ def test_fan_steps_up_when_the_temperature_stalls():
     assert decision.reason_code == "capacity_boost"
 
 
+def test_fan_escalates_only_after_a_long_stall():
+    """0.13.0: erst nach 35/50 min Stillstand geht es ueber medium hinaus."""
+    stalled = fan.FanFeatures(gap_c=1.6, gap_stable_s=55 * 60.0, fine_ladder=True)
+    d1 = fan.evaluate_fan_stage(stalled, fan.FanState(current_stage="medium", fan_changed_recently_s=600.0))
+    assert d1.stage == "middle_high"
+    short = fan.FanFeatures(gap_c=1.6, gap_stable_s=25 * 60.0, fine_ladder=True)
+    d2 = fan.evaluate_fan_stage(short, fan.FanState(current_stage="medium", fan_changed_recently_s=600.0))
+    assert d2.stage == "medium"
+
+
 def test_fan_never_goes_louder_than_medium_in_normal_operation():
-    """0.11.0: ohne Notfall (harte Grenze) hoechstens medium - Zug vermeiden."""
-    features = fan.FanFeatures(gap_c=2.4, gap_stable_s=40 * 60.0, fine_ladder=True)
+    """0.11.0/0.13.0: ohne Notfall zuerst medium - Zug vermeiden."""
+    features = fan.FanFeatures(gap_c=2.4, gap_stable_s=25 * 60.0, fine_ladder=True)
     decision = fan.evaluate_fan_stage(features, fan.FanState(current_stage="medium", fan_changed_recently_s=600.0))
     assert decision.stage == "medium"
 

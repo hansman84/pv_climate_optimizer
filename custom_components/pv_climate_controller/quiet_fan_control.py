@@ -59,6 +59,27 @@ NORMAL_MAX_STAGE_INDEX = 2  # medium
 CAPACITY_BOOST_GAP_C = 0.4
 CAPACITY_BOOST_TREND_C_PER_H = -0.15
 CAPACITY_BOOST_AFTER_S = 20 * 60.0
+# 0.13.0 (Hauswunsch 2026-09-21: "es kann ruhig auch auf hoechster Stufe laufen,
+# wenn es notwendig ist - aber im Wohnzimmer soll Zug vermieden werden, also
+# erst als letztes Mittel"):  Bleibt der Raum trotz mittlerer Stufe stehen, darf
+# der Luefter nach laengerer Zeit weiter hoch - eine Stufe alle 5 Minuten.
+ESCALATE_MIDDLE_HIGH_GAP_C = 1.0
+ESCALATE_MIDDLE_HIGH_AFTER_S = 35 * 60.0
+ESCALATE_HIGH_GAP_C = 1.5
+ESCALATE_HIGH_AFTER_S = 50 * 60.0
+
+
+def stall_ceiling_index(gap_c: float, stable_s: float) -> int:
+    """Hoechste erlaubte Luefterstufe, wenn der Raum nicht folgt.
+
+    Standard ist *medium* (zugarm).  Erst wenn Abweichung UND Zeit zusammen
+    gross sind, geht es eine Stufe hoeher - letztes Mittel, nicht erstes.
+    """
+    if gap_c >= ESCALATE_HIGH_GAP_C and stable_s >= ESCALATE_HIGH_AFTER_S:
+        return FAN_ORDER.index(FAN_HIGH)
+    if gap_c >= ESCALATE_MIDDLE_HIGH_GAP_C and stable_s >= ESCALATE_MIDDLE_HIGH_AFTER_S:
+        return FAN_ORDER.index("middle_high")
+    return NORMAL_MAX_STAGE_INDEX
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +218,7 @@ def evaluate_fan_stage(features: FanFeatures, state: FanState) -> FanDecision:
         elif features.gap_c >= FINE_STEP_GAP_C and features.gap_stable_s >= FINE_STABLE_S:
             steps = 1 + int((features.gap_c - FINE_STEP_GAP_C) // FINE_STEP_WIDTH_C)
             desired_index = min(FAN_ORDER.index(FAN_HIGH), steps)
-            desired_index = min(desired_index, NORMAL_MAX_STAGE_INDEX)
+            desired_index = min(desired_index, stall_ceiling_index(features.gap_c, features.gap_stable_s))
             reason = ("gap_fine_step", f"Feinregelung: {features.gap_c:.1f} K über dem Pegel – Lüfter fein nachgeführt.")
         else:
             desired_index = 0
@@ -233,9 +254,9 @@ def evaluate_fan_stage(features: FanFeatures, state: FanState) -> FanDecision:
         desired_index = 0
         reason = ("capacity_via_target", "Mehr Kälteleistung über den Sollwert (Kompressor), Lüfter bleibt leise.")
 
-    # 4a2. 0.11.0: im Normalbetrieb nie lauter als medium (Zug vermeiden) - der
-    # Notfall (harte Grenze) ist oben bereits mit hoechster Stufe abgehandelt.
-    desired_index = min(desired_index, NORMAL_MAX_STAGE_INDEX)
+    # 4a2. 0.11.0/0.13.0: im Normalbetrieb zuerst leise (medium); hoehere Stufen
+    # erst, wenn der Raum trotz Zeit und Abweichung nicht folgt (letztes Mittel).
+    desired_index = min(desired_index, stall_ceiling_index(features.gap_c, features.gap_stable_s))
 
     # 5. Step discipline: at most one step up per interval; step down freely.
     if desired_index > current_index:
