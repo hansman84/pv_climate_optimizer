@@ -33,7 +33,7 @@ DEFAULT_MAX_DEVIATION_C = 2.5
 # die Luft, die Wand folgt traege - ohne Deckel wird das gemischte Ziel
 # unerreichbar und die Anlage laeuft endlos.  1.0 K heisst: die Luft geht nie
 # mehr als 1.0 K unter das eingestellte Ziel, das Gefuehl stimmt trotzdem.
-DEFAULT_MAX_OFFSET_C = 1.0
+DEFAULT_MAX_OFFSET_C = None  # 0.15.1 Hauswunsch 22.09.: nur die Gewichtung zaehlt - kein unsichtbarer Deckel
 
 
 @dataclass(frozen=True, slots=True)
