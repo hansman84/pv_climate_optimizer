@@ -6,6 +6,10 @@ nennenswert einstrahlt ODER die Aussenluft warm ist. Sonst bleibt es aus
 """
 
 IRRADIANCE_DEMAND_W_M2 = 150.0
+# 0.14.1: der Strahlungssensor kann haengen (22.09.: 13 W/m2 bei 2,9 kW PV).
+# Der PV-Ertrag ist selbst eine Strahlungsmessung - ab dieser Leistung ist
+# sicher Sonne im Spiel.
+PV_SUN_MIN_W = 800.0
 OUTDOOR_DEMAND_C = 20.0
 
 
@@ -13,6 +17,10 @@ def cooling_demand(room) -> bool:
     """True, wenn ein echter Waermegrund vorliegt."""
     irr = getattr(room, "solar_irradiance_w_m2", None)
     if irr is not None and float(irr) >= IRRADIANCE_DEMAND_W_M2:
+        return True
+    pv = getattr(room, "pv_export_w", None)
+    pv = getattr(pv, "value", pv)
+    if isinstance(pv, (int, float)) and not isinstance(pv, bool) and float(pv) >= PV_SUN_MIN_W:
         return True
     snap = getattr(room, "snapshot", None)
     raw = getattr(snap, "outdoor_temperature", None) if snap is not None else None
