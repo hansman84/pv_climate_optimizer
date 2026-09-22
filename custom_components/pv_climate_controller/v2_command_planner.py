@@ -21,9 +21,9 @@ from .quiet_fan_control import (
 )
 from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
 
-SETTLE_STOP_RESERVE_C = 0.6    # stop once the room is this far below comfort
+SETTLE_STOP_RESERVE_C = 0.3    # 0.15.0: Stopper erst 0,3 K unter dem Komfort (enge, ruhige Linie)
 SETTLE_TARGET_TOL_C = 0.1      # allowed setpoint deviation from comfort
-CAPACITY_FLOOR_DELTA_C = 1.0   # compressor floor: comfort - 1 K before the fan may step up
+CAPACITY_FLOOR_DELTA_C = 0.0   # 0.15.0: Sollwert-Untergrenze = Komfortlinie (Hauswunsch 22.09.: "Ziel ist der Komfort, nicht tiefer")
 
 # Setpoint damping (0.7.0): at most one device target change per room in this
 # window - V1's calm mechanics ("Zielwechsel frühestens alle 15 min") tamed

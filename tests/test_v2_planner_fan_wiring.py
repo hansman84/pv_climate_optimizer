@@ -157,16 +157,15 @@ def test_stop_plan_carries_no_fan_command():
     assert plan is not None and plan.fan_mode is None
 
 
-def test_settle_raises_over_eager_setpoint_towards_comfort():
+def test_settle_stops_when_the_room_is_below_the_comfort_reserve():
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
-    # measured 23.2 below comfort 23.5, setpoint 21 -> raise towards comfort.
+    # 0.15.0: Sollwert-Untergrenze = Komfort, Stoppreserve 0,3 K.  Ein Raum bei
+    # 23,2 (Komfort 23,5) ist damit schon unter der Stopplinie -> Stopp.
     room = _Room("s1", measured=23.2, comfort=23.5, observed_target=21.0, observed_fan="auto")
     plan = planner.settle_plan(room)
     assert plan is not None
-    assert plan.action.value == "adjust" and plan.target_temperature_c == 22.0
-    assert plan.reason_code == "v2_comfort_converge_up"
-    assert plan.fan_mode == "low"
+    assert plan.action.value == "stop"
 
 
 def test_settle_lowers_warm_setpoint_to_reach_comfort():
@@ -219,7 +218,7 @@ def test_settle_stops_earlier_in_occupied_window():
 def test_default_stop_reserve_applies_outside_occupied_window():
     clock = _Clock()
     planner = planner_mod.V2CommandPlanner(now_fn=clock)
-    # Same numbers, no occupied window: default reserve 0.6 K -> not yet a stop
-    # (and fan already quiet / target at comfort -> no command at all).
-    room = _Room("o2", measured=23.2, comfort=23.5, observed_target=23.5, observed_fan="low", occupied=False)
+    # Same numbers, no occupied window: default reserve 0.3 K (0.15.0) -> room
+    # 23.4 is still above the stop line 23.2, so no command at all.
+    room = _Room("o2", measured=23.4, comfort=23.5, observed_target=23.5, observed_fan="low", occupied=False)
     assert planner.settle_plan(room) is None
