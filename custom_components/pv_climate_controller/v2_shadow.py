@@ -17,6 +17,7 @@ from .v2_models import (
     RoomDecision,
     V2RoomInput,
 )
+from .cooling_demand import cooling_demand
 from .v2_orchestrator import HouseCoordinator
 
 
@@ -24,6 +25,7 @@ _DEFAULT_SPLIT_BUDGET_W = 300.0
 # 0.10.0: ab dieser Abweichung ueber dem Pegel darf der Halte-Modus den Sollwert
 # eine Stufe tiefer stellen (sonst haelt das Geraet nur seinen eigenen Fuehler).
 _HOLD_ACT_TOLERANCE_C = 0.3
+# 0.14.0: PV ist eine ERLAUBNIS, kein Grund - Kuehlbedarf siehe cooling_demand.py
 """Conservative demand used until a room has its own learned estimate.
 
 Chosen well below a real split's draw (400-1200 W measured on this house) so a
@@ -197,7 +199,7 @@ class V2ShadowRunner:
         # exactly the same three rules as every other room: comfort target,
         # acute limit, hard limit - with real PV surplus as the precondition.
         predicted = room.estimate.predicted_temperature_60m_c
-        usable_cooling_authority = pv_available
+        usable_cooling_authority = pv_available and cooling_demand(room)
         now = self._clock()
         if usable_cooling_authority:
             self._pv_missing_since.pop(room.policy.room_id, None)
@@ -255,6 +257,7 @@ class V2ShadowRunner:
             and hold_depth > 0.0
             and room.eligibility.allowed
             and hold_pv_ok
+            and cooling_demand(room)
             and hold_air is not None
             # The household's evening window (Abendkomfort) is deliberately
             # relaxed and the night that follows is quiet: inside the window
