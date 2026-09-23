@@ -13,5 +13,8 @@ custom_components/pv_climate_controller/__pycache__/
 custom_components/pv_climate_controller/**/*.py[cod]
 !tests/
 tests/*
+!tests/*.py
+!tests/fixtures/
+!tests/fixtures/*
 !tests/test_pv_climate_observer.py
 !tests/test_quiet_fan_control.py

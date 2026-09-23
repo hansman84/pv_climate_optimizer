@@ -165,6 +165,20 @@ Komforttemperatur gesetzt. Die Priorität (1–100) entscheidet nur bei sonst
 vergleichbarer thermischer Dringlichkeit. Die Standardwerte für neu angelegte
 Zonen sind 23,5 °C Komforttemperatur und 25,5 °C harte Grenze.
 
+**Hausregel Schlafräume (seit 0.16.0):** Die Räume mit der Kennung
+`climate.schlafzimmer` und `climate.kinderzimmer` werden nur vorgekühlt, wenn
+die Außentemperatur mindestens **25,0 °C** beträgt, und ihr Vorkühl-/Kühlziel
+ist **23,0 °C** (nicht 22,0 °C). Das sind Defaults der Integration
+(`SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C`, `SCHLAFRAUM_ZIEL_C` in `models.py`); sie
+greifen nur für Felder, die noch nie gesetzt wurden. Ein bewusst gesetzter Wert
+bleibt unverändert – auch `0` als „Außenregel aus“.
+
+**Raumkennung:** Ein Raum wird über seine Kennung aufgelöst (Klima-Entity-ID,
+z. B. `climate.schlafzimmer`), nicht über die Schreibweise des Namens. Dadurch
+treffen Lesen und Schreiben denselben Raum, auch wenn eine Kennung historisch
+anders geschrieben war. Entsprechend einmalig migrierte Entitäts-IDs werden
+beim Setup migriert und im Log mit `... -> ...` gemeldet.
+
 Der **Shadow-Plan** einer Zone enthält Temperatur, Betriebsmodus, Priorität,
 BTU/h-Beobachtung und Reason-Code. Der Haus-Kühlplan fasst alle Raumpläne, die
 aktive Zonenzahl, thermischen Bedarf, gemeinsames Nennbudget und die aktuelle

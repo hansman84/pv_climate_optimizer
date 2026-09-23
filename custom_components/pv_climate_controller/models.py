@@ -2,9 +2,222 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Iterable
 
 from .const import EnergyPolicy, ZoneState
+
+# ---------------------------------------------------------------------------
+# Raumkennungen und alte Schreibweisen
+# ---------------------------------------------------------------------------
+# Eine fruehere Konfiguration schrieb den Raum "Schlafzimmrt".  Bisher wurde
+# nur das Anzeige-Label korrigiert - die Raumkennung selbst blieb die alte
+# Schreibweise.  Folge in Home Assistant: die Entitaeten des Raums hiessen
+# weiter ..._schlafzimmrt_..., waren also unter ihrem richtigen Namen nicht
+# adressierbar (Lesen ergab None, number.set_value verpuffte lautlos), waehrend
+# alle anderen Raeume normal funktionierten.
+ZONE_LABEL_ALIASES: dict[str, str] = {"Schlafzimmrt": "Schlafzimmer"}
+
+# ---------------------------------------------------------------------------
+# Hausregel Schlafraeume (Hauswunsch 23.09.2026)
+#
+# Die Schlafraeume (Schlafzimmer, Kinderzimmer) werden NUR vorgekuehlt, wenn die
+# Aussentemperatur mindestens 25,0 C betraegt, und ihr Vorkuehl-/Kuehlziel ist
+# 23,0 C (nicht 22,0).  Das sind DEFAULTS der Integration - ausdruecklich vom
+# Nutzer gesetzte Werte werden nie ueberschrieben (siehe controller._house_zones).
+# ---------------------------------------------------------------------------
+SCHLAFRAUM_ROOM_IDS: tuple[str, ...] = ("climate.schlafzimmer", "climate.kinderzimmer")
+SCHLAFRAUM_ZIEL_C = 23.0
+SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C = 25.0
+SCHLAFRAUM_LABELS: frozenset[str] = frozenset({"schlafzimmer", "kinderzimmer"})
+# Raeume im Obergeschoss; dort gilt (ausser in den Schlafraeumen) der weiche
+# Aussenboden 20,0 C aus 0.4.58.
+UPSTAIRS_ZONE_LABELS: frozenset[str] = frozenset({"schlafzimmer", "kinderzimmer", "spielzimmer"})
+DEFAULT_ZONE_COMFORT_C = 23.5
+DEFAULT_UPSTAIRS_MIN_OUTDOOR_C = 20.0
+
+
+def _label_key(name: object) -> str:
+    """Vergleichsschluessel eines Raumnamens (Leerraum, Gross-/Kleinschrift)."""
+    return str(name or "").strip().casefold()
+
+
+def canonical_zone_label(name: object) -> str:
+    """Korrigierte Schreibweise eines Raumnamens (bekannte Tippfehler)."""
+    normalized = " ".join(str(name or "").split())
+    return ZONE_LABEL_ALIASES.get(normalized, normalized)
+
+
+def _legacy_label_keys(canonical_label: object) -> tuple[str, ...]:
+    """Alle alten Schreibweisen, die denselben Raum bezeichnen."""
+    key = _label_key(canonical_zone_label(canonical_label))
+    return tuple(
+        _label_key(legacy)
+        for legacy, canonical in ZONE_LABEL_ALIASES.items()
+        if _label_key(canonical) == key
+    )
+
+
+def canonical_room_id(zone_id: object, *, name: object = "", climate_entity_id: object = "") -> str:
+    """Stabile Raumkennung einer Zone.
+
+    Vorzug hat die Klima-Entity-ID des Raums (z. B. ``climate.schlafzimmer``).
+    Alte Konfigurationen speicherten unter ``zone_id`` nur den Raumnamen (teils
+    mit Tippfehler); dann wird die Kennung daraus abgeleitet, damit Lesen und
+    Schreiben wirklich denselben Raum treffen.
+    """
+    raw = str(zone_id or "").strip()
+    if "." in raw:
+        return raw
+    climate = str(climate_entity_id or "").strip()
+    if climate:
+        return climate
+    return _label_key(canonical_zone_label(raw or name)) or raw
+
+
+def room_lookup_keys(
+    zone_id: object,
+    *,
+    name: object = "",
+    climate_entity_id: object = "",
+) -> tuple[str, ...]:
+    """Alle Kennungen, unter denen dieser Raum adressiert werden darf.
+
+    Enthaelt die kanonische Kennung, die gespeicherte Kennung, die
+    Klima-Entity-ID, den Raumnamen und die alte (Tippfehler-)Schreibweise.
+    """
+    keys: list[str] = []
+    for candidate in (
+        canonical_room_id(zone_id, name=name, climate_entity_id=climate_entity_id),
+        zone_id,
+        climate_entity_id,
+        canonical_zone_label(name),
+        canonical_zone_label(zone_id),
+        *_legacy_label_keys(name),
+        *_legacy_label_keys(zone_id),
+    ):
+        key = _label_key(candidate)
+        if key and key not in keys:
+            keys.append(key)
+    return tuple(keys)
+
+
+def zone_matches_room(zone: "ZoneConfig", room_id: object) -> bool:
+    """True, wenn ``room_id`` diesen Raum adressiert (auch alte Schreibweise)."""
+    wanted = _label_key(room_id)
+    if not wanted:
+        return False
+    return wanted in room_lookup_keys(
+        zone.zone_id, name=zone.name, climate_entity_id=zone.climate_entity_id
+    )
+
+
+def find_zone(zones: Iterable["ZoneConfig"], room_id: object) -> "ZoneConfig | None":
+    """Der einzige Zonen-Lookup: kanonische Kennung oder alte Schreibweise.
+
+    Vor 0.16.0 verglichen Entitaeten und Migrationen rohe Zeichenketten
+    (``zone.zone_id == zone_id``).  Sobald eine Kennung historisch anders
+    geschrieben war, fand der Raum seine Zone nicht mehr - Lesen lieferte None,
+    ein Schreibvorgang wurde still verworfen.
+    """
+    return next((zone for zone in zones if zone_matches_room(zone, room_id)), None)
+
+
+def is_schlafraum(
+    *,
+    room_id: object = "",
+    name: object = "",
+    climate_entity_id: object = "",
+) -> bool:
+    """True fuer die beiden Schlafraeume (Kennung ODER Name)."""
+    canonical = _label_key(
+        canonical_room_id(room_id, name=name, climate_entity_id=climate_entity_id)
+    )
+    if canonical in {alias.casefold() for alias in SCHLAFRAUM_ROOM_IDS}:
+        return True
+    return _label_key(canonical_zone_label(name or room_id)) in SCHLAFRAUM_LABELS
+
+
+def zone_comfort_default(
+    *,
+    room_id: object = "",
+    name: object = "",
+    climate_entity_id: object = "",
+) -> float:
+    """Standard-Komfort-/Vorkuehlziel: 23,0 C in den Schlafraeumen, sonst 23,5 C."""
+    if is_schlafraum(room_id=room_id, name=name, climate_entity_id=climate_entity_id):
+        return SCHLAFRAUM_ZIEL_C
+    return DEFAULT_ZONE_COMFORT_C
+
+
+def zone_min_outdoor_cooling_default(
+    *,
+    room_id: object = "",
+    name: object = "",
+    climate_entity_id: object = "",
+) -> float | None:
+    """Standard-Aussenboden: 25,0 C in den Schlafraeumen, 20,0 C sonst oben.
+
+    ``None`` bedeutet "kein Boden" (Erdgeschoss-Raeume).
+    """
+    if is_schlafraum(room_id=room_id, name=name, climate_entity_id=climate_entity_id):
+        return SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C
+    label = _label_key(canonical_zone_label(name or room_id))
+    return DEFAULT_UPSTAIRS_MIN_OUTDOOR_C if label in UPSTAIRS_ZONE_LABELS else None
+
+
+def zone_pilot_min_default(
+    *,
+    room_id: object = "",
+    name: object = "",
+    climate_entity_id: object = "",
+) -> float | None:
+    """Standard-Untergrenze des Geraetesolls.
+
+    In den Schlafraeumen ist das Kuehlziel 23,0 C - das Geraet wird also nicht
+    mehr auf 22,0 C heruntergezogen.
+    """
+    if is_schlafraum(room_id=room_id, name=name, climate_entity_id=climate_entity_id):
+        return SCHLAFRAUM_ZIEL_C
+    return None
+
+
+def _label_slug(text: object) -> str:
+    """Entitaets-ID-Slug eines Raumnamens (dieselbe Form wie Home Assistant).
+
+    Bewusst ohne Alias-Aufloesung: hier soll die *alte* Schreibweise sichtbar
+    bleiben, sonst laesst sich eine alte Entitaets-ID nicht erkennen.
+    """
+    return re.sub(r"[^a-z0-9]+", "_", _label_key(text)).strip("_")
+
+
+def legacy_entity_id_rename(entity_id: object) -> str | None:
+    """Neue Entitaets-ID ohne alte Raumschreibweise (``None`` = nichts zu tun).
+
+    Home Assistant bildet die Entitaets-ID einmalig aus dem Anzeigenamen.  Fuer
+    den Schlafzimmer-Raum entstand sie mit dem damaligen Tippfehler, z. B.
+    ``number.pv_klimaregler_schlafzimmrt_komforttemperatur``.  Der Name ist
+    laengst korrigiert, die ID blieb - dadurch war der Raum unter seinem
+    richtigen Namen weder lesbar (None) noch schreibbar.
+    """
+    domain, _, object_id = str(entity_id or "").partition(".")
+    if not domain or not object_id:
+        return None
+    updated = object_id
+    for legacy, canonical in ZONE_LABEL_ALIASES.items():
+        legacy_slug, canonical_slug = _label_slug(legacy), _label_slug(canonical)
+        if not legacy_slug or legacy_slug == canonical_slug:
+            continue
+        updated = re.sub(
+            rf"(^|_){re.escape(legacy_slug)}(_|$)",
+            rf"\g<1>{canonical_slug}\g<2>",
+            updated,
+        )
+    if updated == object_id:
+        return None
+    return f"{domain}.{updated}"
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +281,7 @@ class ZoneConfig:
 
     def __post_init__(self) -> None:
         """Keep legacy typos out of every customer-facing room label."""
-        normalized = " ".join(self.name.split())
-        aliases = {"Schlafzimmrt": "Schlafzimmer"}
-        object.__setattr__(self, "name", aliases.get(normalized, normalized))
+        object.__setattr__(self, "name", canonical_zone_label(self.name))
 
 
 @dataclass(frozen=True, slots=True)

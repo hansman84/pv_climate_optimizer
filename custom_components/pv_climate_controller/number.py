@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CONF_BEDROOM_TARGET_TEMPERATURE, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_HARD_MAX_TEMPERATURE, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, DOMAIN
+from . import models
 from .entity import ControllerEntity
 from .controller import serialize_zone_config
 
@@ -215,12 +216,20 @@ class _ZoneSettingNumber(ControllerEntity, NumberEntity):
 
     @property
     def _zone(self):
-        return next((zone for zone in self.controller.config.house_zones if zone.zone_id == self._zone_id), None)
+        # 0.16.0: ein einziger, toleranter Zonen-Lookup (models.find_zone).  Vorher
+        # verglich die Entitaet rohe Zeichenketten (zone.zone_id == self._zone_id).
+        # Sobald eine Raumkennung historisch anders geschrieben war (Schlafzimmer
+        # hiess einmal "Schlafzimmrt"), fand die Entitaet ihren Raum nicht mehr:
+        # native_value blieb None und async_set_native_value verpuffte lautlos -
+        # genau das Bild "liest sich als None, Schreiben wirkungslos".
+        return models.find_zone(self.controller.config.house_zones, self._zone_id)
 
     @property
     def _zone_name(self) -> str:
         zone = self._zone
-        return zone.name if zone is not None else self._zone_id
+        if zone is not None:
+            return zone.name
+        return models.canonical_zone_label(self._zone_id)
 
     async def _async_persist_zones(self) -> None:
         await self.async_persist_option(
@@ -243,10 +252,20 @@ class ZoneComfortTemperatureNumber(_ZoneSettingNumber):
 
     @property
     def native_value(self) -> float | None:
-        return None if self._zone is None else self._zone.comfort_temperature
+        # Der Wert, den V2 als Vorkuehl-/Kuehlziel des Raums benutzt.
+        zone = self._zone
+        if zone is None:
+            # Nur noch "Raum wurde entfernt": der Lookup versteht seit 0.16.0 auch
+            # die alte Schreibweise ("Schlafzimmrt"), daher liefert er fuer einen
+            # vorhandenen Raum immer dessen Komfortziel.
+            return None
+        return float(zone.comfort_temperature)
 
     async def async_set_native_value(self, value: float) -> None:
-        self.controller.set_zone_thermal_settings(self._zone_id, comfort_temperature=value)
+        # 0.16.0: geschrieben wird ueber dieselbe Raumkennung, die native_value
+        # liest.  Der Setter verwirft den Wert nicht mehr, wenn die Kennung
+        # historisch anders geschrieben ist (models.find_zone in set_zone_thermal_settings).
+        self.controller.set_zone_thermal_settings(self._zone_id, comfort_temperature=float(value))
         await self._async_persist_zones()
         self.controller.notify_state_listeners()
 
@@ -267,7 +286,14 @@ class ZoneMinOutdoorCoolingNumber(ZoneComfortTemperatureNumber):
         zone = self._zone
         value = None if zone is None else getattr(zone, "min_outdoor_cooling_temperature_c", None)
         if value is None:
-            return 20.0 if self._zone_name.strip().casefold() in {"schlafzimmer", "kinderzimmer", "spielzimmer"} else 0.0
+            # Hausregel 23.09.2026: die Schlafraeume werden erst ab 25,0 C
+            # vorgekuehlt (models.SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C), das uebrige
+            # Obergeschoss behaelt 20,0 C, das Erdgeschoss keinen Boden (0 = aus).
+            return models.zone_min_outdoor_cooling_default(
+                room_id=self._zone_id,
+                name=self._zone_name,
+                climate_entity_id=None if zone is None else zone.climate_entity_id,
+            ) or 0.0
         return float(value)
 
     @property
@@ -538,7 +564,11 @@ class _ZonePilotTargetTemperatureNumber(_ZoneSettingNumber):
     _attr_device_class = NumberDeviceClass.TEMPERATURE
 
     def _default_minimum(self) -> float:
-        return 22.0 if self._zone_name.casefold() in {"schlafzimmer", "kinderzimmer"} else 23.0
+        # Hausregel 23.09.2026: das Vorkuehl-/Kuehlziel der Schlafraeume ist
+        # 23,0 C (models.SCHLAFRAUM_ZIEL_C) - das Geraetesoll wird nicht mehr auf
+        # 22,0 C heruntergezogen.  Alle anderen Raeume bleiben bei 23,0 C.
+        sleeping_room = models.is_schlafraum(room_id=self._zone_id, name=self._zone_name)
+        return models.SCHLAFRAUM_ZIEL_C if sleeping_room else 23.0
 
 
 class ZonePilotMinTargetTemperatureNumber(_ZonePilotTargetTemperatureNumber):

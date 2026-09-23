@@ -11,6 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 
@@ -20,7 +21,15 @@ from .blend import blend_room_temperature
 from .controller import PVClimateController
 from .forecasting import contextual_temperature_forecast
 from .energy_budget import pv_available_for_cooling_w
-from .models import ZoneConfig, ZoneInput
+from .models import (
+    SCHLAFRAUM_ZIEL_C,
+    ZoneConfig,
+    ZoneInput,
+    is_schlafraum,
+    legacy_entity_id_rename,
+    zone_min_outdoor_cooling_default,
+    zone_matches_room,
+)
 from .storage import pack, unpack
 from .v2_models import EligibilityDecision, InputQuality, InputSnapshot, InputValue, RoomEstimate, RoomPolicy, V2RoomInput
 
@@ -54,6 +63,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             and state.state not in {"unknown", "unavailable"}
         })
     hass.data[DOMAIN].setdefault("_learning_stores", {})[entry.entry_id] = store
+    # 0.16.0: einmalige Reparatur der Entitaets-IDs aus der Zeit, als der
+    # Schlafzimmer-Raum "Schlafzimmrt" geschrieben wurde (siehe Funktion).
+    await _async_migrate_legacy_zone_entity_ids(hass, entry)
     source_entities = _configured_entities(controller)
     if source_entities:
         entry.async_on_unload(async_track_state_change_event(hass, source_entities, _handle_state_change(hass, controller, store)))
@@ -79,6 +91,49 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         hass.data[DOMAIN].get("_learning_stores", {}).pop(entry.entry_id, None)
     return unloaded
+
+
+async def _async_migrate_legacy_zone_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Repariert Entitaets-IDs, die noch die alte Raumschreibweise tragen.
+
+    Das Schlafzimmer hiess in einer frueheren Konfiguration "Schlafzimmrt".
+    Seine Entitaeten entstanden damals unter dieser Schreibweise, z. B.
+    ``number.pv_klimaregler_schlafzimmrt_komforttemperatur``.  Der Anzeigename
+    ist laengst korrigiert, die Entitaets-ID blieb - deshalb war der Raum unter
+    seinem richtigen Namen weder lesbar (Zustand None) noch schreibbar
+    (``number.set_value`` verpuffte), waehrend alle anderen Raeume normal
+    funktionierten.  Die Migration ist idempotent (nichts zu tun, wenn die
+    Ziel-ID schon belegt oder die ID bereits korrekt ist) und laeuft nur fuer
+    die eigenen Entitaeten dieses Config-Entries.
+    """
+    registry = er.async_get(hass)
+
+    def _plan(entity_entry: er.RegistryEntry) -> dict[str, object] | None:
+        """Ziel-ID fuer eine alte Raumschreibweise bestimmen (rein, ohne HA)."""
+        target = legacy_entity_id_rename(entity_entry.entity_id)
+        if target is None:
+            return None
+        if registry.async_get(target) is not None:
+            _LOGGER.warning(
+                "%s: Ziel-ID %s ist bereits belegt - alte Raumschreibweise %s bleibt stehen",
+                DOMAIN,
+                target,
+                entity_entry.entity_id,
+            )
+            return None
+        _LOGGER.warning(
+            "%s: Entitaets-ID %s -> %s (alte Raumschreibweise)",
+            DOMAIN,
+            entity_entry.entity_id,
+            target,
+        )
+        return {"new_entity_id": target}
+
+    try:
+        await er.async_migrate_entries(hass, entry.entry_id, _plan)
+    except ValueError:
+        # Eine belegte oder ungueltige Ziel-ID darf das Setup nie verhindern.
+        _LOGGER.warning("%s: Migration alter Entitaets-IDs unvollstaendig", DOMAIN, exc_info=True)
 
 
 def _configured_entities(controller: PVClimateController) -> list[str]:
@@ -704,14 +759,18 @@ def _v2_room_inputs(
     return tuple(result)
 
 
-_UPSTAIRS_ZONES = {"schlafzimmer", "kinderzimmer", "spielzimmer"}
-
-
 def _v2_effective_min_outdoor_cooling_temperature(zone) -> float | None:
     """Outdoor floor for cooling upstairs; None means "no floor"."""
     value = getattr(zone, "min_outdoor_cooling_temperature_c", None)
     if value is None:
-        return 20.0 if zone.name.strip().casefold() in _UPSTAIRS_ZONES else None
+        # Hausregel 23.09.2026: die Schlafraeume werden erst ab 25,0 C
+        # vorgekuehlt (models.SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C); die uebrigen
+        # Obergeschoss-Raeume behalten den weichen Boden 20,0 C.
+        return zone_min_outdoor_cooling_default(
+            room_id=zone.zone_id,
+            name=zone.name,
+            climate_entity_id=zone.climate_entity_id,
+        )
     return value if value > 0 else None
 
 
@@ -743,10 +802,16 @@ def _v2_sleeping_room_comfort_target(controller: PVClimateController, zone_name:
     """Pre-cooling targets the room's day comfort, not the night promise."""
     normalized = zone_name.strip().casefold()
     for zone in controller.config.house_zones:
-        if zone.name.strip().casefold() == normalized:
+        # 0.16.0: Raum ueber die Kennung aufloesen (models.zone_matches_room),
+        # damit auch eine alte Schreibweise den Raum mit seinem eigenen Ziel findet.
+        if zone_matches_room(zone, normalized):
             return zone.comfort_temperature
-    if normalized in {"schlafzimmer", "kinderzimmer"}:
-        return controller.config.bedroom_target_temperature
+    if is_schlafraum(name=normalized):
+        # Hausregel 23.09.2026: das Vorkuehl-/Kuehlziel der Schlafraeume ist
+        # 23,0 C (models.SCHLAFRAUM_ZIEL_C) - nicht das Abendziel 22,5 C, das fuer
+        # die Nacht gilt.  Falls der Raum (noch) keine eigene Zone hat, gilt die
+        # Hausregel trotzdem.
+        return SCHLAFRAUM_ZIEL_C
     return 23.5
 
 

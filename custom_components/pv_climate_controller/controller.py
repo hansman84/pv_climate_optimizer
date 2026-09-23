@@ -8,6 +8,7 @@ from datetime import datetime, time
 from time import monotonic
 
 
+from . import models
 from .command_adapter import ClimateCommandAdapter, Command, CommandResult
 from .const import CONF_BEDROOM_CUTOFF_ENABLED, CONF_BEDROOM_CUTOFF_TIME, CONF_BEDROOM_MODE_ENABLED, CONF_BEDROOM_QUIET_ENABLED, CONF_BEDROOM_QUIET_TIME, CONF_BEDROOM_START_TIME, CONF_BEDROOM_TARGET_TEMPERATURE, CONF_CHILD_BEDROOM_START_TIME, CONF_CLIMATE_ENTITY_ID, CONF_COMFORT_TEMPERATURE, CONF_COOLING_START_OFFSET_C, CONF_EMS_GRANTED_STAGES_ENTITY_ID, CONF_EMS_STALE_AFTER_S, CONF_ENERGY_POLICY, CONF_EXPORT_POWER_ENTITY_ID, CONF_EXPORT_POWER_POSITIVE, CONF_HARD_MAX_TEMPERATURE, CONF_HEAT_PUMP_POWER_ENTITY_ID, CONF_HEAT_PUMP_PRIORITY_ENTITY_ID, CONF_HOT_OUTDOOR_COMFORT_TEMPERATURE, CONF_HOUSE_ZONES, CONF_LIVING_EVENING_COMFORT_TEMPERATURE, CONF_LIVING_EVENING_END_TIME, CONF_LIVING_EVENING_START_TIME, CONF_LIVING_ROOM_PILOT_ENABLED, CONF_MANUAL_OVERRIDE_ENABLED, CONF_MILD_OUTDOOR_COMFORT_TEMPERATURE, CONF_MIN_PV_SURPLUS_W, CONF_NO_PV_HOLD_MAX_POWER_W, CONF_OUTDOOR_TEMPERATURE_ENTITY_ID, CONF_OUTDOOR_UNIT_POWER_ENTITY_ID, CONF_PV_FORECAST_POWER_ENTITY_ID, CONF_PV_POWER_ENTITY_ID, CONF_SHADOW_MODE, CONF_SOLAR_IRRADIANCE_ENTITY_ID, CONF_SUN_ENTITY_ID, CONF_TEMPERATURE_ENTITY_ID, CONF_V2_COOLING_SEASON_ENTITY_ID, CONF_V2_HOUSE_CONTROL_ENABLED, CONF_V2_SHADOW_ENABLED, CONF_V2_VACATION_ENTITY_ID, CONF_ZONE_NAME, ControllerState, EnergyPolicy, CONF_OUTDOOR_NO_ACTIVE_COOLING_C, CONF_OUTDOOR_PV_BOOST_EXTRA_W, CONF_OUTDOOR_RAIN_HOLD_PROBABILITY_PCT, CONF_OUTDOOR_RELAXATION_BAND_C, CONF_WEATHER_FORECAST_ENTITY_ID
 from .ems_adapter import parse_grant, requested_stages
@@ -34,8 +35,32 @@ def _optional_entity(options: Mapping[str, object], data: Mapping[str, object], 
     return value if isinstance(value, str) else None
 
 
+def _zone_number(value: object, default: float) -> float:
+    """Uebernimmt einen gespeicherten Zahlenwert, sonst den Integrations-Default.
+
+    0.16.0: Defaults sind Hausregeln (z. B. Schlafraum-Ziel 23,0 C) und gelten
+    nur fuer noch nicht gesetzte Felder - ein vom Nutzer gesetzter Wert bleibt.
+    """
+    resolved = _zone_optional_number(value, default)
+    return float(default if resolved is None else resolved)
+
+
+def _zone_optional_number(value: object, default: float | None) -> float | None:
+    """Zahlenwert aus den Optionen, sonst der uebergebene Default."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
-    """Load only complete, explicitly configured zone records."""
+    """Load only complete, explicitly configured zone records (plus defaults)."""
     if not isinstance(value, list):
         return ()
     result: list[ZoneConfig] = []
@@ -51,14 +76,26 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
         facade_shades = tuple(tuple(entity for entity in group if isinstance(entity, str)) for group in raw_facade_shades if isinstance(group, list)) if isinstance(raw_facade_shades, list) else ()
         cutoff = item.get("overhang_cutoff_elevation")
         normalized_name = " ".join(name.split())
+        # Alte Schreibweise eines Raumnamens ("Schlafzimmrt") wird auch fuer die
+        # Identitaet korrigiert; die Raumnummer bleibt die gespeicherte Kennung,
+        # damit V2-Autoritaet und Historie stabil bleiben.
+        canonical_name = models.canonical_zone_label(normalized_name)
+        room_id = str(item.get("zone_id", climate))
         # The existing Schlafzimmer unit is unreliable. It must never become
         # a productive pilot only because an older configuration is upgraded.
-        default_pilot_enabled = normalized_name.casefold() != "schlafzimmer"
+        default_pilot_enabled = canonical_name.casefold() != "schlafzimmer"
+        # Hausregel 23.09.2026 (models.SCHLAFRAUM_*): die Schlafraeume bekommen
+        # Standardwerte (Vorkuehlen erst ab 25,0 C, Ziel 23,0 C, Geraetesoll
+        # nicht unter 23,0 C) - nur wo der Nutzer noch nichts gesetzt hat.
         result.append(ZoneConfig(
-            zone_id=str(item.get("zone_id", climate)), name=name, climate_entity_id=climate,
-            temperature_entity_id=temperature, comfort_temperature=float(item.get("comfort_temperature", 23.5)),
+            zone_id=room_id, name=name, climate_entity_id=climate,
+            temperature_entity_id=temperature,
+            comfort_temperature=_zone_number(item.get("comfort_temperature"), models.zone_comfort_default(room_id=room_id, name=canonical_name, climate_entity_id=climate)),
             hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
-            pilot_min_target_temperature=float(item["pilot_min_target_temperature"]) if isinstance(item.get("pilot_min_target_temperature"), (int, float)) else None,
+            pilot_min_target_temperature=_zone_optional_number(
+                item.get("pilot_min_target_temperature"),
+                models.zone_pilot_min_default(room_id=room_id, name=canonical_name, climate_entity_id=climate),
+            ),
             pilot_max_target_temperature=float(item["pilot_max_target_temperature"]) if isinstance(item.get("pilot_max_target_temperature"), (int, float)) else None,
             hard_limit_failsafe_offset_c=max(0.0, min(8.0, float(item.get("hard_limit_failsafe_offset_c", 1.0)))),
             cooling_power_entity_id=item.get("cooling_power_entity_id") if isinstance(item.get("cooling_power_entity_id"), str) else None,
@@ -68,13 +105,13 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
             acute_cooling_limit_c=(
                 float(item["acute_cooling_limit_c"])
-                if item.get("acute_cooling_limit_c") is not None
+                if isinstance(item.get("acute_cooling_limit_c"), (int, float))
                 else None
             ),
             min_outdoor_cooling_temperature_c=(
                 float(item["min_outdoor_cooling_temperature_c"])
-                if item.get("min_outdoor_cooling_temperature_c") is not None
-                else None
+                if isinstance(item.get("min_outdoor_cooling_temperature_c"), (int, float))
+                else models.zone_min_outdoor_cooling_default(room_id=room_id, name=canonical_name, climate_entity_id=climate)
             ),
             quiet_fan=bool(item.get("quiet_fan", True)),
             forecast_horizon_minutes=float(item.get("forecast_horizon_minutes", 60.0)),
@@ -768,7 +805,8 @@ class PVClimateController:
     def v2_handoff_readiness(self, zone_id: str) -> HandoffReadiness:
         """Check every precondition without freezing V1 or issuing a command."""
         blockers: list[str] = []
-        zone = next((item for item in self.config.house_zones if item.zone_id == zone_id), None)
+        # 0.16.0: toleranter Raum-Lookup (models.find_zone) statt roher Kennung.
+        zone = models.find_zone(self.config.house_zones, zone_id)
         authority = self.v2_authority_for(zone_id)
         if zone is None:
             blockers.append("zone_not_configured")
@@ -836,7 +874,7 @@ class PVClimateController:
 
     def release_room_manual_takeover(self, zone_id: str) -> bool:
         """Give one manually held room back to V2/V1 at its next safe step."""
-        zone = next((item for item in self.config.house_zones if item.zone_id == zone_id), None)
+        zone = models.find_zone(self.config.house_zones, zone_id)
         if zone is None:
             return False
         self.command_adapter.clear_manual_override(zone.climate_entity_id)
@@ -1071,7 +1109,7 @@ class PVClimateController:
 
     def note_v2_transport_failure(self, zone_id: str) -> None:
         """Record a V2 transport failure and request a one-shot relaxed safe hold."""
-        zone = next((item for item in self.config.house_zones if item.zone_id == zone_id), None)
+        zone = models.find_zone(self.config.house_zones, zone_id)
         self._v2_transport_failures[zone_id] = self._v2_transport_failures.get(zone_id, 0) + 1
         if zone is None:
             self.last_v2_transport_error = f"{zone_id}: V2-Transportfehler"
@@ -1089,8 +1127,8 @@ class PVClimateController:
         unavailable in V2 Shadow and during handoff/rollback, so a future V2
         executor cannot become a second writer accidentally.
         """
-        zone = next((item for item in self.config.house_zones if item.zone_id == plan.room_id), None)
-        if zone is None and self.config.zone is not None and self.config.zone.zone_id == plan.room_id:
+        zone = models.find_zone(self.config.house_zones, plan.room_id)
+        if zone is None and self.config.zone is not None and models.zone_matches_room(self.config.zone, plan.room_id):
             zone = self.config.zone
         if zone is None:
             return CommandResult("invalid", "V2-Befehl blockiert: Raum ist nicht konfiguriert.")
@@ -1195,11 +1233,24 @@ class PVClimateController:
 
     def set_zone_temperature_fallback(self, zone_id: str, enabled: bool) -> None:
         """Enable only an explicit per-zone read fallback; never a device action."""
+        target = models.find_zone(self.config.house_zones, zone_id)
+        if target is None:
+            return
         zones = tuple(
-            replace(zone, use_climate_temperature_fallback=enabled) if zone.zone_id == zone_id else zone
+            replace(zone, use_climate_temperature_fallback=enabled) if zone is target else zone
             for zone in self.config.house_zones
         )
         self.config = replace(self.config, house_zones=zones)
+
+    def zone_by_room_id(self, room_id: str) -> ZoneConfig | None:
+        """Read one room by its identifier (tolerant to old spellings).
+
+        0.16.0: Lesen und Schreiben benutzen dieselbe Aufloesung.  Die
+        Raum-Entitaeten lesen genau hierueber - vorher verglich die Entitaet rohe
+        Zeichenketten und fand einen historisch anders geschriebenen Raum nicht
+        mehr (native_value None, number.set_value wirkungslos).
+        """
+        return models.find_zone(self.config.house_zones, room_id)
 
     def set_zone_thermal_settings(
         self,
@@ -1219,9 +1270,16 @@ class PVClimateController:
         blend_weight_pct: float | None = None,
     ) -> None:
         """Change only explicit planning thresholds for one room, never a climate device."""
+        # 0.16.0: Adressierung ueber die Raumkennung statt ueber rohe
+        # Zeichenketten.  models.find_zone versteht auch die alte Schreibweise
+        # ("Schlafzimmrt"); dadurch kommt ein Schreibvorgang wirklich beim Raum
+        # an, statt still verworfen zu werden.
+        target = models.find_zone(self.config.house_zones, zone_id)
+        if target is None:
+            return
         updated: list[ZoneConfig] = []
         for zone in self.config.house_zones:
-            if zone.zone_id != zone_id:
+            if zone is not target:
                 updated.append(zone)
                 continue
             comfort = zone.comfort_temperature if comfort_temperature is None else float(comfort_temperature)
