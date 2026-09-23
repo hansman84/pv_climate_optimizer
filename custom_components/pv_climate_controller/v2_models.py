@@ -155,6 +155,12 @@ class V2RoomInput:
     target_temperature_step_c: float | None = None
     observed_fan_mode: str | None = None
     supported_fan_modes: tuple[str, ...] = ()
+    # Aussengrenze des Raums (Hausregel): unterhalb dieser Aussentemperatur
+    # wird der Raum nicht gekuehlt.  None/0 = keine Grenze (z. B. Erdgeschoss).
+    # 0.16.1: Der V2-Kandidat bekommt die Grenze explizit, damit auch der
+    # Bedroom-Precool-Zweig sie pruefen kann und nicht nur die Bedienungslage
+    # (Vorkuehlzeit/Ruhezeit) ueber die Kuehlung entscheidet.
+    min_outdoor_cooling_temperature_c: float | None = None
     evening_comfort_active: bool = False
     outdoor_cooling_gate: object = None  # optional OutdoorGateDecision or None
     # Unlike ``evening_comfort_active``, this stays true for the whole
@@ -203,6 +209,45 @@ class V2RoomInput:
             raise ValueError("scheduled target temperature is implausible")
         if self.pv_surplus_threshold_w < 0:
             raise ValueError("PV surplus threshold cannot be negative")
+
+
+def outdoor_cooling_floor_c(room: "V2RoomInput") -> float | None:
+    """Aussengrenze des Raums; ``None``/0 bedeutet "keine Grenze"."""
+    value = getattr(room, "min_outdoor_cooling_temperature_c", None)
+    if not isinstance(value, (int, float)) or float(value) <= 0.0:
+        return None
+    return float(value)
+
+
+def outdoor_cooling_block(room: "V2RoomInput") -> tuple[str, str] | None:
+    """Hausregel: unter der Aussengrenze wird dieser Raum nicht gekuehlt.
+
+    0.16.1: Die Aussengrenze ist eine Pflichtbedingung jedes weichen
+    Kuehlpfads (auch des Bedroom-Precool-Zweigs).  Bis 0.16.0 entschied dort
+    nur die Bedienungslage (Vorkuehlzeit/Ruhezeit), und die Haltepfade davor
+    kannten die Grenze gar nicht - live kuehlte das Schlafzimmer deshalb bei
+    18,4 C Aussentemperatur weiter, obwohl die Hausregel "Vorkuehlen nur ab
+    25,0 C aussen" gilt.
+
+    Liefert ``(reason_code, reason_text)``, wenn die gemessene Aussenluft
+    unter der Grenze des Raums liegt, sonst ``None``.  Eine fehlende oder
+    ungueltige Aussenquelle blockiert nicht (die harte Temperaturgrenze bleibt
+    das Sicherheitsnetz).  Die Funktion ist rein: kein HA-Zugriff, keine Zeit.
+    """
+    floor = outdoor_cooling_floor_c(room)
+    if floor is None:
+        return None
+    outdoor = getattr(room.snapshot, "outdoor_temperature", None)
+    if outdoor is None or not outdoor.is_valid or not isinstance(outdoor.value, (int, float)):
+        return None
+    value = float(outdoor.value)
+    if value >= floor:
+        return None
+    return (
+        "outdoor_too_cold_no_cooling",
+        f"V2 Hausregel: Aussenluft {value:.1f} C liegt unter der Kuehlgrenze {floor:.1f} C - "
+        "dieser Raum wird nicht gekuehlt (nur die harte Temperaturgrenze greift).",
+    )
 
 
 @dataclass(frozen=True, slots=True)

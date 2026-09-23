@@ -4,8 +4,12 @@ Zwei Dinge werden hier geprueft:
 
 1. HAUSREGEL: Die Schlafraeume (Zimmer mit der Kennung climate.schlafzimmer bzw.
    climate.kinderzimmer) werden nur ab 25,0 C Aussentemperatur vorgekuehlt, ihr
-   Vorkuehl-/Kuehlziel ist 23,0 C (nicht 22,0).  Das sind Defaults der
-   Integration; ausdruecklich gesetzte Nutzerwerte bleiben unangetastet.
+   Vorkuehl-/Kuehlziel ist 23,0 C (nicht 22,0).  Seit 0.16.1 hat die Hausregel
+   fuer diese beiden Zimmer Vorrang vor einem alten Handwert: Komfort 23,0 C,
+   akute Kuehlgrenze 25,0 C und "Kuehlung erst ab Aussentemperatur" 25,0 C
+   werden beim Laden der Optionen durchgesetzt (live standen dort noch 24,0 C
+   aus der Zeit vor der Regel).  Alle uebrigen Felder und Raeume bleiben
+   unangetastet.
 2. BUGFIX: Ein Komfortziel, das ueber die Raumkennung gesetzt wird, wird danach
    auch gelesen - auch wenn der Raum historisch anders geschrieben war
    ("Schlafzimmrt").  Vorher fand der Lookup den Raum nicht mehr: Lesen None,
@@ -88,20 +92,62 @@ def test_schlafraum_defaults_are_applied_to_sleeping_rooms() -> None:
     assert living_room.comfort_temperature == 23.5
 
 
-def test_explicit_user_values_are_never_overwritten_by_the_house_rule() -> None:
-    """Nur ungesetzte Felder bekommen die Hausregel - gesetzte bleiben."""
+def test_house_rule_values_win_over_an_old_hand_value() -> None:
+    """Hausregel 0.16.1: die drei Regelwerte haben Vorrang, andere Felder nicht."""
     runtime = _load_zones(_zone(
         comfort_temperature=22.0,
-        min_outdoor_cooling_temperature_c=0.0,  # Regel bewusst ausgeschaltet
+        acute_cooling_limit_c=24.0,
+        min_outdoor_cooling_temperature_c=0.0,  # alter Handwert / Regel ausgeschaltet
         pilot_min_target_temperature=20.0,
     ))
 
     bedroom = runtime.zone_by_room_id("climate.schlafzimmer")
 
     assert bedroom is not None
-    assert bedroom.comfort_temperature == 22.0
-    assert bedroom.min_outdoor_cooling_temperature_c == 0.0
+    # Hausregel hat Vorrang vor dem alten Handwert.
+    assert bedroom.comfort_temperature == models.SCHLAFRAUM_ZIEL_C == 23.0
+    assert bedroom.acute_cooling_limit_c == models.SCHLAFRAUM_AKUTE_KUEHLGRENZE_C == 25.0
+    assert bedroom.min_outdoor_cooling_temperature_c == models.SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C == 25.0
+    # Felder ausserhalb der Regel behalten den Handwert.
     assert bedroom.pilot_min_target_temperature == 20.0
+
+
+def test_house_rule_end_state_for_both_sleeping_rooms() -> None:
+    """Endzustand beider Zonen: 23,0 C Komfort, 25,0 C akut, 25,0 C Aussengrenze."""
+    live_hand_values = {
+        "comfort_temperature": 24.0,
+        "acute_cooling_limit_c": 24.0,
+        "min_outdoor_cooling_temperature_c": 24.0,
+    }
+    runtime = _load_zones(
+        _zone(**live_hand_values),
+        _zone(
+            zone_id="climate.kinderzimmer",
+            name="Kinderzimmer",
+            climate_entity_id="climate.kinderzimmer",
+            temperature_entity_id="sensor.kinderzimmer_temp",
+            **live_hand_values,
+        ),
+        _zone(
+            zone_id="climate.spielzimmer",
+            name="Spielzimmer",
+            climate_entity_id="climate.spielzimmer",
+            temperature_entity_id="sensor.spielzimmer_temp",
+            **live_hand_values,
+        ),
+    )
+
+    for room_id in ("climate.schlafzimmer", "climate.kinderzimmer"):
+        zone = runtime.zone_by_room_id(room_id)
+        assert zone is not None, room_id
+        assert zone.comfort_temperature == 23.0, room_id
+        assert zone.acute_cooling_limit_c == 25.0, room_id
+        assert zone.min_outdoor_cooling_temperature_c == 25.0, room_id
+    # Nicht-Schlafraeume bleiben unberuehrt (dort gilt kein erzwungener Wert).
+    play_room = runtime.zone_by_room_id("climate.spielzimmer")
+    assert play_room.comfort_temperature == 24.0
+    assert play_room.acute_cooling_limit_c == 24.0
+    assert play_room.min_outdoor_cooling_temperature_c == 24.0
 
 
 def test_house_rule_is_applied_to_the_other_house_zones_too() -> None:
@@ -156,15 +202,25 @@ def test_comfort_target_set_for_the_sleeping_room_is_read_back() -> None:
     assert runtime.zone_by_room_id("configured_zone").comfort_temperature == 23.5
 
 
-def test_comfort_target_survives_the_options_reload() -> None:
-    """Nach dem Serialisieren (HA laedt die Optionen neu) gilt der Wert weiter."""
-    runtime = _load_zones(_zone())
+def test_house_rule_value_applies_after_the_options_reload() -> None:
+    """Nach dem Neuladen der Optionen gilt die Hausregel, nicht der alte Handwert.
+
+    0.16.1: Fuer die beiden Schlafraeume hat die Hausregel Vorrang (live standen
+    dort noch 24,0 C).  Fuer einen normalen Raum bleibt der gesetzte Wert
+    erhalten - das ist die eigentliche Regressionsabsicherung des Setzers.
+    """
+    runtime = _load_zones(
+        _zone(),
+        _zone(zone_id="climate.wohnzimmer", name="Wohnzimmer", climate_entity_id="climate.wohnzimmer"),
+    )
     runtime.set_zone_thermal_settings("climate.schlafzimmer", comfort_temperature=24.0)
+    runtime.set_zone_thermal_settings("climate.wohnzimmer", comfort_temperature=24.5)
 
     persisted = [controller.serialize_zone_config(zone) for zone in runtime.config.house_zones]
     reloaded = _load_zones(*persisted)
 
-    assert reloaded.zone_by_room_id("climate.schlafzimmer").comfort_temperature == 24.0
+    assert reloaded.zone_by_room_id("climate.schlafzimmer").comfort_temperature == models.SCHLAFRAUM_ZIEL_C
+    assert reloaded.zone_by_room_id("climate.wohnzimmer").comfort_temperature == 24.5
 
 
 def test_comfort_target_reaches_a_room_that_keeps_its_old_spelling() -> None:

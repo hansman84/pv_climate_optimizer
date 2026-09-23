@@ -16,6 +16,7 @@ from .v2_models import (
     RoomCandidate,
     RoomDecision,
     V2RoomInput,
+    outdoor_cooling_block,
 )
 from .cooling_demand import cooling_demand
 from .v2_orchestrator import HouseCoordinator
@@ -31,6 +32,31 @@ _HOLD_ACT_TOLERANCE_C = 0.3
 Chosen well below a real split's draw (400-1200 W measured on this house) so a
 start can never eat the last watts of export by mistake.
 """
+
+
+def _outdoor_cooling_blocked_candidate(room: V2RoomInput, blocked: tuple[str, str]) -> RoomCandidate:
+    """Antwort auf eine blockierte Aussengrenze: laufend stoppen, sonst halten."""
+    reason_code, reason_text = blocked
+    if room.observed_hvac_mode == "cool":
+        return RoomCandidate(
+            policy=room.policy,
+            action=CandidateAction.STOP,
+            required_budget_w=0.0,
+            comfort_gap_c=0.0,
+            confidence=room.estimate.confidence,
+            reason_code=reason_code,
+            reason_text=f"{reason_text} Die laufende Kuehlung wird beendet.",
+            safety_override=True,
+        )
+    return RoomCandidate(
+        policy=room.policy,
+        action=CandidateAction.HOLD,
+        required_budget_w=0.0,
+        comfort_gap_c=0.0,
+        confidence=room.estimate.confidence,
+        reason_code=reason_code,
+        reason_text=reason_text,
+    )
 
 
 class V2ShadowRunner:
@@ -168,6 +194,16 @@ class V2ShadowRunner:
                 safety_override=True,
                 target_after_c=room.comfort_temperature_c,
             )
+        # --- Aussengrenze des Raums (Hausregel 0.16.1, Pflichtbedingung) ------
+        # Unter der Grenze des Raums (Schlafraeume 25,0 C) kuehlt nichts mehr -
+        # auch kein weicher Haltepfad weiter unten.  Vorher kannten die
+        # Haltepfade die Grenze nicht: live kuehlte das Schlafzimmer bei
+        # 18,4 C Aussentemperatur weiter, obwohl die Hausregel "Vorkuehlen nur
+        # ab 25,0 C aussen" gilt.  Die harte Temperaturgrenze oben bleibt das
+        # ausdrueckliche Sicherheitsnetz (Dead-End).
+        outdoor_block = outdoor_cooling_block(room)
+        if outdoor_block is not None:
+            return _outdoor_cooling_blocked_candidate(room, outdoor_block)
         # --- Night quiet time (household decision 2026-09-20) -----------------
         # The end of the Abendkomfort window is also the start of the air
         # conditioner's night quiet time: from then on the living room starts no
@@ -431,6 +467,14 @@ class V2ShadowRunner:
                 safety_override=False,
             )
         if room.eligibility.reason_code in {"bedroom_schedule_pending", "bedroom_quiet_time"}:
+            # Pflichtbedingung des Bedroom-Precool-Zweigs (0.16.1): Der Zweig
+            # sagt nur "jetzt nicht vorkuehlen" (Vorkuehlzeit noch nicht offen
+            # bzw. Ruhezeit).  Ob die Hausregel Kuehlung ueberhaupt erlaubt,
+            # entscheidet die Aussengrenze - ohne diese Pruefung kuehlte der
+            # Zweig allein nach Uhrzeit.
+            bedroom_block = outdoor_cooling_block(room)
+            if bedroom_block is not None:
+                return _outdoor_cooling_blocked_candidate(room, bedroom_block)
             if room.observed_hvac_mode == "cool":
                 return RoomCandidate(
                     policy=room.policy,

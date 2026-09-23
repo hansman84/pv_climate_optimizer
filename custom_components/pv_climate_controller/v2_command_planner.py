@@ -19,7 +19,14 @@ from .quiet_fan_control import (
     evaluate_fan_stage,
     tick_fan_runtime,
 )
-from .v2_models import CandidateAction, HouseDecision, RoomCandidate, V2CommandPlan, V2RoomInput
+from .v2_models import (
+    CandidateAction,
+    HouseDecision,
+    RoomCandidate,
+    V2CommandPlan,
+    V2RoomInput,
+    outdoor_cooling_block,
+)
 
 SETTLE_STOP_RESERVE_C = 0.3    # 0.15.0: Stopper erst 0,3 K unter dem Komfort (enge, ruhige Linie)
 SETTLE_TARGET_TOL_C = 0.1      # allowed setpoint deviation from comfort
@@ -139,6 +146,22 @@ class V2CommandPlanner:
         """
         if room.observed_hvac_mode != "cool":
             return None
+        # Hausregel 0.16.1: Unter der Aussengrenze des Raums (Schlafraeume
+        # 25,0 C) wird nicht nachgezogen.  Dieser Pfad laeuft, wenn kein
+        # genehmigter Kandidat vorliegt; ohne die Pruefung zog er ein laufendes
+        # Geraet bei 18,4 C Aussentemperatur weiter auf dem Komfortziel - genau
+        # der live gemeldete Fall.  Der Raum wird stattdessen beendet.
+        outdoor_block = outdoor_cooling_block(room)
+        if outdoor_block is not None:
+            block_code, block_text = outdoor_block
+            return V2CommandPlan(
+                room.policy.room_id,
+                CandidateAction.STOP,
+                None,
+                block_code,
+                f"{block_text} Die laufende Kuehlung wird beendet.",
+                None,
+            )
         measured = self._measured_room_temp_c(room)
         target = room.observed_target_temperature_c
         step = room.target_temperature_step_c or 1.0
@@ -273,7 +296,12 @@ class V2CommandPlanner:
         # is changed at most once every TARGET_SETTLE_S unless it is an acute or
         # hard-limit emergency: without it the peg was re-commanded every few
         # minutes and the room never had time to settle.
-        if candidate.reason_code not in _SETTLE_EXEMPT_REASONS:
+        # Hausregel 0.16.1: Ein Stopp wird NIE gedaempft.  Vorher verschluckte
+        # der Daempfer auch eine regulaere Stopp-Anforderung (z. B.
+        # bedroom_schedule_pending direkt nach einem Sollwertwechsel); der
+        # Ausfuehrungspfad fiel dann auf settle_plan zurueck, und das Geraet
+        # lief bei 18,4 C Aussentemperatur weiter.
+        if candidate.action is not CandidateAction.STOP and candidate.reason_code not in _SETTLE_EXEMPT_REASONS:
             last_change_s = self._target_change_at_s.get(room.policy.room_id)
             if last_change_s is not None and (self._now_fn() - last_change_s) < TARGET_SETTLE_S:
                 return None

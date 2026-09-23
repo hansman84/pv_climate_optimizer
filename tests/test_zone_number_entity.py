@@ -181,7 +181,12 @@ def test_comfort_number_reads_the_house_rule_default() -> None:
 
 
 def test_comfort_number_reads_the_value_it_wrote_for_the_sleeping_room() -> None:
-    """BUGFIX: setzen (24,0) und danach lesen - inklusive Reload der Optionen."""
+    """BUGFIX: setzen (24,0) und danach lesen - der Schreibvorgang kommt an.
+
+    0.16.1: Der Schreibvorgang landet weiterhin am Raum (Lesen 24,0).  Nach dem
+    Neuladen der Optionen setzt die Hausregel fuer dieses Zimmer aber wieder
+    23,0 C durch - der Handwert ist nur noch im laufenden Betrieb sichtbar.
+    """
     runtime, hass, entry = _runtime_and_hass(_persisted_zone())
     entity = number.ZoneComfortTemperatureNumber(runtime, ENTRY_ID, "zone_comfort_temperature_4", "climate.schlafzimmer")
     entity.hass = hass
@@ -189,15 +194,15 @@ def test_comfort_number_reads_the_value_it_wrote_for_the_sleeping_room() -> None
     asyncio.run(entity.async_set_native_value(24.0))
 
     assert entity.native_value == 24.0
-    # Home Assistant schreibt die Optionen und laedt die Integration neu: die
-    # neue Entitaet des Raums muss denselben Wert lesen.
+    # Home Assistant schreibt die Optionen und laedt die Integration neu: dort
+    # gilt fuer dieses Zimmer die Hausregel (23,0 C).
     reloaded = controller.PVClimateController.from_config(
         {"shadow_mode": True}, {"house_zones": entry.options["house_zones"]}
     )
     fresh = number.ZoneComfortTemperatureNumber(reloaded, ENTRY_ID, "zone_comfort_temperature_4", "climate.schlafzimmer")
     fresh.hass = hass
 
-    assert fresh.native_value == 24.0
+    assert fresh.native_value == models.SCHLAFRAUM_ZIEL_C == 23.0
 
 
 def test_comfort_number_of_the_legacy_room_key_no_longer_reads_none() -> None:
@@ -247,12 +252,13 @@ def test_min_outdoor_number_shows_the_house_rule_threshold() -> None:
     assert entity.native_value == models.SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C == 25.0
 
 
-def test_min_outdoor_number_keeps_an_explicitly_disabled_rule() -> None:
+def test_min_outdoor_number_enforces_the_house_rule() -> None:
+    """0.16.1: Die Hausregel hat Vorrang - auch vor einem alten "0 = aus"."""
     runtime, hass, _ = _runtime_and_hass(_persisted_zone(min_outdoor_cooling_temperature_c=0.0))
     entity = number.ZoneMinOutdoorCoolingNumber(runtime, ENTRY_ID, "zone_min_outdoor_cooling_4", "climate.schlafzimmer")
     entity.hass = hass
 
-    assert entity.native_value == 0.0
+    assert entity.native_value == models.SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C == 25.0
 
 
 def test_pilot_min_number_no_longer_pulls_the_room_to_22() -> None:

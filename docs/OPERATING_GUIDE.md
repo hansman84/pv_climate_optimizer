@@ -165,13 +165,22 @@ Komforttemperatur gesetzt. Die Priorität (1–100) entscheidet nur bei sonst
 vergleichbarer thermischer Dringlichkeit. Die Standardwerte für neu angelegte
 Zonen sind 23,5 °C Komforttemperatur und 25,5 °C harte Grenze.
 
-**Hausregel Schlafräume (seit 0.16.0):** Die Räume mit der Kennung
-`climate.schlafzimmer` und `climate.kinderzimmer` werden nur vorgekühlt, wenn
-die Außentemperatur mindestens **25,0 °C** beträgt, und ihr Vorkühl-/Kühlziel
-ist **23,0 °C** (nicht 22,0 °C). Das sind Defaults der Integration
-(`SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C`, `SCHLAFRAUM_ZIEL_C` in `models.py`); sie
-greifen nur für Felder, die noch nie gesetzt wurden. Ein bewusst gesetzter Wert
-bleibt unverändert – auch `0` als „Außenregel aus“.
+**Hausregel Schlafräume (0.16.0, verbindlich seit 0.16.1):** Die Räume mit der
+Kennung `climate.schlafzimmer` und `climate.kinderzimmer` werden nur vorgekühlt,
+wenn die Außentemperatur mindestens **25,0 °C** beträgt, und ihr
+Vorkühl-/Kühlziel ist **23,0 °C** (nicht 22,0 °C). Seit 0.16.1 hat die Hausregel
+für diese beiden Zimmer Vorrang vor einem alten Handwert: Komfort 23,0 °C, akute
+Kühlgrenze 25,0 °C und „Kühlung erst ab Außentemperatur“ 25,0 °C werden beim
+Laden der Optionen durchgesetzt (`models.schlafraum_house_rule_values`,
+`controller._house_zones`). Vorher per Zahl gesetzte 24,0 °C werden dadurch
+ersetzt. Für alle übrigen Räume bleiben bewusst gesetzte Werte unverändert –
+dort gilt weiter `0` als „Außenregel aus“.
+
+Die Außengrenze wird auch im laufenden Betrieb durchgesetzt: Der
+Schlafzimmer-Vorkühlpfad (`v2_shadow.py`) prüft sie als Pflichtbedingung, ein
+laufendes Gerät unterhalb der Grenze wird beendet, und der Ausführungspfad zieht
+einen solchen Raum weder nach (`settle_plan`) noch verschluckt der
+Sollwert-Dämpfer einen Stopp. Beleg: `tests/test_schlafraum_vorkuehlgrenze.py`.
 
 **Raumkennung:** Ein Raum wird über seine Kennung aufgelöst (Klima-Entity-ID,
 z. B. `climate.schlafzimmer`), nicht über die Schreibweise des Namens. Dadurch

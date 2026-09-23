@@ -24,12 +24,19 @@ ZONE_LABEL_ALIASES: dict[str, str] = {"Schlafzimmrt": "Schlafzimmer"}
 #
 # Die Schlafraeume (Schlafzimmer, Kinderzimmer) werden NUR vorgekuehlt, wenn die
 # Aussentemperatur mindestens 25,0 C betraegt, und ihr Vorkuehl-/Kuehlziel ist
-# 23,0 C (nicht 22,0).  Das sind DEFAULTS der Integration - ausdruecklich vom
-# Nutzer gesetzte Werte werden nie ueberschrieben (siehe controller._house_zones).
+# 23,0 C (nicht 22,0).  Seit 0.16.1 hat die Hausregel fuer diese beiden Raeume
+# Vorrang vor einem alten Handwert: Komfort 23,0 C, akute Kuehlgrenze 25,0 C und
+# "Kuehlung erst ab Aussentemperatur" 25,0 C werden beim Laden der Optionen
+# durchgesetzt (models.schlafraum_house_rule_values, controller._house_zones).
+# Fuer alle uebrigen Raeume bleiben explizit gesetzte Werte unangetastet.
 # ---------------------------------------------------------------------------
 SCHLAFRAUM_ROOM_IDS: tuple[str, ...] = ("climate.schlafzimmer", "climate.kinderzimmer")
 SCHLAFRAUM_ZIEL_C = 23.0
 SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C = 25.0
+# Akute Kuehlgrenze der Schlafraeume (Hausregel 0.16.1): ab 25,0 C Raumluft
+# wird gekuehlt, auch ohne PV-Reserve - das ist dieselbe Linie wie die
+# Aussengrenze, nicht mehr die alte Handgrenze 24,0 C.
+SCHLAFRAUM_AKUTE_KUEHLGRENZE_C = 25.0
 SCHLAFRAUM_LABELS: frozenset[str] = frozenset({"schlafzimmer", "kinderzimmer"})
 # Raeume im Obergeschoss; dort gilt (ausser in den Schlafraeumen) der weiche
 # Aussenboden 20,0 C aus 0.4.58.
@@ -165,6 +172,36 @@ def zone_min_outdoor_cooling_default(
         return SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C
     label = _label_key(canonical_zone_label(name or room_id))
     return DEFAULT_UPSTAIRS_MIN_OUTDOOR_C if label in UPSTAIRS_ZONE_LABELS else None
+
+
+def schlafraum_house_rule_values(
+    *,
+    room_id: object = "",
+    name: object = "",
+    climate_entity_id: object = "",
+) -> dict[str, float] | None:
+    """Erzwungene Hausregel-Werte der beiden Schlafraeume (None = kein Schlafraum).
+
+    Hauswunsch 23.09.2026 in der Fassung 0.16.1: fuer ``climate.schlafzimmer``
+    und ``climate.kinderzimmer`` gelten
+
+    - Komfort-/Vorkuehlziel 23,0 C (``SCHLAFRAUM_ZIEL_C``),
+    - akute Kuehlgrenze 25,0 C (``SCHLAFRAUM_AKUTE_KUEHLGRENZE_C``) und
+    - "Kuehlung erst ab Aussentemperatur" 25,0 C
+      (``SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C``).
+
+    Die Hausregel hat Vorrang vor einem alten Handwert aus der Zeit vor der
+    Regel (z. B. 24,0 C): Die Migration in ``controller._house_zones`` setzt
+    diese drei Werte fuer die beiden Raeume durch, alle uebrigen Felder und
+    alle uebrigen Raeume bleiben unberuehrt.
+    """
+    if not is_schlafraum(room_id=room_id, name=name, climate_entity_id=climate_entity_id):
+        return None
+    return {
+        "comfort_temperature": SCHLAFRAUM_ZIEL_C,
+        "acute_cooling_limit_c": SCHLAFRAUM_AKUTE_KUEHLGRENZE_C,
+        "min_outdoor_cooling_temperature_c": SCHLAFRAUM_VORKUEHL_AB_AUSSEN_C,
+    }
 
 
 def zone_pilot_min_default(

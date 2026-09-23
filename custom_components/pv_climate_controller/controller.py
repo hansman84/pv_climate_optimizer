@@ -87,10 +87,32 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
         # Hausregel 23.09.2026 (models.SCHLAFRAUM_*): die Schlafraeume bekommen
         # Standardwerte (Vorkuehlen erst ab 25,0 C, Ziel 23,0 C, Geraetesoll
         # nicht unter 23,0 C) - nur wo der Nutzer noch nichts gesetzt hat.
+        comfort_value = _zone_number(item.get("comfort_temperature"), models.zone_comfort_default(room_id=room_id, name=canonical_name, climate_entity_id=climate))
+        acute_value = (
+            float(item["acute_cooling_limit_c"])
+            if isinstance(item.get("acute_cooling_limit_c"), (int, float))
+            else None
+        )
+        min_outdoor_value = (
+            float(item["min_outdoor_cooling_temperature_c"])
+            if isinstance(item.get("min_outdoor_cooling_temperature_c"), (int, float))
+            else models.zone_min_outdoor_cooling_default(room_id=room_id, name=canonical_name, climate_entity_id=climate)
+        )
+        # 0.16.1: Fuer die beiden Schlafraeume hat die Hausregel Vorrang vor
+        # einem alten Handwert.  Live standen dort noch 24,0 C aus der Zeit vor
+        # der Regel; die Migration setzt Komfort 23,0 C, akute Kuehlgrenze
+        # 25,0 C und "Kuehlung erst ab Aussentemperatur" 25,0 C durch.
+        house_rule = models.schlafraum_house_rule_values(
+            room_id=room_id, name=canonical_name, climate_entity_id=climate
+        )
+        if house_rule is not None:
+            comfort_value = house_rule["comfort_temperature"]
+            acute_value = house_rule["acute_cooling_limit_c"]
+            min_outdoor_value = house_rule["min_outdoor_cooling_temperature_c"]
         result.append(ZoneConfig(
             zone_id=room_id, name=name, climate_entity_id=climate,
             temperature_entity_id=temperature,
-            comfort_temperature=_zone_number(item.get("comfort_temperature"), models.zone_comfort_default(room_id=room_id, name=canonical_name, climate_entity_id=climate)),
+            comfort_temperature=comfort_value,
             hard_max_temperature=float(item.get("hard_max_temperature", 25.5)),
             pilot_min_target_temperature=_zone_optional_number(
                 item.get("pilot_min_target_temperature"),
@@ -103,16 +125,8 @@ def _house_zones(value: object) -> tuple[ZoneConfig, ...]:
             modulation_priority=max(1, int(item.get("modulation_priority", 50))),
             pilot_enabled=bool(item.get("pilot_enabled", default_pilot_enabled)),
             use_climate_temperature_fallback=bool(item.get("use_climate_temperature_fallback", False)),
-            acute_cooling_limit_c=(
-                float(item["acute_cooling_limit_c"])
-                if isinstance(item.get("acute_cooling_limit_c"), (int, float))
-                else None
-            ),
-            min_outdoor_cooling_temperature_c=(
-                float(item["min_outdoor_cooling_temperature_c"])
-                if isinstance(item.get("min_outdoor_cooling_temperature_c"), (int, float))
-                else models.zone_min_outdoor_cooling_default(room_id=room_id, name=canonical_name, climate_entity_id=climate)
-            ),
+            acute_cooling_limit_c=acute_value,
+            min_outdoor_cooling_temperature_c=min_outdoor_value,
             quiet_fan=bool(item.get("quiet_fan", True)),
             forecast_horizon_minutes=float(item.get("forecast_horizon_minutes", 60.0)),
             hold_level_c=float(item.get("hold_level_c", 0.0)) or _migrated_hold_level(item),

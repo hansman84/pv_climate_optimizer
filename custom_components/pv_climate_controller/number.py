@@ -274,7 +274,9 @@ class ZoneMinOutdoorCoolingNumber(ZoneComfortTemperatureNumber):
     """Outdoor floor for cooling this room (upstairs rule).
 
     Below this outdoor temperature the room is not cooled automatically -
-    only the hard temperature limit stays as a dead-end. 0 disables the rule.
+    only the hard temperature limit stays as a dead-end. In the two sleeping
+    rooms the house rule (25,0 C) has precedence since 0.16.1; there "0" is no
+    longer a way to switch the rule off.
     """
 
     @property
@@ -313,7 +315,9 @@ class ZoneMinOutdoorCoolingNumber(ZoneComfortTemperatureNumber):
         return {
             "erklaerung": (
                 "Liegt die Aussentemperatur unter diesem Wert, wird dieser Raum nicht gekuehlt "
-                "(0 = Regel aus). Ausnahme: die harte Temperaturgrenze bleibt als Dead-End aktiv."
+                "(0 = Regel aus). In den beiden Schlafraeumen gilt seit 0.16.1 die Hausregel "
+                "25,0 C und hat Vorrang vor einem hier gesetzten Wert. Ausnahme: die harte "
+                "Temperaturgrenze bleibt als Dead-End aktiv."
             )
         }
 

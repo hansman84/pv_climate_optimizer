@@ -725,6 +725,9 @@ def _v2_room_inputs(
                 else None
             ),
             acute_cooling_limit_c=_v2_effective_acute_limit(controller, zone),
+            # Hausregel 0.16.1: die Aussengrenze des Raums gehoert in den
+            # Kandidaten, damit auch der Bedroom-Precool-Zweig sie prueft.
+            min_outdoor_cooling_temperature_c=min_outdoor,
             evening_deadline_at_risk=_v2_living_evening_deadline_at_risk(
                 controller, zone.name, local_now.time(),
                 contextual_forecast.predicted_temperature_60m_c,
